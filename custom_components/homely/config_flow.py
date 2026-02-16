@@ -116,11 +116,11 @@ class HomelyOptionsFlow(config_entries.OptionsFlow):
                     vol.Optional(
                         CONF_HOME_ID,
                         default=home_id,
-                    ): vol.All(vol.Coerce(int), vol.Range(min=0, max=10)),
+                    ): vol.All(vol.Coerce(int), vol.Range(min=0, max=99)),
                     vol.Optional(
                         CONF_SCAN_INTERVAL,
                         default=scan_interval,
-                    ): vol.All(vol.Coerce(int), vol.Range(min=30, max=600)),
+                    ): vol.All(vol.Coerce(int), vol.Range(min=10)),
                     vol.Optional(
                         CONF_ENABLE_WEBSOCKET,
                         default=enable_websocket,
