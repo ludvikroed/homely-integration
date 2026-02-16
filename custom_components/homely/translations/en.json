@@ -1,0 +1,33 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up Homely Alarm",
+        "description": "Enter your Homely account credentials",
+        "data": {
+          "username": "Email",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to Homely",
+      "invalid_auth": "Invalid authentication",
+      "unknown": "Unexpected error occurred"
+    },
+    "abort": {
+      "already_configured": "Device is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Advanced Settings",
+        "description": "Configure advanced options for Homely Alarm integration",
+        "data": {          "home_id": "Home ID (0 for first home, 1 for second, etc.)",          "scan_interval": "Scan interval (seconds, standard is 120)",
+          "enable_websocket": "Enable WebSocket for real-time updates"
+        }
+      }
+    }
+  }
+}

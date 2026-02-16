@@ -12,7 +12,15 @@ from homeassistant.core import HomeAssistant
 
 from datetime import timedelta
 from .api import fetch_refresh_token, fetch_token, get_data, get_location_id
-from .const import CONF_HOME_ID, DOMAIN
+from .const import (
+    CONF_HOME_ID,
+    CONF_SCAN_INTERVAL,
+    CONF_ENABLE_WEBSOCKET,
+    DEFAULT_HOME_ID,
+    DEFAULT_SCAN_INTERVAL,
+    DEFAULT_ENABLE_WEBSOCKET,
+    DOMAIN,
+)
 from .websocket import HomelyWebSocket
 
 PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.ALARM_CONTROL_PANEL]
@@ -47,7 +55,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return False
 
     # Map user-provided home_id to the API location_id
-    home_id = entry.data[CONF_HOME_ID]
+    # Check options first, then data, then use default
+    home_id = entry.options.get(
+        CONF_HOME_ID,
+        entry.data.get(CONF_HOME_ID, DEFAULT_HOME_ID)
+    )
+    _LOGGER.debug("Using home_id: %s", home_id)
     try:
         location_item = location_response[home_id]
         location_id = location_item["locationId"]
@@ -225,26 +238,45 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.debug("Data refresh completed")
         return updated
 
+    # Get scan interval from options or use default
+    scan_interval = entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
+    enable_websocket = entry.options.get(CONF_ENABLE_WEBSOCKET, DEFAULT_ENABLE_WEBSOCKET)
+    
+    _LOGGER.debug("Using scan_interval=%d seconds, enable_websocket=%s", scan_interval, enable_websocket)
+    
     coordinator = DataUpdateCoordinator(
         hass,
         _LOGGER,
         name="homely",
         update_method=async_update_data,
-        update_interval=timedelta(minutes=2),
+        update_interval=timedelta(seconds=scan_interval),
     )
     remove_listener = coordinator.async_add_listener(lambda: None)
 
     hass.data[DOMAIN][entry.entry_id]["coordinator"] = coordinator
     hass.data[DOMAIN][entry.entry_id]["coordinator_listener"] = remove_listener
     
-    # Initialize WebSocket for real-time updates (non-blocking)
-    asyncio.create_task(init_websocket())
+    # Initialize WebSocket for real-time updates (non-blocking) if enabled
+    if enable_websocket:
+        asyncio.create_task(init_websocket())
+        _LOGGER.debug("WebSocket initialization scheduled")
+    else:
+        _LOGGER.info("WebSocket disabled in options, using polling only")
     
     await coordinator.async_config_entry_first_refresh()
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     
+    # Add options update listener
+    entry.async_on_unload(entry.add_update_listener(async_reload_entry))
+    
     _LOGGER.info("Homely Alarm integration setup completed")
     return True
+
+
+async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Reload config entry when options change."""
+    _LOGGER.debug("Options changed, reloading entry")
+    await hass.config_entries.async_reload(entry.entry_id)
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""

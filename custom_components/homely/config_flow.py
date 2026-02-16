@@ -8,7 +8,17 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResult
 
-from .const import CONF_HOME_ID, CONF_PASSWORD, CONF_USERNAME, DOMAIN
+from .const import (
+    CONF_HOME_ID,
+    CONF_PASSWORD,
+    CONF_USERNAME,
+    CONF_SCAN_INTERVAL,
+    CONF_ENABLE_WEBSOCKET,
+    DEFAULT_HOME_ID,
+    DEFAULT_SCAN_INTERVAL,
+    DEFAULT_ENABLE_WEBSOCKET,
+    DOMAIN,
+)
 from .api import fetch_token, get_location_id, get_data
 
 
@@ -16,6 +26,13 @@ class HomelyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Homely Alarm."""
 
     VERSION = 1
+
+    @staticmethod
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> HomelyOptionsFlow:
+        """Get the options flow for this handler."""
+        return HomelyOptionsFlow(config_entry)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -39,8 +56,8 @@ class HomelyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not location_response:
                 return self.async_abort(reason="cannot_connect")
             
-            # Get the location name
-            home_id = user_input[CONF_HOME_ID]
+            # Get the location name (default to 0 if not specified)
+            home_id = user_input.get(CONF_HOME_ID, DEFAULT_HOME_ID)
             try:
                 location_item = location_response[home_id]
                 location_id = location_item["locationId"]
@@ -60,8 +77,54 @@ class HomelyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             {
                 vol.Required(CONF_USERNAME): str,
                 vol.Required(CONF_PASSWORD): str,
-                vol.Required(CONF_HOME_ID): vol.Coerce(int),
             }
         )
 
         return self.async_show_form(step_id="user", data_schema=data_schema)
+
+
+class HomelyOptionsFlow(config_entries.OptionsFlow):
+    """Handle options flow for Homely Alarm."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        """Initialize options flow."""
+        self.config_entry = config_entry
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Manage the options."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        # Get current options or use defaults
+        home_id = self.config_entry.options.get(
+            CONF_HOME_ID,
+            self.config_entry.data.get(CONF_HOME_ID, DEFAULT_HOME_ID)
+        )
+        scan_interval = self.config_entry.options.get(
+            CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
+        )
+        enable_websocket = self.config_entry.options.get(
+            CONF_ENABLE_WEBSOCKET, DEFAULT_ENABLE_WEBSOCKET
+        )
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        CONF_HOME_ID,
+                        default=home_id,
+                    ): vol.All(vol.Coerce(int), vol.Range(min=0, max=10)),
+                    vol.Optional(
+                        CONF_SCAN_INTERVAL,
+                        default=scan_interval,
+                    ): vol.All(vol.Coerce(int), vol.Range(min=30, max=600)),
+                    vol.Optional(
+                        CONF_ENABLE_WEBSOCKET,
+                        default=enable_websocket,
+                    ): bool,
+                }
+            ),
+        )

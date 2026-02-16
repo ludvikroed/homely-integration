@@ -1,0 +1,34 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Sett opp Homely Alarm",
+        "description": "Skriv inn påloggingsinformasjon for Homely-kontoen din",
+        "data": {
+          "username": "E-post",
+          "password": "Passord"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Kunne ikke koble til Homely",
+      "invalid_auth": "Ugyldig påloggingsinformasjon",
+      "unknown": "Uventet feil oppstod"
+    },
+    "abort": {
+      "already_configured": "Enhet er allerede konfigurert"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Avanserte innstillinger",
+        "description": "Konfigurer avanserte alternativer for Homely Alarm-integrasjonen",
+        "data": {          "home_id": "Hjem-ID (0 for første hjem, 1 for andre, osv.)",         
+          "scan_interval": "Oppdateringsinterval (sekunder, standard er 120)",
+          "enable_websocket": "Aktiver WebSocket for sanntidsoppdateringer"
+        }
+      }
+    }
+  }
+}
