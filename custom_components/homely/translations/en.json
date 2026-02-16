@@ -10,6 +10,11 @@
           "home_id": "Home ID (0 for first home, 1 for second, etc.)",
           "scan_interval": "Update interval in seconds (default: 120)",
           "enable_websocket": "Enable WebSocket for real-time updates (recommended: on)"
+        },
+        "data_description": {
+          "home_id": "advanced",
+          "scan_interval": "advanced",
+          "enable_websocket": "advanced"
         }
       }
     },
