@@ -1,12 +1,15 @@
 """Config flow for Homely Alarm integration."""
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResult
+
+_LOGGER = logging.getLogger(__name__)
 
 from .const import (
     CONF_HOME_ID,
@@ -97,37 +100,52 @@ class HomelyOptionsFlow(config_entries.OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Manage the options."""
-        if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+        try:
+            _LOGGER.debug("Options flow init called with user_input: %s", user_input)
+            
+            if user_input is not None:
+                _LOGGER.debug("Saving options: %s", user_input)
+                return self.async_create_entry(title="", data=user_input)
 
-        # Get current options or use defaults
-        home_id = self.config_entry.options.get(
-            CONF_HOME_ID,
-            self.config_entry.data.get(CONF_HOME_ID, DEFAULT_HOME_ID)
-        )
-        scan_interval = self.config_entry.options.get(
-            CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
-        )
-        enable_websocket = self.config_entry.options.get(
-            CONF_ENABLE_WEBSOCKET, DEFAULT_ENABLE_WEBSOCKET
-        )
+            # Get current options or use defaults
+            _LOGGER.debug("Config entry data: %s", self.config_entry.data)
+            _LOGGER.debug("Config entry options: %s", self.config_entry.options)
+            
+            home_id = self.config_entry.options.get(
+                CONF_HOME_ID,
+                self.config_entry.data.get(CONF_HOME_ID, DEFAULT_HOME_ID)
+            )
+            scan_interval = self.config_entry.options.get(
+                CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
+            )
+            enable_websocket = self.config_entry.options.get(
+                CONF_ENABLE_WEBSOCKET, DEFAULT_ENABLE_WEBSOCKET
+            )
+            
+            _LOGGER.debug(
+                "Options values: home_id=%s, scan_interval=%s, enable_websocket=%s",
+                home_id, scan_interval, enable_websocket
+            )
 
-        return self.async_show_form(
-            step_id="init",
-            data_schema=vol.Schema(
-                {
-                    vol.Optional(
-                        CONF_HOME_ID,
-                        default=home_id,
-                    ): vol.All(vol.Coerce(int), vol.Range(min=0, max=99)),
-                    vol.Optional(
-                        CONF_SCAN_INTERVAL,
-                        default=scan_interval,
-                    ): vol.All(vol.Coerce(int), vol.Range(min=10)),
-                    vol.Optional(
-                        CONF_ENABLE_WEBSOCKET,
-                        default=enable_websocket,
-                    ): bool,
-                }
-            ),
-        )
+            return self.async_show_form(
+                step_id="init",
+                data_schema=vol.Schema(
+                    {
+                        vol.Optional(
+                            CONF_HOME_ID,
+                            default=home_id,
+                        ): vol.All(vol.Coerce(int), vol.Range(min=0, max=99)),
+                        vol.Optional(
+                            CONF_SCAN_INTERVAL,
+                            default=scan_interval,
+                        ): vol.All(vol.Coerce(int), vol.Range(min=10)),
+                        vol.Optional(
+                            CONF_ENABLE_WEBSOCKET,
+                            default=enable_websocket,
+                        ): bool,
+                    }
+                ),
+            )
+        except Exception as err:
+            _LOGGER.error("Error in options flow: %s", err, exc_info=True)
+            return self.async_abort(reason="unknown")
