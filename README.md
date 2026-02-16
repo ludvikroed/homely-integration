@@ -19,14 +19,14 @@ A custom Home Assistant integration that connects your Homely alarm system with 
 ### HACS (Recommended)
 
 1. Open HACS in Home Assistant
-2. Click on "Integrations"
-3. Click the three dots in the top right corner
-4. Select "Custom repositories"
-5. Add this repository URL: `https://github.com/ludvikroed/homely-integration`
-6. Select category: "Integration"
-7. Click "Add"
-8. Click "Install" on the Homely Alarm card
-9. Restart Home Assistant
+2. Search for "Homely"
+3. Click "Download"
+4. Restart Home Assistant
+5. Go to **Settings** → **Devices & Services**
+6. Click **"+ Add Integration"**
+7. Search for "Homely" and configure with your credentials
+
+> **Note**: If the integration is not yet available in HACS default repository, you can add it as a [custom repository](https://hacs.xyz/docs/faq/custom_repositories/) using `https://github.com/ludvikroed/homely-integration`
 
 ### Manual Installation
 
@@ -93,7 +93,7 @@ Automatically discovered based on your connected devices:
 ### Diagnostic Sensors
 
 - **WebSocket Status** - Connection state (`connected`, `disconnected`, `reconnecting`)
-- Shows connection health and latency
+- Shows connection health
 
 ---
 
