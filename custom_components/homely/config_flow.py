@@ -83,6 +83,11 @@ class HomelyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             {
                 vol.Required(CONF_USERNAME): str,
                 vol.Required(CONF_PASSWORD): str,
+                vol.Optional(CONF_HOME_ID, default=DEFAULT_HOME_ID): vol.Coerce(int),
+                vol.Optional(CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL): vol.All(
+                    vol.Coerce(int), vol.Range(min=10)
+                ),
+                vol.Optional(CONF_ENABLE_WEBSOCKET, default=DEFAULT_ENABLE_WEBSOCKET): bool,
             }
         )
 
@@ -130,7 +135,7 @@ class HomelyOptionsFlow(config_entries.OptionsFlow):
                         vol.Optional(
                             CONF_HOME_ID,
                             default=home_id,
-                        ): vol.All(vol.Coerce(int), vol.Range(min=0, max=99)),
+                        ): vol.Coerce(int),
                         vol.Optional(
                             CONF_SCAN_INTERVAL,
                             default=scan_interval,
