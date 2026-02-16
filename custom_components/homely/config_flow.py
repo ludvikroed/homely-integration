@@ -68,6 +68,9 @@ class HomelyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except (KeyError, IndexError, TypeError):
                 location_name = f"Homely Alarm {home_id}"
             
+            # Store home_id in data even if not provided by user
+            user_input[CONF_HOME_ID] = home_id
+            
             return self.async_create_entry(
                 title=location_name,
                 data=user_input,
