@@ -35,7 +35,7 @@ class HomelyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         config_entry: config_entries.ConfigEntry,
     ) -> HomelyOptionsFlow:
         """Get the options flow for this handler."""
-        return HomelyOptionsFlow(config_entry)
+        return HomelyOptionsFlow()
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
