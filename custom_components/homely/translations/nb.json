@@ -10,6 +10,11 @@
           "home_id": "Hjem-ID (0 for første hjem, 1 for andre, etc.)",
           "scan_interval": "Oppdateringsintervall (sekunder, minimum 10)",
           "enable_websocket": "Aktiver WebSocket for sanntidsoppdateringer"
+        },
+        "data_description": {
+          "home_id": "advanced",
+          "scan_interval": "advanced",
+          "enable_websocket": "advanced"
         }
       }
     },

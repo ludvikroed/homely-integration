@@ -61,6 +61,9 @@ class HomelyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             
             # Get the location name (default to 0 if not specified)
             home_id = user_input.get(CONF_HOME_ID, DEFAULT_HOME_ID)
+            scan_interval = user_input.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
+            enable_websocket = user_input.get(CONF_ENABLE_WEBSOCKET, DEFAULT_ENABLE_WEBSOCKET)
+            
             try:
                 location_item = location_response[home_id]
                 location_id = location_item["locationId"]
@@ -71,23 +74,40 @@ class HomelyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except (KeyError, IndexError, TypeError):
                 location_name = f"Homely Alarm {home_id}"
             
-            # Store home_id in data even if not provided by user
+            # Ensure all values are stored in data
             user_input[CONF_HOME_ID] = home_id
+            user_input[CONF_SCAN_INTERVAL] = scan_interval
+            user_input[CONF_ENABLE_WEBSOCKET] = enable_websocket
             
             return self.async_create_entry(
                 title=location_name,
                 data=user_input,
             )
 
+        from homeassistant.helpers import selector
+
         data_schema = vol.Schema(
             {
-                vol.Required(CONF_USERNAME): str,
-                vol.Required(CONF_PASSWORD): str,
-                vol.Optional(CONF_HOME_ID, default=DEFAULT_HOME_ID): vol.Coerce(int),
-                vol.Optional(CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL): vol.All(
-                    vol.Coerce(int), vol.Range(min=10)
+                vol.Required(CONF_USERNAME): selector.TextSelector(
+                    selector.TextSelectorConfig(type=selector.TextSelectorType.EMAIL)
                 ),
-                vol.Optional(CONF_ENABLE_WEBSOCKET, default=DEFAULT_ENABLE_WEBSOCKET): bool,
+                vol.Required(CONF_PASSWORD): selector.TextSelector(
+                    selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+                ),
+                vol.Optional(CONF_HOME_ID, default=DEFAULT_HOME_ID): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        mode=selector.NumberSelectorMode.BOX,
+                        min=0,
+                    )
+                ),
+                vol.Optional(CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        mode=selector.NumberSelectorMode.BOX,
+                        min=10,
+                        unit_of_measurement="seconds",
+                    )
+                ),
+                vol.Optional(CONF_ENABLE_WEBSOCKET, default=DEFAULT_ENABLE_WEBSOCKET): selector.BooleanSelector(),
             }
         )
 
