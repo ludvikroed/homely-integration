@@ -60,8 +60,8 @@ class HomelyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return self.async_abort(reason="cannot_connect")
             
             # Get the location name (default to 0 if not specified)
-            home_id = user_input.get(CONF_HOME_ID, DEFAULT_HOME_ID)
-            scan_interval = user_input.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
+            home_id = int(user_input.get(CONF_HOME_ID, DEFAULT_HOME_ID))
+            scan_interval = int(user_input.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))
             enable_websocket = user_input.get(CONF_ENABLE_WEBSOCKET, DEFAULT_ENABLE_WEBSOCKET)
             
             try:
@@ -74,7 +74,7 @@ class HomelyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except (KeyError, IndexError, TypeError):
                 location_name = f"Homely Alarm {home_id}"
             
-            # Ensure all values are stored in data
+            # Ensure all values are stored in data as correct types
             user_input[CONF_HOME_ID] = home_id
             user_input[CONF_SCAN_INTERVAL] = scan_interval
             user_input[CONF_ENABLE_WEBSOCKET] = enable_websocket
@@ -125,6 +125,12 @@ class HomelyOptionsFlow(config_entries.OptionsFlow):
             _LOGGER.debug("Options flow init called with user_input: %s", user_input)
             
             if user_input is not None:
+                # Convert NumberSelector values to int
+                if CONF_HOME_ID in user_input:
+                    user_input[CONF_HOME_ID] = int(user_input[CONF_HOME_ID])
+                if CONF_SCAN_INTERVAL in user_input:
+                    user_input[CONF_SCAN_INTERVAL] = int(user_input[CONF_SCAN_INTERVAL])
+                
                 _LOGGER.debug("Saving options: %s", user_input)
                 return self.async_create_entry(title="", data=user_input)
 
@@ -132,15 +138,17 @@ class HomelyOptionsFlow(config_entries.OptionsFlow):
             _LOGGER.debug("Config entry data: %s", self.config_entry.data)
             _LOGGER.debug("Config entry options: %s", self.config_entry.options)
             
-            home_id = self.config_entry.options.get(
+            home_id = int(self.config_entry.options.get(
                 CONF_HOME_ID,
                 self.config_entry.data.get(CONF_HOME_ID, DEFAULT_HOME_ID)
-            )
-            scan_interval = self.config_entry.options.get(
-                CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
-            )
+            ))
+            scan_interval = int(self.config_entry.options.get(
+                CONF_SCAN_INTERVAL,
+                self.config_entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
+            ))
             enable_websocket = self.config_entry.options.get(
-                CONF_ENABLE_WEBSOCKET, DEFAULT_ENABLE_WEBSOCKET
+                CONF_ENABLE_WEBSOCKET,
+                self.config_entry.data.get(CONF_ENABLE_WEBSOCKET, DEFAULT_ENABLE_WEBSOCKET)
             )
             
             _LOGGER.debug(

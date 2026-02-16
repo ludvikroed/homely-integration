@@ -56,10 +56,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Map user-provided home_id to the API location_id
     # Check options first, then data, then use default
-    home_id = entry.options.get(
+    home_id = int(entry.options.get(
         CONF_HOME_ID,
         entry.data.get(CONF_HOME_ID, DEFAULT_HOME_ID)
-    )
+    ))
     _LOGGER.debug("Using home_id: %s", home_id)
     try:
         location_item = location_response[home_id]
@@ -239,10 +239,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return updated
 
     # Get scan interval from options or use default
-    scan_interval = entry.options.get(
+    scan_interval = int(entry.options.get(
         CONF_SCAN_INTERVAL,
         entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
-    )
+    ))
     enable_websocket = entry.options.get(
         CONF_ENABLE_WEBSOCKET,
         entry.data.get(CONF_ENABLE_WEBSOCKET, DEFAULT_ENABLE_WEBSOCKET)
