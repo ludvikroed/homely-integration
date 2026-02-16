@@ -3,18 +3,13 @@
     "step": {
       "user": {
         "title": "Set up Homely Alarm",
-        "description": "Enter your Homely account credentials",
+        "description": "Enter your credentials. Advanced options below can be left at defaults (recommended).",
         "data": {
           "username": "Email",
           "password": "Password",
           "home_id": "Home ID (0 for first home, 1 for second, etc.)",
-          "scan_interval": "Scan interval (seconds, minimum 10)",
-          "enable_websocket": "Enable WebSocket for real-time updates"
-        },
-        "data_description": {
-          "home_id": "advanced",
-          "scan_interval": "advanced",
-          "enable_websocket": "advanced"
+          "scan_interval": "Update interval in seconds (default: 120)",
+          "enable_websocket": "Enable WebSocket for real-time updates (recommended: on)"
         }
       }
     },
