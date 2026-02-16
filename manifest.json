@@ -1,0 +1,11 @@
+{
+  "domain": "homely",
+  "name": "Homely",
+  "documentation": "https://github.com/ludvikroed/homely-integration",
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": [],
+  "iot_class": "cloud_polling",
+  "requirements": ["python-socketio>=5.0.0"],
+  "version": "1.0.0"
+}

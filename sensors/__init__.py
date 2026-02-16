@@ -1,0 +1,135 @@
+"""Sensor definitions for Homely devices."""
+
+# All available sensors that can be discovered and created
+# Structure matches the haugeSander Homely addon
+SENSORS = [
+    # Alarm sensors
+    {
+        "path": "features.alarm.states.alarm.value",
+        "format": "boolean",
+        "type": "binary_sensor",
+        "name": "alarm",
+        "device_class": "door",
+        "device_suffix": "alarm",
+        "get_name": lambda device: "motion" if "motion" in device.get("modelName", "").lower() else "contact",
+        "get_device_class": lambda device: "motion" if "motion" in device.get("modelName", "").lower() else "door",
+    },
+    {
+        "path": "features.alarm.states.fire.value",
+        "format": "boolean",
+        "type": "binary_sensor",
+        "name": "fire",
+        "device_class": "smoke",
+        "device_suffix": "alarm",
+    },
+    {
+        "path": "features.alarm.states.tamper.value",
+        "format": "boolean",
+        "type": "binary_sensor",
+        "name": "tamper",
+        "device_class": "tamper",
+        "device_suffix": "tamper",
+    },
+    {
+        "path": "features.alarm.states.flood.value",
+        "format": "boolean",
+        "type": "binary_sensor",
+        "name": "flood",
+        "device_class": "moisture",
+        "device_suffix": "alarm",
+    },
+    # Battery sensors
+    {
+        "path": "features.battery.states.low.value",
+        "format": "boolean",
+        "type": "binary_sensor",
+        "name": "battery_low",
+        "device_class": "battery",
+        "device_suffix": "battery_low",
+        "entity_category": "diagnostic",
+    },
+    {
+        "path": "features.battery.states.defect.value",
+        "format": "boolean",
+        "type": "binary_sensor",
+        "name": "battery_defect",
+        "device_class": None,
+        "device_suffix": "battery_defect",
+        "entity_category": "diagnostic",
+        "icon": "mdi:battery-alert",
+    },
+    # Temperature sensors
+    {
+        "path": "features.temperature.states.temperature.value",
+        "format": "number",
+        "type": "sensor",
+        "name": "temperature",
+        "device_class": "temperature",
+        "unit": "°C",
+        "device_suffix": "temperature",
+        "state_class": "measurement",
+    },
+    # Battery voltage sensors
+    {
+        "path": "features.battery.states.voltage.value",
+        "format": "number",
+        "type": "sensor",
+        "name": "battery_voltage",
+        "device_class": "voltage",
+        "unit": "V",
+        "device_suffix": "battery_voltage",
+        "entity_category": "diagnostic",
+    },
+    # Diagnostic sensors
+    {
+        "path": "features.diagnostic.states.networklinkstrength.value",
+        "format": "number",
+        "type": "sensor",
+        "name": "networklinkstrength",
+        "device_class": "signal_strength",
+        "unit": "dBm",
+        "device_suffix": "networklinkstrength",
+        "entity_category": "diagnostic",
+    },
+    {
+        "path": "features.diagnostic.states.networklinkaddress.value",
+        "format": "string",
+        "type": "sensor",
+        "name": "networklinkaddress",
+        "device_class": None,
+        "device_suffix": "networklinkaddress",
+        "entity_category": "diagnostic",
+    },
+    # Metering sensors (for HAN plugs)
+    {
+        "path": "features.metering.states.summationdelivered.value",
+        "format": "number",
+        "type": "sensor",
+        "name": "consumption",
+        "device_class": "energy",
+        "unit": "kWh",
+        "device_suffix": "consumption",
+        "state_class": "total",
+    },
+    {
+        "path": "features.metering.states.summationreceived.value",
+        "format": "number",
+        "type": "sensor",
+        "name": "production",
+        "device_class": "energy",
+        "unit": "kWh",
+        "device_suffix": "production",
+        "state_class": "total",
+    },
+    {
+        "path": "features.metering.states.demand.value",
+        "format": "number",
+        "type": "sensor",
+        "name": "demand",
+        "device_class": "energy",
+        "unit": "kWh",
+        "device_suffix": "demand",
+        "state_class": "total",
+    },
+]
+
