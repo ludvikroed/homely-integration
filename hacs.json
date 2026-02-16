@@ -1,0 +1,6 @@
+{
+  "name": "Homely",
+  "domain": "homely",
+  "content": "custom_components/homely",
+  "render_readme": true
+}
