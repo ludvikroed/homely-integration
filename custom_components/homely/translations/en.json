@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Homely Alarm Setup",
-        "description": "Enter your Homely credentials below. For most people advanced options can be left unchanged. Documentation: https://github.com/ludvikroed/homely-integration",
+        "description": "Enter your Homely credentials below. For most people advanced options can be left unchanged. Check the documentation for more details.",
         "data": {
           "username": "Homely Email",
           "password": "Homely password",
