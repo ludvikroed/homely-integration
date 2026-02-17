@@ -32,7 +32,9 @@ class HomelyAllBatteriesHealthySensor(CoordinatorEntity, BinarySensorEntity):
     def state(self):
         data = self.coordinator.data or {}
         for device in data.get("devices", []):
-            battery_defect = device.get("features", {}).get("battery", {}).get("states", {}).get("defect", {}).get("value")
-            if battery_defect:
+            battery = device.get("features", {}).get("battery", {}).get("states", {})
+            battery_defect = battery.get("defect", {}).get("value")
+            battery_low = battery.get("low", {}).get("value")
+            if battery_defect or battery_low:
                 return "Defective"
         return "Healthy"

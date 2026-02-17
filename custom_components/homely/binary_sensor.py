@@ -16,6 +16,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
     
     entities = []
 
+
     for device in data.get("devices", []):
         # Discover all sensors for this device
         discovered = discover_device_sensors(device)
@@ -25,6 +26,9 @@ async def async_setup_entry(hass, entry, async_add_entities):
                 entities.append(
                     HomelyBinarySensor(coordinator, device, sensor_config)
                 )
+
+        # Legg til online-status sensor for hver device
+        entities.append(HomelyDeviceOnlineSensor(coordinator, device))
 
     # Legg til aggregert sensor for batterihelse (alle batterier OK)
     location_id = hass.data[DOMAIN][entry.entry_id].get("location_id")
@@ -36,6 +40,34 @@ async def async_setup_entry(hass, entry, async_add_entities):
         pass
 
     async_add_entities(entities)
+
+# Online-status sensor for hver device
+class HomelyDeviceOnlineSensor(CoordinatorEntity, BinarySensorEntity):
+    """Binary sensor for device online status."""
+    def __init__(self, coordinator, device):
+        super().__init__(coordinator)
+        self._device_id = device.get("id")
+        self._device_name = device.get("name")
+        self._attr_name = f"{self._device_name} Online"
+        self._attr_unique_id = f"{self._device_id}_online"
+        self._attr_icon = "mdi:lan-connect"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self._attr_device_class = "connectivity"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, self._device_id)},
+            name=self._device_name,
+            manufacturer="Homely",
+            model=device.get("modelName"),
+            serial_number=device.get("serialNumber"),
+        )
+
+    @property
+    def is_on(self):
+        data = self.coordinator.data or {}
+        for device in data.get("devices", []):
+            if device.get("id") == self._device_id:
+                return bool(device.get("online", False))
+        return False
 
 
 class HomelyBinarySensor(CoordinatorEntity, BinarySensorEntity):
