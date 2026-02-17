@@ -15,18 +15,26 @@ async def async_setup_entry(hass, entry, async_add_entities):
     data = coordinator.data or hass.data[DOMAIN][entry.entry_id].get("data") or {}
     
     entities = []
-    
+
     for device in data.get("devices", []):
         # Discover all sensors for this device
         discovered = discover_device_sensors(device)
-        
         for sensor_config in discovered:
             # Only add binary sensors
             if sensor_config["type"] == "binary_sensor":
                 entities.append(
                     HomelyBinarySensor(coordinator, device, sensor_config)
                 )
-    
+
+    # Legg til aggregert sensor for batterihelse (alle batterier OK)
+    location_id = hass.data[DOMAIN][entry.entry_id].get("location_id")
+    location_name = (data or {}).get("name", "Location")
+    try:
+        from .all_batteries_healthy import HomelyAllBatteriesHealthySensor
+        entities.append(HomelyAllBatteriesHealthySensor(coordinator, location_name, location_id))
+    except ImportError:
+        pass
+
     async_add_entities(entities)
 
 
