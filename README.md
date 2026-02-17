@@ -95,7 +95,7 @@ Enable debugging (shown above) and check HA logs for:
 - Some vendor specific devices
 - Direct device control (read-only integration)
 
-> **Note**: This integration is only tested with smoke detectors, alarm panel, door sensors, and motion sensors. Report issues with other device types.
+> **Note**: This integration is only tested with smoke detectors, alarm panel, door sensors, and motion sensors. Please report issues with other device types if you find any.
 
 ---
 
