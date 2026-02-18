@@ -17,16 +17,13 @@ STATE_MAP = {
     # Main states
     "DISARMED": AlarmControlPanelState.DISARMED,
     "ARMED_AWAY": AlarmControlPanelState.ARMED_AWAY,
-    "ARMED_HOME": AlarmControlPanelState.ARMED_HOME,
-    "ARMED_NIGHT": AlarmControlPanelState.ARMED_HOME,  # Map to ARMED_HOME since ARMED_NIGHT is not supported
-    "ARMED_PARTLY": AlarmControlPanelState.ARMED_HOME,  # Map to ARMED_HOME
+    "ARMED_NIGHT": AlarmControlPanelState.ARMED_NIGHT,
+    "ARMED_STAY": AlarmControlPanelState.ARMED_HOME,
     # Pending/transitional states
     "ARM_PENDING": AlarmControlPanelState.ARMING,
-    "ALARM_PENDING": AlarmControlPanelState.ARMING,
-    "ALARM_STAY_PENDING": AlarmControlPanelState.ARMING,
-    "ARMED_NIGHT_PENDING": AlarmControlPanelState.ARMING,
-    "ARMED_AWAY_PENDING": AlarmControlPanelState.ARMING,
-    # Triggered/breached
+    "ARM_STAY_PENDING": AlarmControlPanelState.ARMING,
+    "ARM_NIGHT_PENDING": AlarmControlPanelState.ARMING,
+
     "TRIGGERED": AlarmControlPanelState.TRIGGERED,
     "BREACHED": AlarmControlPanelState.TRIGGERED,
 }
