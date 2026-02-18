@@ -1,8 +1,6 @@
 # Homely Alarm Integration for Home Assistant
 
-A custom Home Assistant integration that connects your Homely alarm system with Home Assistant, providing real-time monitoring of your alarm and connected devices available through the Homely API.
-
----
+A Home Assistant integration that connects your Homely alarm system with Home Assistant using the Homely api, providing real-time monitoring your alarm and most of your connected devices available through the API.
 
 ## Installation & Setup
 
@@ -12,7 +10,7 @@ A custom Home Assistant integration that connects your Homely alarm system with 
 2. Search for "Homely" and click "Download"
 3. Restart Home Assistant
 
-> **Note**: Not in yet HACS default? Add as a [custom repository](https://hacs.xyz/docs/faq/custom_repositories/): `https://github.com/ludvikroed/homely-integration`
+> **Note**: Not in yet HACS default? Add as a [custom repository](https://my.home-assistant.io/redirect/hacs_repository/?repository=https%3A%2F%2Fgithub.com%2Fludvikroed%2Fhomely-integration%3Ftab%3Dreadme-ov-file&owner=Ludvikroed&category=integration)
 
 ### Manual Installation
 
@@ -29,57 +27,34 @@ A custom Home Assistant integration that connects your Homely alarm system with 
 
 > **Multiple Homes?** Add the integration once per home using home ID 0, 1, 2, etc.
 
----
-
 ## Advanced Configuration
 
-- **Polling interval**: Adjust API polling frequency (backup for websockets)
+- **Polling interval**: Adjust API polling frequency shown in seconds (backup for websockets)
 - **Multiple homes**: Add integration for each home ID (0, 1, 2...)
 - **WebSocket toggle**: Enable/disable instant updates
 
-### Enable Debug Logging
-
-To troubleshoot issues or monitor WebSocket and API activity, add to your `configuration.yaml`:
-
-```yaml
-logger:
-  default: info
-  logs:
-    custom_components.homely: debug
-    custom_components.homely.websocket: debug
-    custom_components.homely.api: debug
-    custom_components.homely.config_flow: debug
-```
-
-Then restart Home Assistant and check the logs under **Settings** → **System** → **Logs**.
-
 ---
 
-## Troubleshooting
-
-Please open an issue if you have problems after reading the troubleshooting guide
-### Integration Won't Load
+## Troubleshooting steps:
 
 - Verify your Homely username and password are correct
 - Check the home ID. This is 0 if you only have one Homely home
+- Websockets might take 10-30 seconds to connect
+- Enable debugging (shown above) and check HA logs
 
-### WebSocket Not Connecting
+If you can't resolve your problem, please open an issue.
 
-**Symptoms**: Updates take 2 minutes instead of being instant
+### Enable Debug Logging
 
-Enable debugging (shown above) and check HA logs for:
-```yaml
-# Look for these log messages:
-# "WebSocket connection established"
-# "WebSocket connected"
-# "WebSocket connection failed"
-```
+To troubleshoot issues or monitor WebSocket and API activity, go to the Homely integration, three dots in the upper right corner and select "Enable debug logging"
+
+Then check the logs under **Settings** → **System** → **Logs**.
 
 ---
 
 ## Supported Devices
 
-### Fully Supported
+### Fully Supported:
 - Alarm status
 - Temperature sensors
 - Motion detectors
@@ -89,16 +64,15 @@ Enable debugging (shown above) and check HA logs for:
 - Smart plugs (status monitoring)
 - HAN meter (energy consumption/production)
 
-
 ### Not Supported
 - Yale Doorman (not available via API)
 - Some vendor specific devices
-- Direct device control (read-only integration)
+- Direct device control (The Homely API is read-only)
 
-> **Note**: This integration is only tested with smoke detectors, alarm panel, door sensors, and motion sensors. Please report issues with other device types if you find any.
+> **Note**: This integration is not tested with all devices supported through the Homely API. Please open an issue if you are missing devices or features.
 
 ### Battery Status
-The integration provides a sensor called `Status of batteries` that shows the overall battery health for all devices. If any device reports a battery as low or defective, the sensor state will be `Defective`. If all batteries are healthy, the sensor state will be `Healthy`.
+The integration provides a sensor called `Status of batteries` that shows the overall battery health for most devices. If any device reports a battery as low or defective, the sensor state will be `Defective`. If all batteries are healthy, the sensor state will be `Healthy`.
 
 ---
 
@@ -107,8 +81,6 @@ The integration provides a sensor called `Status of batteries` that shows the ov
 Contributions welcome! [Report bugs or suggest features](https://github.com/ludvikroed/homely-integration/issues).
 
 > ⭐ If you find this integration useful, please consider giving it a star on [GitHub](https://github.com/ludvikroed/homely-integration)!
-
----
 
 ## About
 

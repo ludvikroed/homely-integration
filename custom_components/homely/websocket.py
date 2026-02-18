@@ -43,8 +43,7 @@ class HomelyWebSocket:
 
     def _on_event(self, data: Any) -> None:
         """Handle event from WebSocket (called from sync/async context)."""
-        _LOGGER.debug("WebSocket event received")
-        
+        _LOGGER.debug("WebSocket event received: %r", data)
         if isinstance(data, dict):
             try:
                 self.on_data_update(data)
@@ -55,12 +54,30 @@ class HomelyWebSocket:
         """Handle successful connection (called from sync context)."""
         _LOGGER.info("WebSocket connected")
         self._reconnect_delay = 5
+        self._notify_status_sensors()
 
     def _on_disconnect(self) -> None:
         """Handle disconnection (called from sync context)."""
         _LOGGER.info("WebSocket disconnected")
+        self._notify_status_sensors()
         if not self._is_closing:
             _LOGGER.debug("Unexpected disconnection, will attempt automatic reconnection")
+
+    def _notify_status_sensors(self):
+        """Notify HomelyWebSocketStatusSensor entities to update state immediately."""
+        try:
+            import homeassistant.helpers.entity_platform
+            # Find all loaded platforms for this integration
+            hass = getattr(self, '_hass', None)
+            if not hass:
+                return
+            for entry in getattr(hass, 'config_entries', []):
+                entry_data = hass.data.get('homely', {}).get(entry.entry_id, {})
+                for entity in getattr(entry_data, 'entities', []):
+                    if entity.__class__.__name__ == 'HomelyWebSocketStatusSensor':
+                        entity.async_write_ha_state()
+        except Exception as e:
+            _LOGGER.debug("Could not notify status sensors: %s", e)
 
     def _on_error(self, error: Any) -> None:
         """Handle error (called from sync context)."""
