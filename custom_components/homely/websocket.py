@@ -18,7 +18,6 @@ class HomelyWebSocket:
         location_id: str | int,
         token: str,
         on_data_update: Callable[[dict[str, Any]], None],
-        use_test_server: bool = False,
     ):
         """Initialize WebSocket client.
         
@@ -26,23 +25,20 @@ class HomelyWebSocket:
             location_id: Location ID for the device
             token: Access token for authentication
             on_data_update: Callback function when data is updated
-            use_test_server: Use test server (test-sdk.iotiliti.cloud) instead of production
         """
         self.location_id = location_id
         self.token = token
         self.on_data_update = on_data_update
-        self.use_test_server = use_test_server
         self.socket = None
         self._connect_task: asyncio.Task | None = None
         self._reconnect_delay = 5
-        self._max_reconnect_delay = 60
+        self._max_reconnect_delay = 600
+        self._max_reconnect_attempts = 500
         self._is_closing = False
 
     @property
     def websocket_url(self) -> str:
-        """Get WebSocket URL."""
-        if self.use_test_server:
-            return "https://test-sdk.iotiliti.cloud"
+        """WebSocket URL."""
         return "https://sdk.iotiliti.cloud"
 
     def _on_event(self, data: Any) -> None:
@@ -72,119 +68,143 @@ class HomelyWebSocket:
 
     async def connect(self) -> bool:
         """Connect to WebSocket server."""
-        if self._is_closing:
-            _LOGGER.debug("Not connecting: WebSocket is closing")
-            return False
-
         try:
-            # Import here to avoid issues if python-socketio is not installed
-            import socketio
-        except ImportError:
-            _LOGGER.error("python-socketio is not installed. WebSocket support disabled.")
-            return False
+            if self._is_closing:
+                _LOGGER.debug("Not connecting: WebSocket is closing")
+                return False
 
-        if self.socket is not None:
-            _LOGGER.warning("WebSocket already connected")
-            return True
+            try:
+                # Import here to avoid issues if python-socketio is not installed
+                import socketio
+            except ImportError:
+                _LOGGER.error("python-socketio is not installed. WebSocket support disabled.")
+                return False
 
-        try:
-            self.socket = socketio.AsyncClient(
-                reconnection=True,
-                reconnection_delay=self._reconnect_delay,
-                reconnection_delay_max=self._max_reconnect_delay,
-                reconnection_attempts=10,
-                logger=False,
-                engineio_logger=False,
-            )
+            if self.socket is not None:
+                _LOGGER.warning("WebSocket already connected")
+                return True
 
-            # Register event handlers
-            @self.socket.event
-            async def connect():
-                """Handle connect event."""
-                self._on_connect()
+            try:
+                self.socket = socketio.AsyncClient(
+                    reconnection=True,
+                    reconnection_delay=self._reconnect_delay,
+                    reconnection_delay_max=self._max_reconnect_delay,
+                    reconnection_attempts=self._max_reconnect_attempts,
+                    logger=False,
+                    engineio_logger=False,
+                )
 
-            @self.socket.event
-            async def disconnect():
-                """Handle disconnect event."""
-                self._on_disconnect()
+                # Register event handlers
+                @self.socket.event
+                async def connect():
+                    try:
+                        self._on_connect()
+                    except Exception as err:
+                        _LOGGER.error("Exception in connect handler: %s", err, exc_info=True)
 
-            @self.socket.event
-            async def message(data):
-                """Handle message event."""
-                self._on_event(data)
+                @self.socket.event
+                async def disconnect():
+                    try:
+                        self._on_disconnect()
+                    except Exception as err:
+                        _LOGGER.error("Exception in disconnect handler: %s", err, exc_info=True)
 
-            @self.socket.event
-            async def event(data):
-                """Handle event event."""
-                self._on_event(data)
+                @self.socket.event
+                async def message(data):
+                    try:
+                        self._on_event(data)
+                    except Exception as err:
+                        _LOGGER.error("Exception in message handler: %s", err, exc_info=True)
 
-            @self.socket.on("*")
-            async def catch_all(event, data):
-                """Catch all events."""
-                _LOGGER.debug("WebSocket event: %s", event)
-                if event not in ("connect", "disconnect", "message", "event", "connect_error"):
-                    self._on_event({"type": event, "payload": data})
+                @self.socket.event
+                async def event(data):
+                    try:
+                        self._on_event(data)
+                    except Exception as err:
+                        _LOGGER.error("Exception in event handler: %s", err, exc_info=True)
 
-            @self.socket.event
-            async def connect_error(data):
-                """Handle connect error."""
-                _LOGGER.error("WebSocket CONNECT ERROR: %s", data)
-                self._on_error(f"Connect error: {data}")
+                @self.socket.on("*")
+                async def catch_all(event, data):
+                    try:
+                        _LOGGER.debug("WebSocket event: %s", event)
+                        if event not in ("connect", "disconnect", "message", "event", "connect_error"):
+                            self._on_event({"type": event, "payload": data})
+                    except Exception as err:
+                        _LOGGER.error("Exception in catch_all handler: %s", err, exc_info=True)
 
-            # Build URL - use https:// with Bearer token and space
-            url = f"https://sdk.iotiliti.cloud?locationId={self.location_id}&token=Bearer {self.token}"
-            
-            _LOGGER.debug("WebSocket connecting to %s", self.websocket_url)
-            await self.socket.connect(
-                url,
-                transports=["websocket", "polling"],
-                headers={
-                    "Authorization": f"Bearer {self.token}",
-                },
-                wait_timeout=10,
-            )
-            _LOGGER.info("WebSocket connection established")
-            return True
+                @self.socket.event
+                async def connect_error(data):
+                    try:
+                        _LOGGER.error("WebSocket CONNECT ERROR: %s", data)
+                        self._on_error(f"Connect error: {data}")
+                    except Exception as err:
+                        _LOGGER.error("Exception in connect_error handler: %s", err, exc_info=True)
 
-        except asyncio.TimeoutError:
-            _LOGGER.error("WebSocket connection timeout")
-            self.socket = None
-            return False
-        except aiohttp.ClientError as err:
-            _LOGGER.error("WebSocket network error: %s", err)
-            self.socket = None
-            return False
+                # Build URL - use https:// with Bearer token and space
+                url = f"https://sdk.iotiliti.cloud?locationId={self.location_id}&token=Bearer {self.token}"
+
+                _LOGGER.debug("WebSocket connecting to %s", self.websocket_url)
+                await self.socket.connect(
+                    url,
+                    transports=["websocket", "polling"],
+                    headers={
+                        "Authorization": f"Bearer {self.token}",
+                    },
+                    wait_timeout=10,
+                )
+                _LOGGER.info("WebSocket connection established")
+                return True
+
+            except asyncio.TimeoutError:
+                _LOGGER.error("WebSocket connection timeout")
+                self.socket = None
+                return False
+            except aiohttp.ClientError as err:
+                _LOGGER.error("WebSocket network error: %s", err)
+                self.socket = None
+                return False
+            except Exception as err:
+                _LOGGER.error("WebSocket connection failed: %s", err, exc_info=True)
+                self.socket = None
+                return False
         except Exception as err:
-            _LOGGER.error("WebSocket connection failed: %s", err)
+            _LOGGER.error("Exception in connect(): %s", err, exc_info=True)
             self.socket = None
             return False
 
     async def disconnect(self) -> None:
         """Disconnect from WebSocket server."""
-        self._is_closing = True
-        if self.socket is not None:
-            try:
-                _LOGGER.debug("Disconnecting WebSocket")
-                await asyncio.wait_for(self.socket.disconnect(), timeout=5)
-            except asyncio.TimeoutError:
-                _LOGGER.warning("WebSocket disconnect timeout, forcing close")
-            except Exception as err:
-                _LOGGER.debug("Error during WebSocket disconnect: %s", err)
-            finally:
-                self.socket = None
-        self._is_closing = False
+        try:
+            self._is_closing = True
+            if self.socket is not None:
+                try:
+                    _LOGGER.debug("Disconnecting WebSocket")
+                    await asyncio.wait_for(self.socket.disconnect(), timeout=5)
+                except asyncio.TimeoutError:
+                    _LOGGER.warning("WebSocket disconnect timeout, forcing close")
+                except Exception as err:
+                    _LOGGER.debug("Error during WebSocket disconnect: %s", err, exc_info=True)
+                finally:
+                    self.socket = None
+        except Exception as err:
+            _LOGGER.error("Exception in disconnect(): %s", err, exc_info=True)
+        finally:
+            self._is_closing = False
 
     async def reconnect_with_token(self, token: str) -> None:
         """Update token and reconnect."""
-        _LOGGER.debug("Updating WebSocket token and reconnecting")
-        self.token = token
-        await self.disconnect()
-        await asyncio.sleep(1)
-        success = await self.connect()
-        if not success:
-            _LOGGER.error("Failed to reconnect WebSocket with new token")
-        else:
-            _LOGGER.debug("WebSocket reconnected with new token")
+        try:
+            _LOGGER.debug("Updating WebSocket token and reconnecting")
+            self.token = token
+            await self.disconnect()
+            await asyncio.sleep(1)
+            success = await self.connect()
+            if not success:
+                _LOGGER.error("Failed to reconnect WebSocket with new token")
+            else:
+                _LOGGER.debug("WebSocket reconnected with new token")
+        except Exception as err:
+            _LOGGER.error("Exception in reconnect_with_token(): %s", err, exc_info=True)
 
     def is_connected(self) -> bool:
         """Check if WebSocket is connected."""

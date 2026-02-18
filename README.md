@@ -97,6 +97,9 @@ Enable debugging (shown above) and check HA logs for:
 
 > **Note**: This integration is only tested with smoke detectors, alarm panel, door sensors, and motion sensors. Please report issues with other device types if you find any.
 
+### Battery Status
+The integration provides a sensor called `Status of batteries` that shows the overall battery health for all devices. If any device reports a battery as low or defective, the sensor state will be `Defective`. If all batteries are healthy, the sensor state will be `Healthy`.
+
 ---
 
 ## Contributing

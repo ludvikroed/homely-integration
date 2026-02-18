@@ -158,7 +158,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 location_id=entry_data["location_id"],
                 token=entry_data["access_token"],
                 on_data_update=on_websocket_data,
-                use_test_server=False,
             )
             success = await ws.connect()
             if success:
@@ -177,24 +176,42 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         access_token = entry_data["access_token"]
         refresh_token = entry_data["refresh_token"]
         expires_at = entry_data["expires_at"]
+
+        _LOGGER.debug("Polling: Fetching data from Homely API...")
         
         # Refresh token a bit before it expires
         if time.time() >= expires_at:
             _LOGGER.debug("Token expires soon, refreshing")
             refresh_response = await fetch_refresh_token(hass, refresh_token)
             if not refresh_response:
-                raise UpdateFailed("Failed to refresh token")
-            new_access_token = refresh_response.get("access_token")
-            new_refresh_token = refresh_response.get("refresh_token") or refresh_token
-            new_expires_in = refresh_response.get("expires_in")
-            if not new_access_token or not new_expires_in:
-                raise UpdateFailed("Refresh response missing required fields")
-            entry_data["access_token"] = new_access_token
-            entry_data["refresh_token"] = new_refresh_token
-            entry_data["expires_at"] = time.time() + int(new_expires_in) - 60
-            access_token = new_access_token
-            _LOGGER.debug("Token refreshed")
-            
+                _LOGGER.error("Token refresh failed! Trying full login with username/password.")
+                try:
+                    login_response = await fetch_token(hass, entry_data["username"], entry_data["password"])
+                except Exception as err:
+                    raise UpdateFailed(f"Full login after refresh failed: {err}")
+                if not login_response:
+                    raise UpdateFailed("Failed to refresh token and full login also failed.")
+                new_access_token = login_response.get("access_token")
+                new_refresh_token = login_response.get("refresh_token") or refresh_token
+                new_expires_in = login_response.get("expires_in")
+                if not new_access_token or not new_expires_in:
+                    raise UpdateFailed("Full login response missing required fields")
+                entry_data["access_token"] = new_access_token
+                entry_data["refresh_token"] = new_refresh_token
+                entry_data["expires_at"] = time.time() + int(new_expires_in) - 60
+                access_token = new_access_token
+                _LOGGER.info("Token refreshed via full login.")
+            else:
+                new_access_token = refresh_response.get("access_token")
+                new_refresh_token = refresh_response.get("refresh_token") or refresh_token
+                new_expires_in = refresh_response.get("expires_in")
+                if not new_access_token or not new_expires_in:
+                    raise UpdateFailed("Refresh response missing required fields")
+                entry_data["access_token"] = new_access_token
+                entry_data["refresh_token"] = new_refresh_token
+                entry_data["expires_at"] = time.time() + int(new_expires_in) - 60
+                access_token = new_access_token
+                _LOGGER.debug("Token refreshed")
             # Update WebSocket with new token
             ws = entry_data.get("websocket")
             if ws and ws.is_connected():
@@ -206,9 +223,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         location_id_value = entry_data["location_id"]
         # Fetch latest data
-        updated = await get_data(hass, access_token, location_id_value)
-        if not updated:
-            raise UpdateFailed("Failed to fetch data from API")
+        try:
+            updated = await get_data(hass, access_token, location_id_value)
+            if not updated:
+                _LOGGER.error("Polling: Failed to fetch data from API")
+                raise UpdateFailed("Failed to fetch data from API")
+            _LOGGER.debug("Polling: Successfully fetched data from Homely API")
+        except Exception as err:
+            _LOGGER.error(f"Polling: Exception while fetching data from API: {err}")
+            raise UpdateFailed(f"Exception while fetching data from API: {err}")
         
         # Log what changed in alarm state
         old_alarm = entry_data["data"].get("features", {}).get("alarm", {}).get("states", {}).get("alarm", {}).get("value")
