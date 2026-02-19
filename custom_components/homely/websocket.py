@@ -9,7 +9,6 @@ import aiohttp
 
 _LOGGER = logging.getLogger(__name__)
 
-
 class HomelyWebSocket:
     """WebSocket client for Homely using SocketIO."""
 
@@ -18,6 +17,7 @@ class HomelyWebSocket:
         location_id: str | int,
         token: str,
         on_data_update: Callable[[dict[str, Any]], None],
+        status_update_callback: Callable[[], None] | None = None,
     ):
         """Initialize WebSocket client.
         
@@ -35,6 +35,11 @@ class HomelyWebSocket:
         self._max_reconnect_delay = 600
         self._max_reconnect_attempts = 500
         self._is_closing = False
+        # Background reconnect task when connection lost (keeps trying)
+        self._reconnect_task: asyncio.Task | None = None
+        self._reconnect_interval = 10
+        # Optional callback to notify status sensors immediately
+        self._status_update_callback = status_update_callback
 
     @property
     def websocket_url(self) -> str:
@@ -54,14 +59,77 @@ class HomelyWebSocket:
         """Handle successful connection (called from sync context)."""
         _LOGGER.info("WebSocket connected")
         self._reconnect_delay = 5
-        self._notify_status_sensors()
+        # Stop any background reconnect attempts once connected
+        try:
+            self._stop_reconnect_loop()
+        except Exception:
+            pass
+        # Notify status sensors via callback if provided
+        if self._status_update_callback:
+            try:
+                self._status_update_callback()
+            except Exception as err:
+                _LOGGER.debug("Status callback error on connect: %s", err)
+        else:
+            self._notify_status_sensors()
 
     def _on_disconnect(self) -> None:
         """Handle disconnection (called from sync context)."""
         _LOGGER.info("WebSocket disconnected")
-        self._notify_status_sensors()
+        # Notify status sensors via callback if provided
+        if self._status_update_callback:
+            try:
+                self._status_update_callback()
+            except Exception as err:
+                _LOGGER.debug("Status callback error on disconnect: %s", err)
+        else:
+            self._notify_status_sensors()
+        # Start background reconnect attempts
+        try:
+            self._start_reconnect_loop()
+        except Exception:
+            pass
         if not self._is_closing:
             _LOGGER.debug("Unexpected disconnection, will attempt automatic reconnection")
+
+    def _start_reconnect_loop(self) -> None:
+        """Start a background task that keeps trying to reconnect.
+
+        This is resilient to network outages: it will keep attempting
+        to connect until successful or the websocket is closed.
+        """
+        if self._reconnect_task and not self._reconnect_task.done():
+            return
+
+        loop = asyncio.get_event_loop()
+        self._reconnect_task = loop.create_task(self._reconnect_loop())
+
+    def _stop_reconnect_loop(self) -> None:
+        """Cancel background reconnect task if running."""
+        if self._reconnect_task:
+            try:
+                self._reconnect_task.cancel()
+            except Exception:
+                pass
+            self._reconnect_task = None
+
+    async def _reconnect_loop(self) -> None:
+        """Continuously attempt to reconnect with exponential backoff."""
+        attempt = 0
+        while not self._is_closing and (self.socket is None or not getattr(self.socket, "connected", False)):
+            try:
+                _LOGGER.debug("Reconnect loop: attempt %s", attempt + 1)
+                success = await self.connect()
+                if success:
+                    _LOGGER.debug("Reconnect loop: connection successful")
+                    return
+            except Exception as err:
+                _LOGGER.debug("Reconnect loop exception: %s", err)
+
+            # exponential backoff up to max_reconnect_delay
+            delay = min(self._reconnect_interval * (2 ** attempt), self._max_reconnect_delay)
+            await asyncio.sleep(delay)
+            attempt += 1
 
     def _notify_status_sensors(self):
         """Notify HomelyWebSocketStatusSensor entities to update state immediately."""
@@ -91,7 +159,6 @@ class HomelyWebSocket:
                 return False
 
             try:
-                # Import here to avoid issues if python-socketio is not installed
                 import socketio
             except ImportError:
                 _LOGGER.error("python-socketio is not installed. WebSocket support disabled.")
@@ -206,6 +273,11 @@ class HomelyWebSocket:
         except Exception as err:
             _LOGGER.error("Exception in disconnect(): %s", err, exc_info=True)
         finally:
+            # stop reconnect loop and mark closing finished
+            try:
+                self._stop_reconnect_loop()
+            except Exception:
+                pass
             self._is_closing = False
 
     async def reconnect_with_token(self, token: str) -> None:

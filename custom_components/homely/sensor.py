@@ -116,6 +116,15 @@ class HomelyWebSocketStatusSensor(SensorEntity):
             manufacturer="Homely",
             model="Location",
         )
+        # Register this sensor instance so the websocket client can notify it
+        try:
+            hass.data.setdefault(DOMAIN, {})
+            entry_data = hass.data[DOMAIN].get(entry.entry_id)
+            if entry_data is not None:
+                entry_data.setdefault("entities", []).append(self)
+        except Exception:
+            # Best effort; ignore registration errors
+            pass
     
     @property
     def native_value(self) -> str:

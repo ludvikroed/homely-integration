@@ -154,10 +154,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         """Initialize WebSocket connection."""
         try:
             entry_data = hass.data[DOMAIN][entry.entry_id]
+            # Define a status callback that updates registered entities immediately
+            def _status_callback():
+                try:
+                    ed = hass.data[DOMAIN].get(entry.entry_id)
+                    if not ed:
+                        return
+                    for ent in ed.get("entities", []):
+                        try:
+                            ent.async_write_ha_state()
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
             ws = HomelyWebSocket(
                 location_id=entry_data["location_id"],
                 token=entry_data["access_token"],
                 on_data_update=on_websocket_data,
+                status_update_callback=_status_callback,
             )
             success = await ws.connect()
             if success:
@@ -289,6 +304,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if enable_websocket:
         asyncio.create_task(init_websocket())
         _LOGGER.debug("WebSocket initialization scheduled")
+        # Listen for Home Assistant "internet_available" event and trigger reconnect
+        def _internet_available(event):
+            try:
+                entry_data = hass.data[DOMAIN].get(entry.entry_id)
+                if not entry_data:
+                    return
+                ws = entry_data.get("websocket")
+                if ws and not ws.is_connected():
+                    _LOGGER.debug("Internet available event received, attempting websocket reconnect")
+                    try:
+                        asyncio.create_task(ws.connect())
+                    except Exception as err:
+                        _LOGGER.debug("Error scheduling websocket reconnect: %s", err)
+            except Exception as err:
+                _LOGGER.debug("Error handling internet_available event: %s", err)
+
+        try:
+            internet_unsub = hass.bus.async_listen("internet_available", _internet_available)
+            hass.data[DOMAIN][entry.entry_id]["internet_unsub"] = internet_unsub
+        except Exception:
+            _LOGGER.debug("Could not register internet_available listener")
     else:
         _LOGGER.info("WebSocket disabled in options, using polling only")
     
@@ -315,6 +351,13 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         remove_listener = hass.data[DOMAIN][entry.entry_id].get("coordinator_listener")
         if remove_listener:
             remove_listener()
+        # Remove internet event listener if registered
+        internet_unsub = hass.data[DOMAIN][entry.entry_id].get("internet_unsub")
+        if internet_unsub:
+            try:
+                internet_unsub()
+            except Exception:
+                pass
         
         # Disconnect WebSocket
         ws = hass.data[DOMAIN][entry.entry_id].get("websocket")

@@ -38,14 +38,13 @@ async def async_setup_entry(hass, entry, async_add_entities):
 class HomelyAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
     def __init__(self, coordinator, location_id):
         super().__init__(coordinator)
-        location_name = (coordinator.data or {}).get("name", "Location")
+        location_name = (coordinator.data or {}).get("name") or f"Homely location {location_id}"
         self._attr_name = f"{location_name} Alarm"
         self._attr_unique_id = f"location_{location_id}_alarm_panel"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"location_{location_id}")},
             name=location_name,
-            manufacturer="Homely",
-            model="Location",
+            model="Data from homely API",
         )
 
     @property
