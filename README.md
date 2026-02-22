@@ -25,20 +25,22 @@ A Home Assistant integration that connects your Homely alarm system with Home As
 3. Enter your Homely account credentials (username and password)
 4. Click **"Submit"**
 
-> **Multiple Homes?** Add the integration once per home using home ID 0, 1, 2, etc.
+> **Multiple Homes?** Add the integration once per home using Home index 0, 1, 2, etc.
 
 ## Advanced Configuration
 
 - **Polling interval**: Adjust API polling frequency shown in seconds (backup for websockets)
-- **Multiple homes**: Add integration for each home ID (0, 1, 2...)
+- **Multiple homes**: Add integration for each Home index (0, 1, 2...)
 - **WebSocket toggle**: Enable/disable instant updates
+
+For deeper details and value reference (including battery status values), see [documentation.md](documentation.md).
 
 ---
 
 ## Troubleshooting steps:
 
 - Verify your Homely username and password are correct
-- Check the home ID. This is 0 if you only have one Homely home
+- Check the Home index. This is 0 if you only have one Homely home
 - Websockets might take 10-30 seconds to connect
 - Enable debugging (shown above) and check HA logs
 

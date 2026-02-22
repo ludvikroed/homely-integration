@@ -22,36 +22,48 @@ from .const import (
     DOMAIN,
 )
 from .websocket import HomelyWebSocket
+from .ws_updates import apply_websocket_event_to_data
 
 PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.ALARM_CONTROL_PANEL]
 _LOGGER = logging.getLogger(__name__)
 
 
+def _ctx(entry_id: str, location_id: str | None = None, device_id: str | None = None) -> str:
+    """Build consistent structured logging context."""
+    context = f"entry_id={entry_id}"
+    if location_id is not None:
+        context += f" location_id={location_id}"
+    if device_id is not None:
+        context += f" device_id={device_id}"
+    return context
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Homely Alarm from a config entry."""
-    _LOGGER.debug("Setting up Homely Alarm entry")
+    entry_id = entry.entry_id
+    _LOGGER.debug("Setting up Homely Alarm entry entry_id=%s", entry_id)
     
     # Initial login to get tokens
     response = await fetch_token(hass, entry.data["username"], entry.data["password"])
 
     if not response:
-        _LOGGER.error("Failed to fetch token - check username/password")
+        _LOGGER.error("Failed to fetch token - check username/password entry_id=%s", entry_id)
         return False
 
     access_token_str = response.get("access_token")
     refresh_token_str = response.get("refresh_token")
     expires_in = response.get("expires_in")
     if not access_token_str or not refresh_token_str:
-        _LOGGER.error("Token response missing required fields")
+        _LOGGER.error("Token response missing required fields entry_id=%s", entry_id)
         return False
     if not expires_in:
-        _LOGGER.error("Token response missing expires_in")
+        _LOGGER.error("Token response missing expires_in entry_id=%s", entry_id)
         return False
 
     # Resolve location id for the selected home
     location_response = await get_location_id(hass, access_token_str)
     if not location_response:
-        _LOGGER.error("Failed to fetch locations from API")
+        _LOGGER.error("Failed to fetch locations from API entry_id=%s", entry_id)
         return False
 
     # Map user-provided home_id to the API location_id
@@ -60,20 +72,30 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         CONF_HOME_ID,
         entry.data.get(CONF_HOME_ID, DEFAULT_HOME_ID)
     ))
-    _LOGGER.debug("Using home_id: %s", home_id)
+    _LOGGER.debug("Using home_id=%s entry_id=%s", home_id, entry_id)
     try:
         location_item = location_response[home_id]
         location_id = location_item["locationId"]
     except (KeyError, IndexError, TypeError) as err:
-        _LOGGER.error("Failed to find location_id for home_id %s: %s", home_id, err)
+        _LOGGER.error(
+            "Failed to find location_id for home_id=%s entry_id=%s: %s",
+            home_id,
+            entry_id,
+            err,
+        )
         return False
     
-    _LOGGER.debug("Resolved home_id %s to location_id %s", home_id, location_id)
+    _LOGGER.debug(
+        "Resolved home_id=%s to location_id=%s entry_id=%s",
+        home_id,
+        location_id,
+        entry_id,
+    )
     
     # Initial data fetch
     data = await get_data(hass, access_token_str, location_id)
     if not data:
-        _LOGGER.error("Failed to fetch location data")
+        _LOGGER.error("Failed to fetch location data entry_id=%s location_id=%s", entry_id, location_id)
         return False
     
     # Store state for coordinator and entities
@@ -93,124 +115,77 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "ws_status_listeners": [],
     }
 
-    def _ensure_alarm_root(data_dict: dict) -> dict:
-        """Ensure alarm root structure exists and return alarm state dict."""
-        features = data_dict.setdefault("features", {})
-        alarm_feature = features.setdefault("alarm", {})
-        states = alarm_feature.setdefault("states", {})
-        return states.setdefault("alarm", {})
-
-    def _apply_device_state_changes(data_dict: dict, event_payload: dict) -> bool:
-        """Apply device-state-changed payload directly to local cached data."""
-        device_id = event_payload.get("deviceId")
-        if not device_id:
-            return False
-
-        devices = data_dict.get("devices", [])
-        device = next((d for d in devices if d.get("id") == device_id), None)
-        if not isinstance(device, dict):
-            _LOGGER.debug("WebSocket change for unknown device_id=%s", device_id)
-            return False
-
-        changes = event_payload.get("changes")
-        if not isinstance(changes, list) or not changes:
-            single_change = event_payload.get("change")
-            changes = [single_change] if isinstance(single_change, dict) else []
-
-        applied = False
-        for change in changes:
-            if not isinstance(change, dict):
-                continue
-
-            feature = change.get("feature")
-            state_name = change.get("stateName")
-            if not feature or not state_name:
-                continue
-
-            value = change.get("value")
-            last_updated = change.get("lastUpdated")
-
-            features = device.setdefault("features", {})
-            feature_dict = features.setdefault(feature, {})
-            states = feature_dict.setdefault("states", {})
-            state = states.setdefault(state_name, {})
-
-            old_value = state.get("value")
-            state["value"] = value
-            if last_updated is not None:
-                state["lastUpdated"] = last_updated
-
-            _LOGGER.debug(
-                "Applied WS change device=%s feature=%s state=%s value=%s (old=%s)",
-                device_id,
-                feature,
-                state_name,
-                value,
-                old_value,
-            )
-            applied = True
-
-        return applied
-
     # WebSocket callback to update data when events are received
     def on_websocket_data(event_data: dict) -> None:
         """Handle WebSocket data updates and update local cache directly."""
-        event_type = event_data.get("type")
-        event_payload = event_data.get("data")
-        if not isinstance(event_payload, dict):
-            event_payload = event_data.get("payload")
-        if not isinstance(event_payload, dict):
-            event_payload = {}
-        
         # Get current entry_data from hass.data (not from closure)
         try:
             current_entry_data = hass.data[DOMAIN][entry.entry_id]
-            
-            # Handle location alarm state changes.
+            result = apply_websocket_event_to_data(current_entry_data["data"], event_data)
+            event_type = result.get("event_type")
+            device_id = result.get("device_id")
+
+            if event_type in ("connect", "disconnect"):
+                return
+
             if event_type == "alarm-state-changed":
-                alarm_state = event_payload.get("state")
-                _LOGGER.info("Alarm state changed via WebSocket: %s", alarm_state)
-
-                alarm_state_dict = _ensure_alarm_root(current_entry_data["data"])
-                alarm_state_dict["value"] = alarm_state
-                current_entry_data["data"]["alarmState"] = alarm_state
-
-                if coordinator:
+                _LOGGER.debug(
+                    "Applied websocket alarm update entry_id=%s location_id=%s alarm_state=%s",
+                    entry_id,
+                    location_id,
+                    result.get("alarm_state"),
+                )
+                if coordinator and result.get("updated"):
                     coordinator.async_set_updated_data(current_entry_data["data"])
                 return
 
-            # Handle device state changes directly from websocket payload.
-            elif event_type == "device-state-changed":
-                device_id = event_payload.get("deviceId")
-                change = event_payload.get("change", {})
-                feature = change.get("feature", "unknown")
-                value = change.get("value")
-                _LOGGER.debug("Device state changed: %s, feature=%s, value=%s", device_id, feature, value)
-
-                applied = _apply_device_state_changes(current_entry_data["data"], event_payload)
-                if applied and coordinator:
-                    coordinator.async_set_updated_data(current_entry_data["data"])
-                elif not applied:
+            if event_type == "device-state-changed":
+                applied_changes = result.get("changes", [])
+                if applied_changes:
+                    for change in applied_changes:
+                        _LOGGER.debug(
+                            "Applied websocket device update entry_id=%s location_id=%s "
+                            "device_id=%s feature=%s state=%s value=%s old_value=%s",
+                            entry_id,
+                            location_id,
+                            change.get("device_id"),
+                            change.get("feature"),
+                            change.get("state_name"),
+                            change.get("value"),
+                            change.get("old_value"),
+                        )
+                    if coordinator:
+                        coordinator.async_set_updated_data(current_entry_data["data"])
+                else:
                     _LOGGER.debug(
-                        "WS device-state-changed could not be applied directly (device/state missing). "
-                        "No immediate API refresh; periodic polling will reconcile state."
+                        "Device websocket event could not be applied directly; "
+                        "entry_id=%s location_id=%s device_id=%s",
+                        entry_id,
+                        location_id,
+                        device_id,
                     )
                 return
 
-            # Ignore pure connection lifecycle events in data handler.
-            elif event_type in ("connect", "disconnect"):
-                return
-
-            # Other websocket events are logged only; periodic polling remains backup sync.
             _LOGGER.debug(
-                "WebSocket event %s received; no API refresh triggered by websocket handler",
+                "Ignoring unsupported websocket event entry_id=%s location_id=%s event_type=%s",
+                entry_id,
+                location_id,
                 event_type,
             )
             
-        except KeyError as e:
-            _LOGGER.error("Entry data not found during WebSocket callback: %s", e)
-        except Exception as e:
-            _LOGGER.error("Error in WebSocket callback: %s", e, exc_info=True)
+        except KeyError as err:
+            _LOGGER.error(
+                "Entry data missing during websocket callback %s: %s",
+                _ctx(entry_id, location_id),
+                err,
+            )
+        except Exception as err:
+            _LOGGER.error(
+                "Unhandled exception in websocket callback %s: %s",
+                _ctx(entry_id, location_id),
+                err,
+                exc_info=True,
+            )
 
     async def init_websocket() -> None:
         """Initialize WebSocket connection."""
@@ -232,19 +207,34 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         for listener in list(current.get("ws_status_listeners", [])):
                             try:
                                 listener()
-                            except Exception:
-                                pass
+                            except Exception as err:
+                                _LOGGER.debug(
+                                    "ws_status listener callback failed %s: %s",
+                                    _ctx(entry_id, location_id),
+                                    err,
+                                )
                         if coordinator:
                             try:
                                 coordinator.async_update_listeners()
-                            except Exception:
-                                pass
+                            except Exception as err:
+                                _LOGGER.debug(
+                                    "coordinator listener update failed %s: %s",
+                                    _ctx(entry_id, location_id),
+                                    err,
+                                )
 
                     hass.loop.call_soon_threadsafe(_dispatch_status_update)
-                except Exception:
-                    pass
+                except Exception as err:
+                    _LOGGER.debug(
+                        "WebSocket status callback failed %s status=%s reason=%s: %s",
+                        _ctx(entry_id, location_id),
+                        status,
+                        reason,
+                        err,
+                    )
 
             ws = HomelyWebSocket(
+                entry_id=entry_id,
                 location_id=entry_data["location_id"],
                 token=entry_data["access_token"],
                 on_data_update=on_websocket_data,
@@ -255,15 +245,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             entry_data["ws_status_reason"] = ws.status_reason
             success = await ws.connect()
             if success:
-                _LOGGER.info("WebSocket connection established")
+                _LOGGER.debug("WebSocket initial connect succeeded entry_id=%s location_id=%s", entry_id, location_id)
             else:
                 _LOGGER.warning(
-                    "WebSocket connection failed. Polling continues, and reconnect loop will keep retrying"
+                    "WebSocket connection failed entry_id=%s location_id=%s. "
+                    "Polling continues and reconnect loop retries",
+                    entry_id,
+                    location_id,
                 )
         except KeyError:
-            _LOGGER.error("Entry data not found for WebSocket initialization")
+            _LOGGER.error("Entry data missing for websocket init entry_id=%s", entry_id)
         except Exception as err:
-            _LOGGER.error("Error initializing WebSocket: %s", err, exc_info=True)
+            _LOGGER.error("Error initializing websocket entry_id=%s: %s", entry_id, err, exc_info=True)
 
     async def async_update_data() -> dict:
         """Periodic refresh of location data."""
@@ -272,14 +265,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         refresh_token = entry_data["refresh_token"]
         expires_at = entry_data["expires_at"]
 
-        _LOGGER.debug("Polling: Fetching data from Homely API...")
+        _LOGGER.debug("Polling fetch start entry_id=%s location_id=%s", entry_id, location_id)
         
         # Refresh token a bit before it expires
         if time.time() >= expires_at:
-            _LOGGER.debug("Token expires soon, refreshing")
+            _LOGGER.debug("Token expires soon; refreshing entry_id=%s location_id=%s", entry_id, location_id)
             refresh_response = await fetch_refresh_token(hass, refresh_token)
             if not refresh_response:
-                _LOGGER.error("Token refresh failed! Trying full login with username/password.")
+                _LOGGER.warning(
+                    "Token refresh failed; trying full login entry_id=%s location_id=%s",
+                    entry_id,
+                    location_id,
+                )
                 try:
                     login_response = await fetch_token(hass, entry_data["username"], entry_data["password"])
                 except Exception as err:
@@ -295,7 +292,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 entry_data["refresh_token"] = new_refresh_token
                 entry_data["expires_at"] = time.time() + int(new_expires_in) - 60
                 access_token = new_access_token
-                _LOGGER.info("Token refreshed via full login.")
+                _LOGGER.info("Token refreshed via full login entry_id=%s location_id=%s", entry_id, location_id)
             else:
                 new_access_token = refresh_response.get("access_token")
                 new_refresh_token = refresh_response.get("refresh_token") or refresh_token
@@ -306,26 +303,36 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 entry_data["refresh_token"] = new_refresh_token
                 entry_data["expires_at"] = time.time() + int(new_expires_in) - 60
                 access_token = new_access_token
-                _LOGGER.debug("Token refreshed")
+                _LOGGER.debug("Token refreshed entry_id=%s location_id=%s", entry_id, location_id)
             # Update WebSocket token in-place (do not disconnect/reconnect)
             ws = entry_data.get("websocket")
             if ws is not None:
                 try:
                     ws.update_token(new_access_token)
-                    _LOGGER.debug("Updated WebSocket token")
+                    _LOGGER.debug("Updated websocket token entry_id=%s location_id=%s", entry_id, location_id)
                 except Exception as err:
-                    _LOGGER.debug("Failed to update WebSocket token: %s", err)
+                    _LOGGER.debug(
+                        "Failed to update websocket token entry_id=%s location_id=%s: %s",
+                        entry_id,
+                        location_id,
+                        err,
+                    )
 
         location_id_value = entry_data["location_id"]
         # Fetch latest data
         try:
             updated = await get_data(hass, access_token, location_id_value)
             if not updated:
-                _LOGGER.error("Polling: Failed to fetch data from API")
                 raise UpdateFailed("Failed to fetch data from API")
-            _LOGGER.debug("Polling: Successfully fetched data from Homely API")
+            _LOGGER.debug("Polling fetch success entry_id=%s location_id=%s", entry_id, location_id)
+        except UpdateFailed:
+            raise
         except Exception as err:
-            _LOGGER.error(f"Polling: Exception while fetching data from API: {err}")
+            _LOGGER.warning(
+                "Polling exception %s: %s",
+                _ctx(entry_id, location_id),
+                err,
+            )
             raise UpdateFailed(f"Exception while fetching data from API: {err}")
         
         # Log what changed in alarm state
@@ -335,7 +342,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # If API returns None for alarm state but we have a cached value (from WebSocket), keep the cached value
         # This handles ARM_PENDING and other states where API might not include the alarm state
         if new_alarm is None and old_alarm is not None:
-            _LOGGER.debug("API returned None for alarm state, keeping cached value")
+            _LOGGER.debug("API alarm missing; keeping cached alarm entry_id=%s location_id=%s", entry_id, location_id)
             # Copy the alarm state from old data to new data
             if "features" not in updated:
                 updated["features"] = {}
@@ -360,9 +367,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             entry_data["ws_status_reason"] = ws.status_reason
         
         if old_alarm != new_alarm:
-            _LOGGER.info("Alarm state changed: %s -> %s", old_alarm, new_alarm)
+            _LOGGER.debug(
+                "Alarm state changed entry_id=%s location_id=%s: %s -> %s",
+                entry_id,
+                location_id,
+                old_alarm,
+                new_alarm,
+            )
         
-        _LOGGER.debug("Data refresh completed")
+        _LOGGER.debug("Data refresh completed entry_id=%s location_id=%s", entry_id, location_id)
         return updated
 
     # Get scan interval from options or use default
@@ -375,7 +388,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry.data.get(CONF_ENABLE_WEBSOCKET, DEFAULT_ENABLE_WEBSOCKET)
     )
     
-    _LOGGER.debug("Using scan_interval=%d seconds, enable_websocket=%s", scan_interval, enable_websocket)
+    _LOGGER.debug(
+        "Configured polling entry_id=%s location_id=%s scan_interval=%ss websocket=%s",
+        entry_id,
+        location_id,
+        scan_interval,
+        enable_websocket,
+    )
     
     coordinator = DataUpdateCoordinator(
         hass,
@@ -392,7 +411,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Initialize WebSocket for real-time updates (non-blocking) if enabled
     if enable_websocket:
         asyncio.create_task(init_websocket())
-        _LOGGER.debug("WebSocket initialization scheduled")
+        _LOGGER.debug("WebSocket initialization scheduled entry_id=%s location_id=%s", entry_id, location_id)
         # Listen for Home Assistant "internet_available" event and trigger reconnect
         def _internet_available(event):
             try:
@@ -401,21 +420,35 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     return
                 ws = entry_data.get("websocket")
                 if ws and not ws.is_connected():
-                    _LOGGER.debug("Internet available event received, attempting websocket reconnect")
+                    _LOGGER.debug(
+                        "Internet available event; requesting websocket reconnect entry_id=%s location_id=%s",
+                        entry_id,
+                        location_id,
+                    )
                     try:
                         ws.request_reconnect(reason="internet_available event")
                     except Exception as err:
-                        _LOGGER.debug("Error scheduling websocket reconnect: %s", err)
+                        _LOGGER.debug(
+                            "Error requesting websocket reconnect entry_id=%s location_id=%s: %s",
+                            entry_id,
+                            location_id,
+                            err,
+                        )
             except Exception as err:
-                _LOGGER.debug("Error handling internet_available event: %s", err)
+                _LOGGER.debug(
+                    "Error handling internet_available event entry_id=%s location_id=%s: %s",
+                    entry_id,
+                    location_id,
+                    err,
+                )
 
         try:
             internet_unsub = hass.bus.async_listen("internet_available", _internet_available)
             hass.data[DOMAIN][entry.entry_id]["internet_unsub"] = internet_unsub
         except Exception:
-            _LOGGER.debug("Could not register internet_available listener")
+            _LOGGER.debug("Could not register internet_available listener entry_id=%s location_id=%s", entry_id, location_id)
     else:
-        _LOGGER.info("WebSocket disabled in options, using polling only")
+        _LOGGER.info("WebSocket disabled in options entry_id=%s location_id=%s; using polling only", entry_id, location_id)
     
     await coordinator.async_config_entry_first_refresh()
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -423,18 +456,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Add options update listener
     entry.add_update_listener(async_reload_entry)
     
-    _LOGGER.info("Homely Alarm integration setup completed")
+    _LOGGER.info("Homely Alarm integration setup completed entry_id=%s location_id=%s", entry_id, location_id)
     return True
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Reload config entry when options change."""
-    _LOGGER.debug("Options changed, reloading entry")
+    _LOGGER.debug("Options changed; reloading entry_id=%s", entry.entry_id)
     await hass.config_entries.async_reload(entry.entry_id)
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    _LOGGER.debug("Unloading Homely Alarm entry")
+    location_id = hass.data.get(DOMAIN, {}).get(entry.entry_id, {}).get("location_id")
+    _LOGGER.debug("Unloading Homely Alarm entry entry_id=%s location_id=%s", entry.entry_id, location_id)
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         remove_listener = hass.data[DOMAIN][entry.entry_id].get("coordinator_listener")
@@ -453,10 +487,15 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if ws:
             try:
                 await ws.disconnect()
-                _LOGGER.debug("WebSocket disconnected")
+                _LOGGER.debug("WebSocket disconnected entry_id=%s location_id=%s", entry.entry_id, location_id)
             except Exception as err:
-                _LOGGER.error("Error disconnecting WebSocket: %s", err)
+                _LOGGER.error(
+                    "Error disconnecting websocket entry_id=%s location_id=%s: %s",
+                    entry.entry_id,
+                    location_id,
+                    err,
+                )
         
         hass.data[DOMAIN].pop(entry.entry_id)
-        _LOGGER.info("Homely Alarm integration unloaded")
+        _LOGGER.info("Homely Alarm integration unloaded entry_id=%s location_id=%s", entry.entry_id, location_id)
     return unload_ok

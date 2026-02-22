@@ -30,13 +30,13 @@ async def async_setup_entry(hass, entry, async_add_entities):
             # Only add number/string sensors (not binary sensors)
             if sensor_config["type"] == "sensor":
                 entities.append(
-                    HomelyySensor(coordinator, device, sensor_config)
+                    HomelySensor(coordinator, device, sensor_config)
                 )
     
     async_add_entities(entities)
 
 
-class HomelyySensor(CoordinatorEntity, SensorEntity):
+class HomelySensor(CoordinatorEntity, SensorEntity):
     """Homely sensor entity."""
     
     def __init__(self, coordinator, device, sensor_config):

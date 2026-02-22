@@ -19,8 +19,10 @@ class HomelyWebSocket:
         token: str,
         on_data_update: Callable[[dict[str, Any]], None],
         status_update_callback: Callable[[str, str | None], None] | None = None,
+        entry_id: str | None = None,
     ) -> None:
         """Initialize WebSocket client."""
+        self.entry_id = entry_id
         self.location_id = location_id
         self.token = token
         self.on_data_update = on_data_update
@@ -28,9 +30,17 @@ class HomelyWebSocket:
         self._is_closing = False
         self._reconnect_task: asyncio.Task | None = None
         self._reconnect_interval = 300
+        self._reconnect_warn_every = 12
         self._status_update_callback = status_update_callback
         self._status = "Not initialized"
         self._status_reason: str | None = None
+
+    def _ctx(self, device_id: str | None = None) -> str:
+        """Build consistent log context."""
+        base = f"entry_id={self.entry_id} location_id={self.location_id}"
+        if device_id:
+            return f"{base} device_id={device_id}"
+        return base
 
     @property
     def websocket_url(self) -> str:
@@ -55,18 +65,28 @@ class HomelyWebSocket:
         self._status_reason = reason
 
         if status_changed:
-            if reason:
-                _LOGGER.info("WebSocket status changed: %s (%s)", status, reason)
+            if status == "Connected":
+                _LOGGER.info("WebSocket connected %s", self._ctx())
+            elif status == "Disconnected":
+                if reason and self._should_warn_disconnect(reason):
+                    _LOGGER.warning("WebSocket disconnected %s (%s)", self._ctx(), reason)
+                elif reason:
+                    _LOGGER.debug("WebSocket disconnected %s (%s)", self._ctx(), reason)
+                else:
+                    _LOGGER.warning("WebSocket disconnected %s", self._ctx())
             else:
-                _LOGGER.info("WebSocket status changed: %s", status)
+                if reason:
+                    _LOGGER.debug("WebSocket status changed %s: %s (%s)", self._ctx(), status, reason)
+                else:
+                    _LOGGER.debug("WebSocket status changed %s: %s", self._ctx(), status)
         elif reason_changed and reason:
-            _LOGGER.debug("WebSocket status reason updated: %s", reason)
+            _LOGGER.debug("WebSocket status reason updated %s: %s", self._ctx(), reason)
 
         if self._status_update_callback:
             try:
                 self._status_update_callback(status, reason)
             except Exception as err:
-                _LOGGER.debug("Status callback failed: %s", err)
+                _LOGGER.debug("Status callback failed %s: %s", self._ctx(), err)
 
     def _build_reason(self, data: Any) -> str | None:
         """Build a readable reason string from event payload."""
@@ -78,6 +98,21 @@ class HomelyWebSocket:
             reason = repr(data)
         return reason or None
 
+    @staticmethod
+    def _should_warn_disconnect(reason: str | None) -> bool:
+        """Return whether a disconnect reason should be warning-level."""
+        if reason is None:
+            return True
+        if reason == "manual disconnect":
+            return False
+        transient_prefixes = (
+            "connect timeout",
+            "network error:",
+            "connect exception:",
+            "connect_error",
+        )
+        return not reason.startswith(transient_prefixes)
+
     def _on_event(self, data: Any) -> None:
         """Handle event payload from websocket."""
         # Some reconnect paths do not always trigger connect event first.
@@ -87,12 +122,13 @@ class HomelyWebSocket:
         elif self._status != "Connected":
             self._set_status("Connected")
 
-        _LOGGER.debug("WebSocket event received: %r", data)
+        device_id = data.get("data", {}).get("deviceId") if isinstance(data, dict) else None
+        _LOGGER.debug("WebSocket event received %s: %r", self._ctx(device_id=device_id), data)
         if isinstance(data, dict):
             try:
                 self.on_data_update(data)
             except Exception as err:
-                _LOGGER.error("Error in on_data_update callback: %s", err, exc_info=True)
+                _LOGGER.error("Error in on_data_update callback %s: %s", self._ctx(device_id=device_id), err, exc_info=True)
 
     def _on_connect(self) -> None:
         """Handle successful connection."""
@@ -104,8 +140,9 @@ class HomelyWebSocket:
         self._set_status("Disconnected", reason)
         if not self._is_closing:
             self._start_reconnect_loop("disconnect event")
-            _LOGGER.warning(
-                "WebSocket disconnected unexpectedly. Retrying every %s seconds",
+            _LOGGER.debug(
+                "Reconnect requested after disconnect %s interval=%ss",
+                self._ctx(),
                 self._reconnect_interval,
             )
 
@@ -124,13 +161,15 @@ class HomelyWebSocket:
         self._reconnect_task = loop.create_task(self._reconnect_loop())
         if reason:
             _LOGGER.info(
-                "Started reconnect loop (%s). interval=%ss, retries=infinite",
+                "Started reconnect loop %s (%s). interval=%ss, retries=infinite",
+                self._ctx(),
                 reason,
                 self._reconnect_interval,
             )
         else:
             _LOGGER.info(
-                "Started reconnect loop. interval=%ss, retries=infinite",
+                "Started reconnect loop %s. interval=%ss, retries=infinite",
+                self._ctx(),
                 self._reconnect_interval,
             )
 
@@ -148,29 +187,38 @@ class HomelyWebSocket:
                 return
 
             attempt += 1
-            _LOGGER.warning("WebSocket reconnect attempt %s started", attempt)
+            _LOGGER.debug("WebSocket reconnect attempt %s started %s", attempt, self._ctx())
             success = await self.connect(from_reconnect_loop=True)
             if success:
-                _LOGGER.info("WebSocket reconnect attempt %s succeeded", attempt)
+                _LOGGER.info("WebSocket reconnect attempt %s succeeded %s", attempt, self._ctx())
                 return
 
-            _LOGGER.warning(
-                "WebSocket reconnect attempt %s failed. Next retry in %s seconds",
-                attempt,
-                self._reconnect_interval,
-            )
+            if attempt == 1 or attempt % self._reconnect_warn_every == 0:
+                _LOGGER.warning(
+                    "WebSocket reconnect attempt %s failed %s. Retrying in %s seconds",
+                    attempt,
+                    self._ctx(),
+                    self._reconnect_interval,
+                )
+            else:
+                _LOGGER.debug(
+                    "WebSocket reconnect attempt %s failed %s. Retrying in %s seconds",
+                    attempt,
+                    self._ctx(),
+                    self._reconnect_interval,
+                )
             await asyncio.sleep(self._reconnect_interval)
 
     async def connect(self, from_reconnect_loop: bool = False) -> bool:
         """Connect to websocket server."""
         if self._is_closing:
-            _LOGGER.debug("Skipping websocket connect during shutdown")
+            _LOGGER.debug("Skipping websocket connect during shutdown %s", self._ctx())
             return False
 
         try:
             import socketio
         except ImportError:
-            _LOGGER.error("python-socketio is not installed. WebSocket disabled.")
+            _LOGGER.error("python-socketio is not installed. WebSocket disabled %s.", self._ctx())
             self._set_status("Disconnected", "socketio missing")
             return False
 
@@ -214,17 +262,18 @@ class HomelyWebSocket:
             @self.socket.on("*")
             async def catch_all(event, data):
                 if event not in ("connect", "disconnect", "message", "event", "connect_error"):
-                    _LOGGER.debug("WebSocket event: %s", event)
+                    _LOGGER.debug("WebSocket event %s type=%s", self._ctx(), event)
                     self._on_event({"type": event, "payload": data})
 
             @self.socket.event
             async def connect_error(data):
-                reason = self._build_reason(data) or "connect_error"
-                _LOGGER.error("WebSocket connect error: %s", reason)
+                raw_reason = self._build_reason(data)
+                reason = f"connect_error: {raw_reason}" if raw_reason else "connect_error"
+                _LOGGER.debug("WebSocket connect_error %s: %s", self._ctx(), reason)
                 self._on_disconnect(reason)
 
             url = f"{self.websocket_url}?locationId={self.location_id}&token=Bearer {self.token}"
-            _LOGGER.debug("WebSocket connecting to %s", self.websocket_url)
+            _LOGGER.debug("WebSocket connecting %s to %s", self._ctx(), self.websocket_url)
             await self.socket.connect(
                 url,
                 transports=["websocket", "polling"],
@@ -241,7 +290,7 @@ class HomelyWebSocket:
         except Exception as err:
             self.socket = None
             self._set_status("Disconnected", f"connect exception: {err}")
-            _LOGGER.error("WebSocket connect failed: %s", err, exc_info=True)
+            _LOGGER.error("WebSocket connect failed %s: %s", self._ctx(), err, exc_info=True)
 
         if not from_reconnect_loop:
             self._start_reconnect_loop("connect failed")
@@ -282,7 +331,7 @@ class HomelyWebSocket:
             return
         if token != self.token:
             self.token = token
-            _LOGGER.debug("WebSocket token updated")
+            _LOGGER.debug("WebSocket token updated %s", self._ctx())
         if not self.is_connected() and not self._is_closing:
             self._start_reconnect_loop("token changed while disconnected")
 

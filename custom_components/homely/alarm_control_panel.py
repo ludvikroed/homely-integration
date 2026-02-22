@@ -38,6 +38,8 @@ async def async_setup_entry(hass, entry, async_add_entities):
 class HomelyAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
     def __init__(self, coordinator, location_id):
         super().__init__(coordinator)
+        self._location_id = location_id
+        self._last_unknown_state: str | None = None
         location_name = (coordinator.data or {}).get("name") or f"Homely location {location_id}"
         self._attr_name = f"{location_name} Alarm"
         self._attr_unique_id = f"location_{location_id}_alarm_panel"
@@ -61,10 +63,13 @@ class HomelyAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
         if api_state:
             mapped_state = STATE_MAP.get(api_state)
             if mapped_state:
+                self._last_unknown_state = None
                 return mapped_state
-            else:
-                _LOGGER.warning("Unknown alarm state from API: %s", api_state)
-                return None
-        
-        _LOGGER.debug("No alarm state found in coordinator data")
+            if api_state != self._last_unknown_state:
+                self._last_unknown_state = api_state
+                _LOGGER.warning(
+                    "Unknown alarm state from API location_id=%s state=%s",
+                    self._location_id,
+                    api_state,
+                )
         return None

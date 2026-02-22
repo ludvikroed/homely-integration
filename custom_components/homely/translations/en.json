@@ -7,7 +7,7 @@
         "data": {
           "username": "Homely Email",
           "password": "Homely password",
-          "home_id": "Home ID (0 for first home, 1 for second, etc.)",
+          "home_id": "Home index (0 for first home, 1 for second, etc.)",
           "scan_interval": "Update interval in seconds (default: 120)",
           "enable_websocket": "Enable WebSocket for real-time updates (recommended: on)"
         },
@@ -19,8 +19,11 @@
       }
     },
     "error": {
-      "cannot_connect": "Failed to connect to Homely",
-      "invalid_auth": "Invalid authentication",
+      "cannot_connect": "Could not connect to Homely right now. Check internet connection and try again.",
+      "invalid_auth": "Incorrect username or password.",
+      "invalid_home_id": "Home index is not valid for this account. Use 0 for first home, 1 for second, etc.",
+      "invalid_scan_interval": "Update interval must be 10 seconds or higher.",
+      "no_homes": "No homes were found on this account.",
       "unknown": "Unexpected error occurred"
     },
     "abort": {
@@ -33,11 +36,19 @@
         "title": "Advanced Settings",
         "description": "Configure advanced options for Homely Alarm integration",
         "data": {
-          "home_id": "Home ID (0 for first home, 1 for second, etc.)",
+          "home_id": "Home index (0 for first home, 1 for second, etc.)",
           "scan_interval": "Scan interval (seconds, minimum 10)",
           "enable_websocket": "Enable WebSocket for real-time updates"
         }
       }
+    },
+    "error": {
+      "cannot_connect": "Could not connect to Homely right now. Check internet connection and try again.",
+      "invalid_auth": "Stored username or password is no longer valid. Reconfigure the integration.",
+      "invalid_home_id": "Home index is not valid for this account. Use 0 for first home, 1 for second, etc.",
+      "invalid_scan_interval": "Scan interval must be 10 seconds or higher.",
+      "no_homes": "No homes were found on this account.",
+      "unknown": "Unexpected error occurred"
     }
   }
 }
