@@ -9,45 +9,84 @@ import aiohttp
 
 _LOGGER = logging.getLogger(__name__)
 
+
 class HomelyWebSocket:
-    """WebSocket client for Homely using SocketIO."""
+    """WebSocket client for Homely using Socket.IO."""
 
     def __init__(
         self,
         location_id: str | int,
         token: str,
         on_data_update: Callable[[dict[str, Any]], None],
-        status_update_callback: Callable[[], None] | None = None,
-    ):
-        """Initialize WebSocket client.
-        
-        Args:
-            location_id: Location ID for the device
-            token: Access token for authentication
-            on_data_update: Callback function when data is updated
-        """
+        status_update_callback: Callable[[str, str | None], None] | None = None,
+    ) -> None:
+        """Initialize WebSocket client."""
         self.location_id = location_id
         self.token = token
         self.on_data_update = on_data_update
         self.socket = None
-        self._connect_task: asyncio.Task | None = None
-        self._reconnect_delay = 5
-        self._max_reconnect_delay = 600
-        self._max_reconnect_attempts = 500
         self._is_closing = False
-        # Background reconnect task when connection lost (keeps trying)
         self._reconnect_task: asyncio.Task | None = None
-        self._reconnect_interval = 10
-        # Optional callback to notify status sensors immediately
+        self._reconnect_interval = 300
         self._status_update_callback = status_update_callback
+        self._status = "Not initialized"
+        self._status_reason: str | None = None
 
     @property
     def websocket_url(self) -> str:
-        """WebSocket URL."""
+        """WebSocket base URL."""
         return "https://sdk.iotiliti.cloud"
 
+    @property
+    def status(self) -> str:
+        """Return current websocket status string."""
+        return self._status
+
+    @property
+    def status_reason(self) -> str | None:
+        """Return latest status reason if available."""
+        return self._status_reason
+
+    def _set_status(self, status: str, reason: str | None = None) -> None:
+        """Update internal status and notify callback."""
+        status_changed = status != self._status
+        reason_changed = reason != self._status_reason
+        self._status = status
+        self._status_reason = reason
+
+        if status_changed:
+            if reason:
+                _LOGGER.info("WebSocket status changed: %s (%s)", status, reason)
+            else:
+                _LOGGER.info("WebSocket status changed: %s", status)
+        elif reason_changed and reason:
+            _LOGGER.debug("WebSocket status reason updated: %s", reason)
+
+        if self._status_update_callback:
+            try:
+                self._status_update_callback(status, reason)
+            except Exception as err:
+                _LOGGER.debug("Status callback failed: %s", err)
+
+    def _build_reason(self, data: Any) -> str | None:
+        """Build a readable reason string from event payload."""
+        if data is None:
+            return None
+        try:
+            reason = str(data)
+        except Exception:
+            reason = repr(data)
+        return reason or None
+
     def _on_event(self, data: Any) -> None:
-        """Handle event from WebSocket (called from sync/async context)."""
+        """Handle event payload from websocket."""
+        # Some reconnect paths do not always trigger connect event first.
+        # Receiving data means the session is alive.
+        if not self.is_connected():
+            self._set_status("Connected", "event received")
+        elif self._status != "Connected":
+            self._set_status("Connected")
+
         _LOGGER.debug("WebSocket event received: %r", data)
         if isinstance(data, dict):
             try:
@@ -56,246 +95,201 @@ class HomelyWebSocket:
                 _LOGGER.error("Error in on_data_update callback: %s", err, exc_info=True)
 
     def _on_connect(self) -> None:
-        """Handle successful connection (called from sync context)."""
-        _LOGGER.info("WebSocket connected")
-        self._reconnect_delay = 5
-        # Stop any background reconnect attempts once connected
-        try:
-            self._stop_reconnect_loop()
-        except Exception:
-            pass
-        # Notify status sensors via callback if provided
-        if self._status_update_callback:
-            try:
-                self._status_update_callback()
-            except Exception as err:
-                _LOGGER.debug("Status callback error on connect: %s", err)
-        else:
-            self._notify_status_sensors()
+        """Handle successful connection."""
+        self._stop_reconnect_loop()
+        self._set_status("Connected")
 
-    def _on_disconnect(self) -> None:
-        """Handle disconnection (called from sync context)."""
-        _LOGGER.info("WebSocket disconnected")
-        # Notify status sensors via callback if provided
-        if self._status_update_callback:
-            try:
-                self._status_update_callback()
-            except Exception as err:
-                _LOGGER.debug("Status callback error on disconnect: %s", err)
-        else:
-            self._notify_status_sensors()
-        # Start background reconnect attempts
-        try:
-            self._start_reconnect_loop()
-        except Exception:
-            pass
+    def _on_disconnect(self, reason: str | None = None) -> None:
+        """Handle disconnected connection."""
+        self._set_status("Disconnected", reason)
         if not self._is_closing:
-            _LOGGER.debug("Unexpected disconnection, will attempt automatic reconnection")
+            self._start_reconnect_loop("disconnect event")
+            _LOGGER.warning(
+                "WebSocket disconnected unexpectedly. Retrying every %s seconds",
+                self._reconnect_interval,
+            )
 
-    def _start_reconnect_loop(self) -> None:
-        """Start a background task that keeps trying to reconnect.
-
-        This is resilient to network outages: it will keep attempting
-        to connect until successful or the websocket is closed.
-        """
+    def _start_reconnect_loop(self, reason: str | None = None) -> None:
+        """Start reconnect loop if not already running."""
+        if self._is_closing:
+            return
         if self._reconnect_task and not self._reconnect_task.done():
             return
 
-        loop = asyncio.get_event_loop()
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.get_event_loop()
+
         self._reconnect_task = loop.create_task(self._reconnect_loop())
+        if reason:
+            _LOGGER.info(
+                "Started reconnect loop (%s). interval=%ss, retries=infinite",
+                reason,
+                self._reconnect_interval,
+            )
+        else:
+            _LOGGER.info(
+                "Started reconnect loop. interval=%ss, retries=infinite",
+                self._reconnect_interval,
+            )
 
     def _stop_reconnect_loop(self) -> None:
-        """Cancel background reconnect task if running."""
-        if self._reconnect_task:
-            try:
-                self._reconnect_task.cancel()
-            except Exception:
-                pass
-            self._reconnect_task = None
+        """Stop reconnect loop."""
+        if self._reconnect_task and not self._reconnect_task.done():
+            self._reconnect_task.cancel()
+        self._reconnect_task = None
 
     async def _reconnect_loop(self) -> None:
-        """Continuously attempt to reconnect with exponential backoff."""
+        """Try reconnect forever at fixed interval."""
         attempt = 0
-        while not self._is_closing and (self.socket is None or not getattr(self.socket, "connected", False)):
-            try:
-                _LOGGER.debug("Reconnect loop: attempt %s", attempt + 1)
-                success = await self.connect()
-                if success:
-                    _LOGGER.debug("Reconnect loop: connection successful")
-                    return
-            except Exception as err:
-                _LOGGER.debug("Reconnect loop exception: %s", err)
-
-            # exponential backoff up to max_reconnect_delay
-            delay = min(self._reconnect_interval * (2 ** attempt), self._max_reconnect_delay)
-            await asyncio.sleep(delay)
-            attempt += 1
-
-    def _notify_status_sensors(self):
-        """Notify HomelyWebSocketStatusSensor entities to update state immediately."""
-        try:
-            import homeassistant.helpers.entity_platform
-            # Find all loaded platforms for this integration
-            hass = getattr(self, '_hass', None)
-            if not hass:
+        while not self._is_closing:
+            if self.is_connected():
                 return
-            for entry in getattr(hass, 'config_entries', []):
-                entry_data = hass.data.get('homely', {}).get(entry.entry_id, {})
-                for entity in getattr(entry_data, 'entities', []):
-                    if entity.__class__.__name__ == 'HomelyWebSocketStatusSensor':
-                        entity.async_write_ha_state()
-        except Exception as e:
-            _LOGGER.debug("Could not notify status sensors: %s", e)
 
-    def _on_error(self, error: Any) -> None:
-        """Handle error (called from sync context)."""
-        _LOGGER.warning("WebSocket error: %s", error)
+            attempt += 1
+            _LOGGER.warning("WebSocket reconnect attempt %s started", attempt)
+            success = await self.connect(from_reconnect_loop=True)
+            if success:
+                _LOGGER.info("WebSocket reconnect attempt %s succeeded", attempt)
+                return
 
-    async def connect(self) -> bool:
-        """Connect to WebSocket server."""
-        try:
-            if self._is_closing:
-                _LOGGER.debug("Not connecting: WebSocket is closing")
-                return False
+            _LOGGER.warning(
+                "WebSocket reconnect attempt %s failed. Next retry in %s seconds",
+                attempt,
+                self._reconnect_interval,
+            )
+            await asyncio.sleep(self._reconnect_interval)
 
-            try:
-                import socketio
-            except ImportError:
-                _LOGGER.error("python-socketio is not installed. WebSocket support disabled.")
-                return False
-
-            if self.socket is not None:
-                _LOGGER.warning("WebSocket already connected")
-                return True
-
-            try:
-                self.socket = socketio.AsyncClient(
-                    reconnection=True,
-                    reconnection_delay=self._reconnect_delay,
-                    reconnection_delay_max=self._max_reconnect_delay,
-                    reconnection_attempts=self._max_reconnect_attempts,
-                    logger=False,
-                    engineio_logger=False,
-                )
-
-                # Register event handlers
-                @self.socket.event
-                async def connect():
-                    try:
-                        self._on_connect()
-                    except Exception as err:
-                        _LOGGER.error("Exception in connect handler: %s", err, exc_info=True)
-
-                @self.socket.event
-                async def disconnect():
-                    try:
-                        self._on_disconnect()
-                    except Exception as err:
-                        _LOGGER.error("Exception in disconnect handler: %s", err, exc_info=True)
-
-                @self.socket.event
-                async def message(data):
-                    try:
-                        self._on_event(data)
-                    except Exception as err:
-                        _LOGGER.error("Exception in message handler: %s", err, exc_info=True)
-
-                @self.socket.event
-                async def event(data):
-                    try:
-                        self._on_event(data)
-                    except Exception as err:
-                        _LOGGER.error("Exception in event handler: %s", err, exc_info=True)
-
-                @self.socket.on("*")
-                async def catch_all(event, data):
-                    try:
-                        _LOGGER.debug("WebSocket event: %s", event)
-                        if event not in ("connect", "disconnect", "message", "event", "connect_error"):
-                            self._on_event({"type": event, "payload": data})
-                    except Exception as err:
-                        _LOGGER.error("Exception in catch_all handler: %s", err, exc_info=True)
-
-                @self.socket.event
-                async def connect_error(data):
-                    try:
-                        _LOGGER.error("WebSocket CONNECT ERROR: %s", data)
-                        self._on_error(f"Connect error: {data}")
-                    except Exception as err:
-                        _LOGGER.error("Exception in connect_error handler: %s", err, exc_info=True)
-
-                # Build URL - use https:// with Bearer token and space
-                url = f"https://sdk.iotiliti.cloud?locationId={self.location_id}&token=Bearer {self.token}"
-
-                _LOGGER.debug("WebSocket connecting to %s", self.websocket_url)
-                await self.socket.connect(
-                    url,
-                    transports=["websocket", "polling"],
-                    headers={
-                        "Authorization": f"Bearer {self.token}",
-                    },
-                    wait_timeout=10,
-                )
-                _LOGGER.info("WebSocket connection established")
-                return True
-
-            except asyncio.TimeoutError:
-                _LOGGER.error("WebSocket connection timeout")
-                self.socket = None
-                return False
-            except aiohttp.ClientError as err:
-                _LOGGER.error("WebSocket network error: %s", err)
-                self.socket = None
-                return False
-            except Exception as err:
-                _LOGGER.error("WebSocket connection failed: %s", err, exc_info=True)
-                self.socket = None
-                return False
-        except Exception as err:
-            _LOGGER.error("Exception in connect(): %s", err, exc_info=True)
-            self.socket = None
+    async def connect(self, from_reconnect_loop: bool = False) -> bool:
+        """Connect to websocket server."""
+        if self._is_closing:
+            _LOGGER.debug("Skipping websocket connect during shutdown")
             return False
 
-    async def disconnect(self) -> None:
-        """Disconnect from WebSocket server."""
         try:
-            self._is_closing = True
-            if self.socket is not None:
-                try:
-                    _LOGGER.debug("Disconnecting WebSocket")
-                    await asyncio.wait_for(self.socket.disconnect(), timeout=5)
-                except asyncio.TimeoutError:
-                    _LOGGER.warning("WebSocket disconnect timeout, forcing close")
-                except Exception as err:
-                    _LOGGER.debug("Error during WebSocket disconnect: %s", err, exc_info=True)
-                finally:
-                    self.socket = None
-        except Exception as err:
-            _LOGGER.error("Exception in disconnect(): %s", err, exc_info=True)
-        finally:
-            # stop reconnect loop and mark closing finished
+            import socketio
+        except ImportError:
+            _LOGGER.error("python-socketio is not installed. WebSocket disabled.")
+            self._set_status("Disconnected", "socketio missing")
+            return False
+
+        if self.is_connected():
+            self._set_status("Connected")
+            return True
+
+        if self.socket is not None:
+            # Ensure stale client object is dropped before creating a new one.
             try:
-                self._stop_reconnect_loop()
+                await asyncio.wait_for(self.socket.disconnect(), timeout=2)
             except Exception:
                 pass
+            self.socket = None
+
+        self._set_status("Connecting")
+        try:
+            self.socket = socketio.AsyncClient(
+                # We run our own deterministic reconnect loop.
+                reconnection=False,
+                logger=False,
+                engineio_logger=False,
+            )
+
+            @self.socket.event
+            async def connect():
+                self._on_connect()
+
+            @self.socket.event
+            async def disconnect(*args):
+                self._on_disconnect(self._build_reason(args[0] if args else None))
+
+            @self.socket.event
+            async def message(data):
+                self._on_event(data)
+
+            @self.socket.event
+            async def event(data):
+                self._on_event(data)
+
+            @self.socket.on("*")
+            async def catch_all(event, data):
+                if event not in ("connect", "disconnect", "message", "event", "connect_error"):
+                    _LOGGER.debug("WebSocket event: %s", event)
+                    self._on_event({"type": event, "payload": data})
+
+            @self.socket.event
+            async def connect_error(data):
+                reason = self._build_reason(data) or "connect_error"
+                _LOGGER.error("WebSocket connect error: %s", reason)
+                self._on_disconnect(reason)
+
+            url = f"{self.websocket_url}?locationId={self.location_id}&token=Bearer {self.token}"
+            _LOGGER.debug("WebSocket connecting to %s", self.websocket_url)
+            await self.socket.connect(
+                url,
+                transports=["websocket", "polling"],
+                headers={"Authorization": f"Bearer {self.token}"},
+                wait_timeout=10,
+            )
+            return True
+        except asyncio.TimeoutError:
+            self.socket = None
+            self._set_status("Disconnected", "connect timeout")
+        except aiohttp.ClientError as err:
+            self.socket = None
+            self._set_status("Disconnected", f"network error: {err}")
+        except Exception as err:
+            self.socket = None
+            self._set_status("Disconnected", f"connect exception: {err}")
+            _LOGGER.error("WebSocket connect failed: %s", err, exc_info=True)
+
+        if not from_reconnect_loop:
+            self._start_reconnect_loop("connect failed")
+        return False
+
+    async def disconnect(self) -> None:
+        """Disconnect websocket and stop reconnecting."""
+        self._is_closing = True
+        self._stop_reconnect_loop()
+        try:
+            if self.socket is not None:
+                try:
+                    await asyncio.wait_for(self.socket.disconnect(), timeout=5)
+                except Exception:
+                    pass
+                finally:
+                    self.socket = None
+        finally:
+            self._set_status("Disconnected", "manual disconnect")
             self._is_closing = False
 
     async def reconnect_with_token(self, token: str) -> None:
-        """Update token and reconnect."""
-        try:
-            _LOGGER.debug("Updating WebSocket token and reconnecting")
-            self.token = token
-            await self.disconnect()
-            await asyncio.sleep(1)
-            success = await self.connect()
-            if not success:
-                _LOGGER.error("Failed to reconnect WebSocket with new token")
-            else:
-                _LOGGER.debug("WebSocket reconnected with new token")
-        except Exception as err:
-            _LOGGER.error("Exception in reconnect_with_token(): %s", err, exc_info=True)
+        """Update token and reconnect if currently disconnected."""
+        self.update_token(token)
+        if not self.is_connected() and not self._is_closing:
+            self._start_reconnect_loop("token updated")
 
     def is_connected(self) -> bool:
-        """Check if WebSocket is connected."""
-        return self.socket is not None and self.socket.connected
+        """Return True if socket client reports connected."""
+        try:
+            return self.socket is not None and bool(self.socket.connected)
+        except Exception:
+            return False
 
+    def update_token(self, token: str) -> None:
+        """Update token used by next connect/reconnect attempt."""
+        if not token:
+            return
+        if token != self.token:
+            self.token = token
+            _LOGGER.debug("WebSocket token updated")
+        if not self.is_connected() and not self._is_closing:
+            self._start_reconnect_loop("token changed while disconnected")
+
+    def request_reconnect(self, reason: str = "manual request") -> None:
+        """Start reconnect loop if disconnected."""
+        if self._is_closing:
+            return
+        if self.is_connected():
+            return
+        self._start_reconnect_loop(reason)

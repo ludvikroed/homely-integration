@@ -19,7 +19,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
     
     # Add WebSocket status sensor (location-level)
     entities.append(
-        HomelyWebSocketStatusSensor(hass, entry, location_id)
+        HomelyWebSocketStatusSensor(coordinator, hass, entry, location_id)
     )
     
     for device in data.get("devices", []):
@@ -95,11 +95,12 @@ class HomelyySensor(CoordinatorEntity, SensorEntity):
         return None
 
 
-class HomelyWebSocketStatusSensor(SensorEntity):
+class HomelyWebSocketStatusSensor(CoordinatorEntity, SensorEntity):
     """Sensor for WebSocket connection status."""
     
-    def __init__(self, hass, entry, location_id):
+    def __init__(self, coordinator, hass, entry, location_id):
         """Initialize the WebSocket status sensor."""
+        super().__init__(coordinator)
         self._hass = hass
         self._entry = entry
         self._location_id = location_id
@@ -116,28 +117,66 @@ class HomelyWebSocketStatusSensor(SensorEntity):
             manufacturer="Homely",
             model="Location",
         )
-        # Register this sensor instance so the websocket client can notify it
+        self._status_listener = None
+
+    async def async_added_to_hass(self) -> None:
+        """Register for immediate websocket status callbacks."""
+        await super().async_added_to_hass()
         try:
-            hass.data.setdefault(DOMAIN, {})
-            entry_data = hass.data[DOMAIN].get(entry.entry_id)
-            if entry_data is not None:
-                entry_data.setdefault("entities", []).append(self)
+            entry_data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id)
+            if entry_data is None:
+                return
+
+            def _listener() -> None:
+                # Schedule state write on HA loop when websocket status changes.
+                if self.hass is not None and self.entity_id is not None:
+                    self.async_schedule_update_ha_state()
+
+            listeners = entry_data.setdefault("ws_status_listeners", [])
+            listeners.append(_listener)
+            self._status_listener = _listener
+            self.async_schedule_update_ha_state()
         except Exception:
-            # Best effort; ignore registration errors
             pass
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Unregister websocket status callback."""
+        try:
+            entry_data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id)
+            if entry_data is not None and self._status_listener is not None:
+                listeners = entry_data.get("ws_status_listeners", [])
+                if self._status_listener in listeners:
+                    listeners.remove(self._status_listener)
+        except Exception:
+            pass
+        self._status_listener = None
+        await super().async_will_remove_from_hass()
     
     @property
     def native_value(self) -> str:
         """Return the WebSocket connection status."""
         try:
             entry_data = self._hass.data[DOMAIN][self._entry.entry_id]
+            status = entry_data.get("ws_status")
+            if isinstance(status, str) and status:
+                return status
+
+            # Fallback if status has not yet been initialized.
             ws = entry_data.get("websocket")
-            
             if ws is None:
                 return "Not initialized"
-            elif ws.is_connected():
-                return "Connected"
-            else:
-                return "Disconnected"
+            return "Connected" if ws.is_connected() else "Disconnected"
         except (KeyError, AttributeError):
             return "Unknown"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str] | None:
+        """Expose last websocket status reason for debugging."""
+        try:
+            entry_data = self._hass.data[DOMAIN][self._entry.entry_id]
+            reason = entry_data.get("ws_status_reason")
+            if reason:
+                return {"reason": reason}
+        except (KeyError, AttributeError):
+            return None
+        return None
