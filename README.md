@@ -10,8 +10,7 @@ A Home Assistant integration that connects your Homely alarm system with Home As
 2. Search for "Homely" and click "Download"
 3. Restart Home Assistant
 
-> **Note**: Not in yet HACS default? Add as a [custom repository]([https://my.home-assistant.io/redirect/hacs_repository/?repository=https%3A%2F%2Fgithub.com%2Fludvikroed%2Fhomely-integration%3Ftab%3Dreadme-ov-file&owner=Ludvikroed&category=integration](https://my.home-assistant.io/redirect/hacs_repository/?owner=ludvikroed&repository=homely-integration&category=integration))
-
+> **Note**: Not in yet HACS default? Add as a [custom repository](https://my.home-assistant.io/redirect/hacs_repository/?owner=ludvikroed&repository=homely-integration&category=integration)
 ### Manual Installation
 
 1. Download the [latest release](https://github.com/ludvikroed/homely-integration/releases)
