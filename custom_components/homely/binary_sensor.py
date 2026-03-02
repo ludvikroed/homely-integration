@@ -1,12 +1,33 @@
 """Binary sensor platform for Homely."""
 from __future__ import annotations
 
+from typing import Any
+
 from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .sensors.discover import discover_device_sensors, _get_value_by_path
+
+
+def _coerce_bool(value: Any) -> bool | None:
+    """Convert common API bool-like values to bool."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        if value == 1:
+            return True
+        if value == 0:
+            return False
+        return None
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "on", "locked", "open"}:
+            return True
+        if normalized in {"false", "0", "no", "off", "unlocked", "closed"}:
+            return False
+    return None
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -77,6 +98,7 @@ class HomelyBinarySensor(CoordinatorEntity, BinarySensorEntity):
         super().__init__(coordinator)
         self._device_id = device.get("id")
         self._path = sensor_config["path"]
+        self._invert = bool(sensor_config.get("invert", False))
         self._device_name = device.get("name")
         
         # Build entity name using resolved name
@@ -121,6 +143,8 @@ class HomelyBinarySensor(CoordinatorEntity, BinarySensorEntity):
         for device in data.get("devices", []):
             if device.get("id") == self._device_id:
                 value = _get_value_by_path(device, self._path)
-                return bool(value) if value is not None else False
+                parsed = _coerce_bool(value)
+                if parsed is None:
+                    return False
+                return not parsed if self._invert else parsed
         return False
-

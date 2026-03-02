@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from typing import Any
 
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.const import Platform
@@ -24,7 +25,7 @@ from .const import (
 from .websocket import HomelyWebSocket
 from .ws_updates import apply_websocket_event_to_data
 
-PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.ALARM_CONTROL_PANEL]
+PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.ALARM_CONTROL_PANEL, Platform.LOCK]
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -36,6 +37,34 @@ def _ctx(entry_id: str, location_id: str | None = None, device_id: str | None = 
     if device_id is not None:
         context += f" device_id={device_id}"
     return context
+
+
+def _get_alarm_state(data: dict[str, Any] | None) -> Any:
+    """Return location alarm state, preferring top-level API field."""
+    if not isinstance(data, dict):
+        return None
+
+    top_level = data.get("alarmState")
+    if top_level is not None:
+        return top_level
+
+    return (
+        data.get("features", {})
+        .get("alarm", {})
+        .get("states", {})
+        .get("alarm", {})
+        .get("value")
+    )
+
+
+def _set_alarm_state(data: dict[str, Any], alarm_state: Any) -> None:
+    """Write location alarm state to both top-level and nested feature path."""
+    data["alarmState"] = alarm_state
+    features = data.setdefault("features", {})
+    alarm_feature = features.setdefault("alarm", {})
+    states = alarm_feature.setdefault("states", {})
+    alarm_state_dict = states.setdefault("alarm", {})
+    alarm_state_dict["value"] = alarm_state
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -97,6 +126,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not data:
         _LOGGER.error("Failed to fetch location data entry_id=%s location_id=%s", entry_id, location_id)
         return False
+    initial_alarm_state = _get_alarm_state(data)
+    if initial_alarm_state is not None:
+        _set_alarm_state(data, initial_alarm_state)
     
     # Store state for coordinator and entities
     hass.data.setdefault(DOMAIN, {})
@@ -309,7 +341,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if ws is not None:
                 try:
                     ws.update_token(new_access_token)
-                    _LOGGER.debug("Updated websocket token entry_id=%s location_id=%s", entry_id, location_id)
+                    _LOGGER.debug(
+                        "Updated websocket token in-place (no forced reconnect) entry_id=%s location_id=%s",
+                        entry_id,
+                        location_id,
+                    )
                 except Exception as err:
                     _LOGGER.debug(
                         "Failed to update websocket token entry_id=%s location_id=%s: %s",
@@ -336,24 +372,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             raise UpdateFailed(f"Exception while fetching data from API: {err}")
         
         # Log what changed in alarm state
-        old_alarm = entry_data["data"].get("features", {}).get("alarm", {}).get("states", {}).get("alarm", {}).get("value")
-        new_alarm = updated.get("features", {}).get("alarm", {}).get("states", {}).get("alarm", {}).get("value")
+        old_alarm = _get_alarm_state(entry_data["data"])
+        new_alarm = _get_alarm_state(updated)
         
         # If API returns None for alarm state but we have a cached value (from WebSocket), keep the cached value
         # This handles ARM_PENDING and other states where API might not include the alarm state
         if new_alarm is None and old_alarm is not None:
             _LOGGER.debug("API alarm missing; keeping cached alarm entry_id=%s location_id=%s", entry_id, location_id)
-            # Copy the alarm state from old data to new data
-            if "features" not in updated:
-                updated["features"] = {}
-            if "alarm" not in updated["features"]:
-                updated["features"]["alarm"] = {"states": {}}
-            if "states" not in updated["features"]["alarm"]:
-                updated["features"]["alarm"]["states"] = {}
-            if "alarm" not in updated["features"]["alarm"]["states"]:
-                updated["features"]["alarm"]["states"]["alarm"] = {}
-            updated["features"]["alarm"]["states"]["alarm"]["value"] = old_alarm
+            _set_alarm_state(updated, old_alarm)
             new_alarm = old_alarm
+        elif new_alarm is not None:
+            # Normalize alarm state structure so entities see consistent data.
+            _set_alarm_state(updated, new_alarm)
         
         entry_data["data"] = updated
 

@@ -44,6 +44,21 @@ Possible alarm states shown in Home Assistant:
 - `arming`
 - `triggered`
 
+## Lock support (Yale Doorman and similar)
+
+Lock devices that expose `features.lock.states.state.value` are created as Home Assistant lock entities.
+
+- `locked` when value is `true`
+- `unlocked` when value is `false`
+
+The lock entity is currently read-only (no lock/unlock command is sent to Homely).
+
+Practical lock-related binary sensors are also exposed when present in API data:
+
+- `Door` (`device_class: door`) from `features.report.states.doorclosed` (mapped so `on = open`)
+- `Low Battery` (`device_class: battery`) from `features.report.states.lowbat`
+- `Jammed` (`device_class: problem`) from `features.report.states.Broken/broken`
+
 ## WebSocket status sensor values
 
 The WebSocket status sensor can show:

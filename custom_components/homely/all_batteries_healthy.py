@@ -1,4 +1,6 @@
 """Aggregated battery health sensor for Homely."""
+from typing import Any
+
 from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.helpers.entity import EntityCategory, DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -6,6 +8,17 @@ from .const import DOMAIN
 from .entity_ids import battery_problem_unique_id
 
 AGGREGATE_SENSOR_NAME = "Status of batteries"
+
+
+def _is_true(value: Any) -> bool:
+    """Return True for common true-like API values."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value == 1
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "1", "yes", "on"}
+    return False
 
 class HomelyAllBatteriesHealthySensor(CoordinatorEntity, BinarySensorEntity):
     """Binary sensor that is on when any battery reports low/defective."""
@@ -31,7 +44,10 @@ class HomelyAllBatteriesHealthySensor(CoordinatorEntity, BinarySensorEntity):
             battery = device.get("features", {}).get("battery", {}).get("states", {})
             battery_defect = battery.get("defect", {}).get("value")
             battery_low = battery.get("low", {}).get("value")
-            if battery_defect or battery_low:
+            # Some lock devices (e.g. Yale Doorman) report battery state under report.lowbat.
+            report_states = device.get("features", {}).get("report", {}).get("states", {})
+            report_low_battery = report_states.get("lowbat", {}).get("value")
+            if _is_true(battery_defect) or _is_true(battery_low) or _is_true(report_low_battery):
                 return True
         return False
 

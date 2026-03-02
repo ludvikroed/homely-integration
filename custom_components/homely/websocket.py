@@ -313,10 +313,12 @@ class HomelyWebSocket:
             self._is_closing = False
 
     async def reconnect_with_token(self, token: str) -> None:
-        """Update token and reconnect if currently disconnected."""
-        self.update_token(token)
-        if not self.is_connected() and not self._is_closing:
-            self._start_reconnect_loop("token updated")
+        """Update token and request reconnect if currently disconnected.
+
+        This is an explicit/manual action. Normal token refresh should use
+        `update_token(...)` only and must not force reconnect while already connected.
+        """
+        self.update_token(token, reconnect_if_disconnected=True)
 
     def is_connected(self) -> bool:
         """Return True if socket client reports connected."""
@@ -325,14 +327,14 @@ class HomelyWebSocket:
         except Exception:
             return False
 
-    def update_token(self, token: str) -> None:
+    def update_token(self, token: str, reconnect_if_disconnected: bool = False) -> None:
         """Update token used by next connect/reconnect attempt."""
         if not token:
             return
         if token != self.token:
             self.token = token
             _LOGGER.debug("WebSocket token updated %s", self._ctx())
-        if not self.is_connected() and not self._is_closing:
+        if reconnect_if_disconnected and not self.is_connected() and not self._is_closing:
             self._start_reconnect_loop("token changed while disconnected")
 
     def request_reconnect(self, reason: str = "manual request") -> None:

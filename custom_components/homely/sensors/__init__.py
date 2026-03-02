@@ -58,6 +58,40 @@ SENSORS = [
         "entity_category": "diagnostic",
         "icon": "mdi:battery-alert",
     },
+    # Practical lock/report sensors (created only when available)
+    {
+        "path": "features.report.states.doorclosed.value",
+        "format": "boolean",
+        "type": "binary_sensor",
+        "name": "door",
+        "device_class": "door",
+        "device_suffix": "door",
+        # Home Assistant door binary_sensor expects "on" = open.
+        "invert": True,
+    },
+    {
+        "path": "features.report.states.lowbat.value",
+        "format": "boolean",
+        "type": "binary_sensor",
+        "name": "low_battery",
+        "device_class": "battery",
+        "device_suffix": "report_lowbat",
+        "entity_category": "diagnostic",
+    },
+    {
+        "path": "features.report.states.Broken.value",
+        "paths": [
+            "features.report.states.Broken.value",
+            "features.report.states.broken.value",
+        ],
+        "format": "boolean",
+        "type": "binary_sensor",
+        "name": "jammed",
+        "device_class": "problem",
+        "device_suffix": "jammed",
+        "entity_category": "diagnostic",
+        "icon": "mdi:lock-alert",
+    },
     # Temperature sensors
     {
         "path": "features.temperature.states.temperature.value",
@@ -132,4 +166,3 @@ SENSORS = [
         "state_class": "total",
     },
 ]
-

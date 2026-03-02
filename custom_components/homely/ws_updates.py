@@ -4,6 +4,14 @@ from __future__ import annotations
 from typing import Any
 
 
+def _normalize_event_type(event_type: Any) -> str | None:
+    """Normalize websocket event type names to kebab-case."""
+    if not isinstance(event_type, str):
+        return None
+    normalized = event_type.strip().lower().replace("_", "-")
+    return normalized or None
+
+
 def ensure_alarm_root(data_dict: dict[str, Any]) -> dict[str, Any]:
     """Ensure location alarm structure exists and return alarm state dict."""
     features = data_dict.setdefault("features", {})
@@ -75,7 +83,8 @@ def apply_websocket_event_to_data(
     event_data: dict[str, Any],
 ) -> dict[str, Any]:
     """Apply a websocket event to cached data and return update details."""
-    event_type = event_data.get("type")
+    raw_event_type = event_data.get("type") or event_data.get("event")
+    event_type = _normalize_event_type(raw_event_type)
     payload = event_data.get("data")
     if not isinstance(payload, dict):
         payload = event_data.get("payload")
@@ -91,6 +100,8 @@ def apply_websocket_event_to_data(
 
     if event_type == "alarm-state-changed":
         alarm_state = payload.get("state")
+        if alarm_state is None:
+            alarm_state = payload.get("alarmState")
         alarm_state_dict = ensure_alarm_root(data_dict)
         alarm_state_dict["value"] = alarm_state
         data_dict["alarmState"] = alarm_state

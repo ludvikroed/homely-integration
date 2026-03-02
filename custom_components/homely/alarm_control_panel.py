@@ -50,17 +50,17 @@ class HomelyAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
         )
 
     @property
-    def state(self):
+    def alarm_state(self):
         data = self.coordinator.data or {}
         
-        # Try to get alarm state from features (WebSocket source)
-        api_state = data.get("features", {}).get("alarm", {}).get("states", {}).get("alarm", {}).get("value")
+        # Top-level alarmState is present in polling responses and updated by websocket helpers.
+        api_state = data.get("alarmState")
         
-        # Fallback to alarmState field
-        if not api_state:
-            api_state = data.get("alarmState")
+        # Fallback to nested features path for older payload variants.
+        if api_state is None:
+            api_state = data.get("features", {}).get("alarm", {}).get("states", {}).get("alarm", {}).get("value")
         
-        if api_state:
+        if api_state is not None:
             mapped_state = STATE_MAP.get(api_state)
             if mapped_state:
                 self._last_unknown_state = None

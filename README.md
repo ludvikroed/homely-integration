@@ -65,11 +65,11 @@ Then check the logs under **Settings** → **System** → **Logs**.
 - Water leak sensors
 - Smart plugs (status monitoring)
 - HAN meter (energy consumption/production)
+- Yale Doorman lock
 
 ### Not Supported
-- Yale Doorman (not available via API)
 - Some vendor specific devices
-- Direct device control (The Homely API is read-only)
+- Direct device control (Homely API is treated as read-only in this integration)
 
 > **Note**: This integration is not tested with all devices supported through the Homely API. Please open an issue if you are missing devices or features.
 
