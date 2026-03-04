@@ -6,25 +6,22 @@ A Home Assistant integration that connects your Homely alarm system with Home As
 
 ### Via HACS (Recommended)
 
-1. Open HACS in Home Assistant
-2. Search for "Homely" and click "Download"
-3. Restart Home Assistant
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=ludvikroed&repository=homely-integration&category=integration)
+
+Click "Download" and Restart Home Assistant
 
 ### Configure
 
 1. Go to **Settings** → **Devices & Services** → **"+ Add Integration"**
-2. Search for **"Homely Alarm"**
+2. Search for **"Homely"**
 3. Enter your Homely account credentials (username and password)
 4. Click **"Submit"**
+> **Multiple Homes?** Add the integration once per home using Home index 0, 1, 2, etc.
 
 ### Manual Installation
 1. Download the [latest release](https://github.com/ludvikroed/homely-integration/releases)
 2. Extract and copy the `homely` folder to `/config/custom_components/homely/`
-3. Restart Home Assistant
-
-
-
-> **Multiple Homes?** Add the integration once per home using Home index 0, 1, 2, etc.
+3. Restart Home Assistant and configure
 
 ## Advanced Configuration
 
@@ -57,6 +54,7 @@ Then check the logs under **Settings** → **System** → **Logs**.
 
 ### Fully Supported:
 - Alarm status
+- Yale Doorman lock
 - Temperature sensors
 - Motion detectors
 - Door/window sensors
@@ -64,11 +62,10 @@ Then check the logs under **Settings** → **System** → **Logs**.
 - Water leak sensors
 - Smart plugs (status monitoring)
 - HAN meter (energy consumption/production)
-- Yale Doorman lock
 
 ### Not Supported
-- Some vendor specific devices
-- Direct device control (Homely API is treated as read-only in this integration)
+- Some devices might not be supported
+- Direct device control (Homely API is read-only)
 
 > **Note**: This integration is not tested with all devices supported through the Homely API. Please open an issue if you are missing devices or features.
 
