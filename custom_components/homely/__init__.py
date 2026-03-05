@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from typing import Any
@@ -67,6 +68,54 @@ def _set_alarm_state(data: dict[str, Any], alarm_state: Any) -> None:
     alarm_state_dict["value"] = alarm_state
 
 
+def _log_startup_device_payloads(
+    data: dict[str, Any],
+    entry_id: str,
+    location_id: str | int,
+) -> None:
+    """Log full payload per device once during startup when debug logging is enabled."""
+    if not _LOGGER.isEnabledFor(logging.DEBUG):
+        return
+
+    location_id_str = str(location_id)
+    devices = data.get("devices")
+    if not isinstance(devices, list):
+        _LOGGER.debug(
+            "Startup API device dump skipped; devices list missing %s",
+            _ctx(entry_id, location_id_str),
+        )
+        return
+
+    _LOGGER.debug(
+        "Startup API device dump begin %s device_count=%s",
+        _ctx(entry_id, location_id_str),
+        len(devices),
+    )
+
+    for index, device in enumerate(devices, start=1):
+        if not isinstance(device, dict):
+            _LOGGER.debug(
+                "Startup API device payload #%s is not an object %s payload=%r",
+                index,
+                _ctx(entry_id, location_id_str),
+                device,
+            )
+            continue
+
+        device_id = device.get("id")
+        device_name = device.get("name") or f"Enhet {index}"
+        device_dump = json.dumps(device, indent=2, ensure_ascii=True, sort_keys=True)
+
+        _LOGGER.debug(
+            "Startup API payload for '%s' %s\n%s",
+            device_name,
+            _ctx(entry_id, location_id_str, str(device_id) if device_id is not None else None),
+            device_dump,
+        )
+
+    _LOGGER.debug("Startup API device dump complete %s", _ctx(entry_id, location_id_str))
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Homely Alarm from a config entry."""
     entry_id = entry.entry_id
@@ -129,6 +178,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     initial_alarm_state = _get_alarm_state(data)
     if initial_alarm_state is not None:
         _set_alarm_state(data, initial_alarm_state)
+    _log_startup_device_payloads(data, entry_id, location_id)
     
     # Store state for coordinator and entities
     hass.data.setdefault(DOMAIN, {})
