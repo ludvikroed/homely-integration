@@ -38,13 +38,21 @@ For deeper details and value reference (including battery status values), see [d
 - Verify your Homely username and password are correct
 - Check the Home index. This is 0 if you only have one Homely home
 - Websockets might take 10-30 seconds to connect
-- Enable debugging (shown above) and check HA logs
+- Enable debugging (shown below) and check HA logs
 
 If you can't resolve your problem, please open an issue.
 
+If a device is missing or the device is missing sensors, follow [Missing Sensors or Devices](missing_sensors_devices.md).
+
 ### Enable Debug Logging
 
-To troubleshoot issues or monitor WebSocket and API activity, go to the Homely integration, three dots in the upper right corner and select "Enable debug logging"
+To troubleshoot issues or monitor WebSocket and API activity, go to the Homely integration, three dots in the upper right corner and select "Enable debug logging" Or add this to your configuration.yaml file:
+```yaml
+logger:
+  default: info
+  logs:
+    custom_components.homely: debug
+```
 
 Then check the logs under **Settings** → **System** → **Logs**.
 
