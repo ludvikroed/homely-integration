@@ -274,11 +274,13 @@ class HomelyWebSocket:
 
             url = f"{self.websocket_url}?locationId={self.location_id}&token=Bearer {self.token}"
             _LOGGER.debug("WebSocket connecting %s to %s", self._ctx(), self.websocket_url)
-            await self.socket.connect(
-                url,
-                transports=["websocket", "polling"],
-                headers={"Authorization": f"Bearer {self.token}"},
-                wait_timeout=10,
+            await asyncio.wait_for(
+                self.socket.connect(
+                    url,
+                    transports=["websocket", "polling"],
+                    headers={"Authorization": f"Bearer {self.token}"},
+                ),
+                timeout=10,
             )
             return True
         except asyncio.TimeoutError:
