@@ -28,6 +28,7 @@ Click "Download" and Restart Home Assistant
 - **Polling interval**: Adjust API polling frequency shown in seconds (backup for websockets)
 - **Multiple homes**: Add integration for each Home index (0, 1, 2...)
 - **WebSocket toggle**: Enable/disable instant updates
+- **Polling while WebSocket is connected**: Optional. If disabled, API polling pauses while WebSocket is connected and resumes automatically if WebSocket disconnects
 
 For deeper details and value reference (including battery status values), see [documentation.md](documentation.md).
 

@@ -8,6 +8,12 @@ from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
+from .naming import (
+    build_entity_name,
+    build_suggested_object_id,
+    get_device_area,
+    get_device_display_name,
+)
 from .sensors.discover import discover_device_sensors, _get_value_by_path
 
 
@@ -68,9 +74,12 @@ class HomelyDeviceOnlineSensor(CoordinatorEntity, BinarySensorEntity):
     def __init__(self, coordinator, device):
         super().__init__(coordinator)
         self._device_id = device.get("id")
-        self._device_name = device.get("name")
-        self._attr_name = f"{self._device_name} Online"
+        self._device_name = get_device_display_name(device)
+        self._attr_name = build_entity_name(device, "online")
         self._attr_unique_id = f"{self._device_id}_online"
+        suggested_object_id = build_suggested_object_id(device, "online")
+        if suggested_object_id:
+            self._attr_suggested_object_id = suggested_object_id
         self._attr_icon = "mdi:lan-connect"
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
         self._attr_device_class = "connectivity"
@@ -80,6 +89,7 @@ class HomelyDeviceOnlineSensor(CoordinatorEntity, BinarySensorEntity):
             manufacturer="Homely",
             model=device.get("modelName"),
             serial_number=device.get("serialNumber"),
+            suggested_area=get_device_area(device),
         )
 
     @property
@@ -99,15 +109,18 @@ class HomelyBinarySensor(CoordinatorEntity, BinarySensorEntity):
         self._device_id = device.get("id")
         self._path = sensor_config["path"]
         self._invert = bool(sensor_config.get("invert", False))
-        self._device_name = device.get("name")
+        self._device_name = get_device_display_name(device)
         
         # Build entity name using resolved name
         sensor_name = sensor_config.get("resolved_name", sensor_config.get("name", "sensor"))
-        self._attr_name = f"{self._device_name} {sensor_name.replace('_', ' ').title()}"
+        self._attr_name = build_entity_name(device, sensor_name)
         
         # Build unique ID from device suffix
         device_suffix = sensor_config.get("device_suffix", sensor_config["name"])
         self._attr_unique_id = f"{self._device_id}_{device_suffix}"
+        suggested_object_id = build_suggested_object_id(device, device_suffix)
+        if suggested_object_id:
+            self._attr_suggested_object_id = suggested_object_id
         
         # Set device class using resolved device class
         device_class = sensor_config.get("resolved_device_class")
@@ -134,6 +147,7 @@ class HomelyBinarySensor(CoordinatorEntity, BinarySensorEntity):
             manufacturer="Homely",
             model=device.get("modelName"),
             serial_number=device.get("serialNumber"),
+            suggested_area=get_device_area(device),
         )
     
     @property

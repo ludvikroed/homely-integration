@@ -123,7 +123,15 @@ class HomelyWebSocket:
             self._set_status("Connected")
 
         device_id = data.get("data", {}).get("deviceId") if isinstance(data, dict) else None
-        _LOGGER.debug("WebSocket event received %s: %r", self._ctx(device_id=device_id), data)
+        if isinstance(data, dict):
+            event_type = data.get("type") or data.get("event") or "unknown"
+            _LOGGER.debug(
+                "WebSocket event received %s event_type=%s",
+                self._ctx(device_id=device_id),
+                event_type,
+            )
+        else:
+            _LOGGER.debug("WebSocket event received %s non-dict payload", self._ctx(device_id=device_id))
         if isinstance(data, dict):
             try:
                 self.on_data_update(data)
@@ -137,6 +145,10 @@ class HomelyWebSocket:
 
     def _on_disconnect(self, reason: str | None = None) -> None:
         """Handle disconnected connection."""
+        if self._is_closing:
+            # During manual unload/reload disconnects, avoid noisy warnings.
+            self._set_status("Disconnected", "manual disconnect")
+            return
         self._set_status("Disconnected", reason)
         if not self._is_closing:
             self._start_reconnect_loop("disconnect event")

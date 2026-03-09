@@ -9,6 +9,12 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
+from .naming import (
+    build_entity_name,
+    build_suggested_object_id,
+    get_device_area,
+    get_device_display_name,
+)
 from .sensors.discover import _get_value_by_path
 
 
@@ -66,10 +72,13 @@ class HomelyLock(CoordinatorEntity, LockEntity):
     def __init__(self, coordinator, device):
         super().__init__(coordinator)
         self._device_id = device.get("id")
-        self._device_name = device.get("name") or f"Homely lock {self._device_id}"
+        self._device_name = get_device_display_name(device)
 
-        self._attr_name = self._device_name
+        self._attr_name = build_entity_name(device, "lock")
         self._attr_unique_id = f"{self._device_id}_lock"
+        suggested_object_id = build_suggested_object_id(device, "lock")
+        if suggested_object_id:
+            self._attr_suggested_object_id = suggested_object_id
         self._attr_icon = "mdi:lock"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, self._device_id)},
@@ -77,6 +86,7 @@ class HomelyLock(CoordinatorEntity, LockEntity):
             manufacturer="Homely",
             model=device.get("modelName"),
             serial_number=device.get("serialNumber"),
+            suggested_area=get_device_area(device),
         )
 
     def _get_current_device(self) -> dict[str, Any] | None:

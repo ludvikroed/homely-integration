@@ -17,9 +17,11 @@ from .const import (
     CONF_USERNAME,
     CONF_SCAN_INTERVAL,
     CONF_ENABLE_WEBSOCKET,
+    CONF_POLL_WHEN_WEBSOCKET,
     DEFAULT_HOME_ID,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_ENABLE_WEBSOCKET,
+    DEFAULT_POLL_WHEN_WEBSOCKET,
     DOMAIN,
 )
 from .api import fetch_token_with_reason, get_location_id, get_data
@@ -112,6 +114,13 @@ class HomelyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_ENABLE_WEBSOCKET,
                     default=default_values.get(CONF_ENABLE_WEBSOCKET, DEFAULT_ENABLE_WEBSOCKET),
                 ): selector.BooleanSelector(),
+                vol.Optional(
+                    CONF_POLL_WHEN_WEBSOCKET,
+                    default=default_values.get(
+                        CONF_POLL_WHEN_WEBSOCKET,
+                        DEFAULT_POLL_WHEN_WEBSOCKET,
+                    ),
+                ): selector.BooleanSelector(),
             }
         )
 
@@ -152,6 +161,10 @@ class HomelyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors[CONF_HOME_ID] = "invalid_home_id"
                 return self.async_show_form(step_id="user", data_schema=self._build_user_schema(input_values), errors=errors)
             enable_websocket = user_input.get(CONF_ENABLE_WEBSOCKET, DEFAULT_ENABLE_WEBSOCKET)
+            poll_when_websocket = user_input.get(
+                CONF_POLL_WHEN_WEBSOCKET,
+                DEFAULT_POLL_WHEN_WEBSOCKET,
+            )
 
             location_item = location_response[home_id]
             location_id = location_item.get("locationId")
@@ -170,6 +183,7 @@ class HomelyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             entry_data[CONF_HOME_ID] = home_id
             entry_data[CONF_SCAN_INTERVAL] = scan_interval
             entry_data[CONF_ENABLE_WEBSOCKET] = bool(enable_websocket)
+            entry_data[CONF_POLL_WHEN_WEBSOCKET] = bool(poll_when_websocket)
 
             return self.async_create_entry(
                 title=location_name,
@@ -187,6 +201,7 @@ class HomelyOptionsFlow(config_entries.OptionsFlow):
         home_id: int,
         scan_interval: int,
         enable_websocket: bool,
+        poll_when_websocket: bool,
     ) -> vol.Schema:
         """Build options schema with supplied defaults."""
         return vol.Schema(
@@ -197,6 +212,10 @@ class HomelyOptionsFlow(config_entries.OptionsFlow):
                     vol.Range(min=10),
                 ),
                 vol.Optional(CONF_ENABLE_WEBSOCKET, default=enable_websocket): bool,
+                vol.Optional(
+                    CONF_POLL_WHEN_WEBSOCKET,
+                    default=poll_when_websocket,
+                ): bool,
             }
         )
 
@@ -229,6 +248,10 @@ class HomelyOptionsFlow(config_entries.OptionsFlow):
                 CONF_ENABLE_WEBSOCKET,
                 self.config_entry.data.get(CONF_ENABLE_WEBSOCKET, DEFAULT_ENABLE_WEBSOCKET)
             )
+            poll_when_websocket = self.config_entry.options.get(
+                CONF_POLL_WHEN_WEBSOCKET,
+                self.config_entry.data.get(CONF_POLL_WHEN_WEBSOCKET, DEFAULT_POLL_WHEN_WEBSOCKET),
+            )
 
             if user_input is not None:
                 errors: dict[str, str] = {}
@@ -246,6 +269,9 @@ class HomelyOptionsFlow(config_entries.OptionsFlow):
                     errors[CONF_SCAN_INTERVAL] = "invalid_scan_interval"
 
                 enable_websocket = bool(user_input.get(CONF_ENABLE_WEBSOCKET, enable_websocket))
+                poll_when_websocket = bool(
+                    user_input.get(CONF_POLL_WHEN_WEBSOCKET, poll_when_websocket)
+                )
 
                 if not errors:
                     username = self.config_entry.data.get(CONF_USERNAME)
@@ -266,24 +292,39 @@ class HomelyOptionsFlow(config_entries.OptionsFlow):
                 if errors:
                     return self.async_show_form(
                         step_id="init",
-                        data_schema=self._build_options_schema(home_id, scan_interval, enable_websocket),
+                        data_schema=self._build_options_schema(
+                            home_id,
+                            scan_interval,
+                            enable_websocket,
+                            poll_when_websocket,
+                        ),
                         errors=errors,
                     )
 
                 user_input[CONF_HOME_ID] = home_id
                 user_input[CONF_SCAN_INTERVAL] = scan_interval
                 user_input[CONF_ENABLE_WEBSOCKET] = enable_websocket
+                user_input[CONF_POLL_WHEN_WEBSOCKET] = poll_when_websocket
                 _LOGGER.debug("Saving options: %s", dict(user_input))
                 return self.async_create_entry(title="", data=user_input)
 
             _LOGGER.debug(
-                "Options values: home_id=%s, scan_interval=%s, enable_websocket=%s",
-                home_id, scan_interval, enable_websocket
+                "Options values: home_id=%s, scan_interval=%s, enable_websocket=%s, "
+                "poll_when_websocket=%s",
+                home_id,
+                scan_interval,
+                enable_websocket,
+                poll_when_websocket,
             )
 
             return self.async_show_form(
                 step_id="init",
-                data_schema=self._build_options_schema(home_id, scan_interval, enable_websocket),
+                data_schema=self._build_options_schema(
+                    home_id,
+                    scan_interval,
+                    enable_websocket,
+                    poll_when_websocket,
+                ),
             )
         except Exception as err:
             _LOGGER.error("Error in options flow: %s", err, exc_info=True)

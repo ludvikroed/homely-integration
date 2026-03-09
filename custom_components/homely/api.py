@@ -107,7 +107,6 @@ async def get_data(hass: HomeAssistant, token: str, location_id: str | int) -> d
     try:
         async with session.get(url, headers=headers) as response:
             if response.status == 200:
-                _LOGGER.debug("Location data fetch successful")
                 return await response.json()
             _LOGGER.debug("Location data fetch failed with status=%s location_id=%s", response.status, location_id)
             return None
