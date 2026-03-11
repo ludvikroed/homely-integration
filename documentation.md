@@ -70,8 +70,34 @@ The WebSocket status sensor can show:
 
 When available, the `reason` attribute contains the latest disconnect/connect reason.
 
+### Remove Stale Devices
+
+If Homely stops reporting a device, you can remove it manually in Home Assistant:
+1. Go to **Settings** → **Devices & Services** → **Homely**.
+2. Open the stale device.
+3. Click **Delete device**.
+
+The integration only allows deleting device-level Homely devices that are no longer present in the latest API data. Location-level Homely devices are protected and cannot be deleted.
+
 ## Polling and WebSocket behavior
 
 - WebSocket applies supported updates directly to cached data for fast state updates.
-- Polling still runs at your configured interval as fallback and data consistency check.
-- If WebSocket disconnects, reconnect attempts run continuously every 5 minutes.
+- Reconnect attempts run continuously every 5 minutes when disconnected.
+
+Behavior depends on your options:
+
+- `Enable WebSocket = on` and `Polling while WebSocket is connected = on`:
+  Polling continues at configured interval, and WebSocket gives extra real-time updates.
+- `Enable WebSocket = on` and `Polling while WebSocket is connected = off`:
+  Polling pauses while WebSocket is connected. If WebSocket disconnects, the integration requests an immediate refresh and then continues normal polling until WebSocket reconnects at configured interval.
+- `Enable WebSocket = off`:
+  Polling-only mode.
+
+### Should polling stay on when WebSocket is on?
+
+- Keep polling `on` if you want periodic full refresh in addition to live events.
+  This can be useful if some device data changes are not always pushed as WebSocket events, or if you prefer extra safety against missed events.
+- Set polling `off` if you want lower API traffic and mostly real-time updates from WebSocket only.
+  This is typically fine when WebSocket events cover your use case well.
+
+Practical tradeoff: `on` = more robust consistency, `off` = less API load.

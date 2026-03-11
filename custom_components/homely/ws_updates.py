@@ -33,6 +33,8 @@ def apply_device_state_changes(
         return []
 
     devices = data_dict.get("devices", [])
+    if not isinstance(devices, list):
+        return []
     device = next((d for d in devices if d.get("id") == device_id), None)
     if not isinstance(device, dict):
         return []

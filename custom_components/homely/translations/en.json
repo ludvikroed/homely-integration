@@ -13,10 +13,10 @@
           "poll_when_websocket": "Keep polling while WebSocket is connected"
         },
         "data_description": {
-          "home_id": "advanced",
-          "scan_interval": "advanced",
-          "enable_websocket": "advanced",
-          "poll_when_websocket": "advanced"
+          "home_id": "Advanced",
+          "scan_interval": "Advanced",
+          "enable_websocket": "Advanced",
+          "poll_when_websocket": "Advanced"
         }
       }
     },
@@ -41,7 +41,13 @@
           "home_id": "Home index (0 for first home, 1 for second, etc.)",
           "scan_interval": "Scan interval (seconds, minimum 10)",
           "enable_websocket": "Enable WebSocket for real-time updates",
-          "poll_when_websocket": "Keep polling while WebSocket is connected"
+          "poll_when_websocket": "Polling while WebSocket is connected"
+        },
+        "data_description": {
+          "home_id": "Advanced",
+          "scan_interval": "Advanced",
+          "enable_websocket": "Advanced",
+          "poll_when_websocket": "Advanced"
         }
       }
     },

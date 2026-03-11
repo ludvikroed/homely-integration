@@ -204,18 +204,37 @@ class HomelyOptionsFlow(config_entries.OptionsFlow):
         poll_when_websocket: bool,
     ) -> vol.Schema:
         """Build options schema with supplied defaults."""
+        from homeassistant.helpers import selector
+
         return vol.Schema(
             {
-                vol.Optional(CONF_HOME_ID, default=home_id): vol.Coerce(int),
-                vol.Optional(CONF_SCAN_INTERVAL, default=scan_interval): vol.All(
-                    vol.Coerce(int),
-                    vol.Range(min=10),
+                vol.Optional(
+                    CONF_HOME_ID,
+                    default=home_id,
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        mode=selector.NumberSelectorMode.BOX,
+                        min=0,
+                    )
                 ),
-                vol.Optional(CONF_ENABLE_WEBSOCKET, default=enable_websocket): bool,
+                vol.Optional(
+                    CONF_SCAN_INTERVAL,
+                    default=scan_interval,
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        mode=selector.NumberSelectorMode.BOX,
+                        min=10,
+                        unit_of_measurement="seconds",
+                    )
+                ),
+                vol.Optional(
+                    CONF_ENABLE_WEBSOCKET,
+                    default=enable_websocket,
+                ): selector.BooleanSelector(),
                 vol.Optional(
                     CONF_POLL_WHEN_WEBSOCKET,
                     default=poll_when_websocket,
-                ): bool,
+                ): selector.BooleanSelector(),
             }
         )
 

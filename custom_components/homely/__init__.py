@@ -12,12 +12,14 @@ from homeassistant.const import Platform
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers.device_registry import DeviceEntry
 
 from datetime import timedelta
 from .api import (
     fetch_refresh_token,
     fetch_token_with_reason,
     get_data,
+    get_data_with_status,
     get_location_id,
 )
 from .const import (
@@ -36,6 +38,7 @@ from .ws_updates import apply_websocket_event_to_data
 
 PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.ALARM_CONTROL_PANEL, Platform.LOCK]
 _LOGGER = logging.getLogger(__name__)
+_TRANSIENT_HTTP_STATUS = {429, 500, 502, 503, 504}
 
 
 def _ctx(entry_id: str, location_id: str | None = None, device_id: str | None = None) -> str:
@@ -130,6 +133,34 @@ def _log_startup_device_payloads(
         )
 
     _LOGGER.debug("Startup API device dump complete %s", _ctx(entry_id, location_id_str))
+
+
+def _tracked_api_device_ids(entry_data: dict[str, Any] | None) -> tuple[bool, set[str]]:
+    """Return current Homely device ids from coordinator/cache with availability flag."""
+    if not isinstance(entry_data, dict):
+        return False, set()
+
+    data: Any = None
+    coordinator = entry_data.get("coordinator")
+    if coordinator is not None:
+        data = getattr(coordinator, "data", None)
+
+    if not isinstance(data, dict):
+        data = entry_data.get("data")
+
+    if not isinstance(data, dict):
+        return False, set()
+
+    devices = data.get("devices")
+    if not isinstance(devices, list):
+        return False, set()
+
+    tracked_ids = {
+        str(device_id)
+        for device in devices
+        if isinstance(device, dict) and (device_id := device.get("id")) is not None
+    }
+    return True, tracked_ids
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -319,6 +350,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     ed = hass.data.get(DOMAIN, {}).get(entry.entry_id)
                     if not ed:
                         return
+                    previous_status = ed.get("ws_status")
                     ed["ws_status"] = status
                     ed["ws_status_reason"] = reason
 
@@ -349,10 +381,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             # so fallback polling resumes without waiting for next interval.
                             if (
                                 status == "Disconnected"
+                                and previous_status != "Disconnected"
                                 and enable_websocket
                                 and not poll_when_websocket
+                                and reason != "manual disconnect"
                             ):
                                 try:
+                                    last_refresh = current.get("_ws_disconnect_refresh_monotonic", 0.0)
+                                    now_monotonic = time.monotonic()
+                                    if now_monotonic - last_refresh < 30:
+                                        _LOGGER.debug(
+                                            "Skipping immediate refresh due to disconnect debounce %s",
+                                            _ctx(entry_id, location_id),
+                                        )
+                                        return
+                                    current["_ws_disconnect_refresh_monotonic"] = now_monotonic
                                     hass.async_create_task(coordinator.async_request_refresh())
                                     _LOGGER.debug(
                                         "Requested immediate polling refresh after websocket disconnect "
@@ -513,8 +556,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         location_id_value = entry_data["location_id"]
         # Fetch latest data
         try:
-            updated = await get_data(hass, access_token, location_id_value)
+            updated, status_code = await get_data_with_status(hass, access_token, location_id_value)
             if not updated:
+                if status_code in (401, 403):
+                    raise ConfigEntryAuthFailed("Homely token is no longer accepted by API")
+                if (
+                    status_code in _TRANSIENT_HTTP_STATUS
+                    and isinstance(entry_data.get("data"), dict)
+                    and entry_data["data"]
+                ):
+                    _LOGGER.warning(
+                        "Polling API request failed with transient status=%s; "
+                        "continuing with cached data entry_id=%s location_id=%s",
+                        status_code,
+                        entry_id,
+                        location_id,
+                    )
+                    return entry_data["data"]
                 raise UpdateFailed("Failed to fetch data from API")
             elapsed_ms = int((time.monotonic() - poll_started_at) * 1000)
             devices = updated.get("devices")
@@ -528,6 +586,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 device_count,
             )
         except UpdateFailed:
+            raise
+        except ConfigEntryAuthFailed:
             raise
         except Exception as err:
             _LOGGER.warning(
@@ -615,7 +675,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     
     # Initialize WebSocket for real-time updates (non-blocking) if enabled
     if enable_websocket:
-        asyncio.create_task(init_websocket())
+        hass.async_create_task(init_websocket())
         _LOGGER.debug("WebSocket initialization scheduled entry_id=%s location_id=%s", entry_id, location_id)
         # Listen for Home Assistant "internet_available" event and trigger reconnect
         def _internet_available(event):
@@ -662,6 +722,51 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
     
     _LOGGER.info("Homely Alarm integration setup completed entry_id=%s location_id=%s", entry_id, location_id)
+    return True
+
+
+async def async_remove_config_entry_device(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    device_entry: DeviceEntry,
+) -> bool:
+    """Allow manual deletion of stale Homely devices from the device registry."""
+    has_homely_identifier = False
+    entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    has_snapshot, active_device_ids = _tracked_api_device_ids(entry_data)
+
+    for identifier_domain, identifier in device_entry.identifiers:
+        if identifier_domain != DOMAIN:
+            continue
+
+        has_homely_identifier = True
+        identifier_str = str(identifier)
+
+        # Keep location-level virtual device protected.
+        if identifier_str.startswith("location_"):
+            _LOGGER.debug(
+                "Device removal denied for location device entry_id=%s device_id=%s",
+                entry.entry_id,
+                identifier_str,
+            )
+            return False
+
+        if has_snapshot and identifier_str in active_device_ids:
+            _LOGGER.debug(
+                "Device removal denied for active API device entry_id=%s device_id=%s",
+                entry.entry_id,
+                identifier_str,
+            )
+            return False
+
+    if not has_homely_identifier:
+        return False
+
+    _LOGGER.info(
+        "Allowing manual removal of stale Homely device entry_id=%s ha_device_id=%s",
+        entry.entry_id,
+        device_entry.id,
+    )
     return True
 
 

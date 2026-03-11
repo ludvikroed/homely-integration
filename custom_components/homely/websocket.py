@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import Any, Callable
+from urllib.parse import urlencode
 
 import aiohttp
 
@@ -46,6 +47,14 @@ class HomelyWebSocket:
     def websocket_url(self) -> str:
         """WebSocket base URL."""
         return "https://sdk.iotiliti.cloud"
+
+    @staticmethod
+    def _bearer_value(token: str | None) -> str:
+        """Return normalized bearer token value."""
+        normalized = (token or "").strip()
+        if normalized.lower().startswith("bearer "):
+            return normalized
+        return f"Bearer {normalized}"
 
     @property
     def status(self) -> str:
@@ -284,13 +293,20 @@ class HomelyWebSocket:
                 _LOGGER.debug("WebSocket connect_error %s: %s", self._ctx(), reason)
                 self._on_disconnect(reason)
 
-            url = f"{self.websocket_url}?locationId={self.location_id}&token=Bearer {self.token}"
+            bearer_token = self._bearer_value(self.token)
+            query = urlencode(
+                {
+                    "locationId": str(self.location_id),
+                    "token": bearer_token,
+                }
+            )
+            url = f"{self.websocket_url}?{query}"
             _LOGGER.debug("WebSocket connecting %s to %s", self._ctx(), self.websocket_url)
             await asyncio.wait_for(
                 self.socket.connect(
                     url,
                     transports=["websocket", "polling"],
-                    headers={"Authorization": f"Bearer {self.token}"},
+                    headers={"Authorization": bearer_token},
                 ),
                 timeout=10,
             )
@@ -304,7 +320,12 @@ class HomelyWebSocket:
         except Exception as err:
             self.socket = None
             self._set_status("Disconnected", f"connect exception: {err}")
-            _LOGGER.error("WebSocket connect failed %s: %s", self._ctx(), err, exc_info=True)
+            _LOGGER.error(
+                "WebSocket connect failed %s: %s (%s)",
+                self._ctx(),
+                err,
+                type(err).__name__,
+            )
 
         if not from_reconnect_loop:
             self._start_reconnect_loop("connect failed")

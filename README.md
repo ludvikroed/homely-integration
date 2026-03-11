@@ -5,6 +5,7 @@ A Home Assistant integration that connects your Homely alarm system with Home As
 ## Installation & Setup
 
 ### Via HACS (Recommended)
+Make sure [HACS](https://hacs.xyz/) is installed
 
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=ludvikroed&repository=homely-integration&category=integration)
 
