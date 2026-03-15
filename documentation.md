@@ -2,6 +2,12 @@
 
 This file contains practical details for users who want more than quick setup.
 
+## API coverage and missing devices
+
+Some devices that are fully supported in the Homely app may still be missing in Home Assistant if Homely does not expose them through the API. In other cases, the device may be available through the API, but the integration may not map all available states yet.
+
+If a device is missing, or a device only shows partial data, follow [missing_sensors_devices.md](missing_sensors_devices.md).
+
 ## Home index
 
 `Home index` selects which home in your Homely account is used by this config entry.
@@ -26,14 +32,17 @@ Battery values come from each device's battery feature.
 
 ### Aggregate battery sensor
 
-The integration creates a location-level sensor named `Status of batteries`.
+The integration creates a location-level binary sensor named `Status of batteries`.
 
 - Home Assistant state `on` = at least one device reports low/defective battery
 - Home Assistant state `off` = no low/defective battery detected
 - Extra attribute `status = "Defective"` when state is `on`
 - Extra attribute `status = "Healthy"` when state is `off`
+- Some lock devices, such as Yale Doorman, report battery state through `features.report.states.lowbat`
 
 ## Alarm state values
+
+The alarm entity reflects the current alarm status reported by the API. Alarm control commands are not currently sent through this integration.
 
 Possible alarm states shown in Home Assistant:
 
@@ -53,6 +62,14 @@ Lock devices that expose `features.lock.states.state.value` are created as Home 
 
 The lock entity is currently read-only (no lock/unlock command is sent to Homely).
 
+When available, the lock entity may also expose extra attributes such as:
+
+- `door_closed`
+- `low_battery`
+- `part_of_alarm`
+- `lock_model`
+- `error_code`
+
 Practical lock-related binary sensors are also exposed when present in API data:
 
 - `Door` (`device_class: door`) from `features.report.states.doorclosed` (mapped so `on = open`)
@@ -70,7 +87,7 @@ The WebSocket status sensor can show:
 
 When available, the `reason` attribute contains the latest disconnect/connect reason.
 
-### Remove Stale Devices
+## Remove stale devices
 
 If Homely stops reporting a device, you can remove it manually in Home Assistant:
 1. Go to **Settings** → **Devices & Services** → **Homely**.

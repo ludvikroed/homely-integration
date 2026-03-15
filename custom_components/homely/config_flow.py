@@ -13,6 +13,7 @@ _LOGGER = logging.getLogger(__name__)
 
 from .const import (
     CONF_HOME_ID,
+    CONF_LOCATION_ID,
     CONF_PASSWORD,
     CONF_USERNAME,
     CONF_SCAN_INTERVAL,
@@ -35,6 +36,26 @@ def _redact(data: dict[str, Any]) -> dict[str, Any]:
     if CONF_PASSWORD in redacted:
         redacted[CONF_PASSWORD] = "***"
     return redacted
+
+
+def _normalize_location_id(location_id: Any) -> str | None:
+    """Convert location id to stable string value."""
+    if location_id is None:
+        return None
+    return str(location_id)
+
+
+def _entry_home_id(entry: config_entries.ConfigEntry) -> int:
+    """Read home index from entry options/data with fallback."""
+    try:
+        return int(
+            entry.options.get(
+                CONF_HOME_ID,
+                entry.data.get(CONF_HOME_ID, DEFAULT_HOME_ID),
+            )
+        )
+    except (TypeError, ValueError):
+        return DEFAULT_HOME_ID
 
 
 async def _fetch_locations_for_credentials(
@@ -124,6 +145,30 @@ class HomelyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }
         )
 
+    def _is_duplicate_location(
+        self,
+        location_id: str | None,
+        username: str,
+        home_id: int,
+    ) -> bool:
+        """Check for duplicate integration entries."""
+        for entry in self._async_current_entries():
+            if location_id is not None:
+                existing_location = _normalize_location_id(
+                    entry.data.get(CONF_LOCATION_ID)
+                )
+                if existing_location == location_id:
+                    return True
+                if entry.unique_id == location_id:
+                    return True
+
+            existing_username = entry.data.get(CONF_USERNAME)
+            existing_home_id = _entry_home_id(entry)
+            if existing_username == username and existing_home_id == home_id:
+                return True
+
+        return False
+
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -168,6 +213,18 @@ class HomelyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             location_item = location_response[home_id]
             location_id = location_item.get("locationId")
+            normalized_location_id = _normalize_location_id(location_id)
+
+            if normalized_location_id is not None:
+                await self.async_set_unique_id(normalized_location_id)
+                self._abort_if_unique_id_configured()
+
+            if self._is_duplicate_location(
+                normalized_location_id,
+                user_input[CONF_USERNAME],
+                home_id,
+            ):
+                return self.async_abort(reason="already_configured")
 
             # Fetch location data to get the name
             location_data = None
@@ -184,6 +241,8 @@ class HomelyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             entry_data[CONF_SCAN_INTERVAL] = scan_interval
             entry_data[CONF_ENABLE_WEBSOCKET] = bool(enable_websocket)
             entry_data[CONF_POLL_WHEN_WEBSOCKET] = bool(poll_when_websocket)
+            if normalized_location_id is not None:
+                entry_data[CONF_LOCATION_ID] = normalized_location_id
 
             return self.async_create_entry(
                 title=location_name,
@@ -238,6 +297,33 @@ class HomelyOptionsFlow(config_entries.OptionsFlow):
             }
         )
 
+    def _is_duplicate_location(
+        self,
+        location_id: str | None,
+        username: str,
+        home_id: int,
+    ) -> bool:
+        """Check for duplicate target when updating options."""
+        for entry in self.hass.config_entries.async_entries(DOMAIN):
+            if entry.entry_id == self.config_entry.entry_id:
+                continue
+
+            if location_id is not None:
+                existing_location = _normalize_location_id(
+                    entry.data.get(CONF_LOCATION_ID)
+                )
+                if existing_location == location_id:
+                    return True
+                if entry.unique_id == location_id:
+                    return True
+
+            existing_username = entry.data.get(CONF_USERNAME)
+            existing_home_id = _entry_home_id(entry)
+            if existing_username == username and existing_home_id == home_id:
+                return True
+
+        return False
+
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -274,6 +360,7 @@ class HomelyOptionsFlow(config_entries.OptionsFlow):
 
             if user_input is not None:
                 errors: dict[str, str] = {}
+                target_location_id: str | None = None
 
                 try:
                     home_id = int(user_input.get(CONF_HOME_ID, home_id))
@@ -307,6 +394,16 @@ class HomelyOptionsFlow(config_entries.OptionsFlow):
                             errors["base"] = reason or "cannot_connect"
                         elif home_id < 0 or home_id >= len(location_response):
                             errors[CONF_HOME_ID] = "invalid_home_id"
+                        else:
+                            target_location_id = _normalize_location_id(
+                                location_response[home_id].get("locationId")
+                            )
+                            if self._is_duplicate_location(
+                                target_location_id,
+                                username,
+                                home_id,
+                            ):
+                                errors["base"] = "already_configured"
 
                 if errors:
                     return self.async_show_form(
@@ -318,6 +415,15 @@ class HomelyOptionsFlow(config_entries.OptionsFlow):
                             poll_when_websocket,
                         ),
                         errors=errors,
+                    )
+
+                if target_location_id is not None:
+                    updated_data = dict(self.config_entry.data)
+                    updated_data[CONF_LOCATION_ID] = target_location_id
+                    self.hass.config_entries.async_update_entry(
+                        self.config_entry,
+                        data=updated_data,
+                        unique_id=target_location_id,
                     )
 
                 user_input[CONF_HOME_ID] = home_id

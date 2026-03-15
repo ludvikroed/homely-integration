@@ -24,6 +24,7 @@ from .api import (
 )
 from .const import (
     CONF_HOME_ID,
+    CONF_LOCATION_ID,
     CONF_SCAN_INTERVAL,
     CONF_ENABLE_WEBSOCKET,
     CONF_POLL_WHEN_WEBSOCKET,
@@ -227,6 +228,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         location_id,
         entry_id,
     )
+    normalized_location_id = str(location_id)
+    if (
+        entry.unique_id != normalized_location_id
+        or entry.data.get(CONF_LOCATION_ID) != normalized_location_id
+    ):
+        updated_data = dict(entry.data)
+        updated_data[CONF_LOCATION_ID] = normalized_location_id
+        hass.config_entries.async_update_entry(
+            entry,
+            data=updated_data,
+            unique_id=normalized_location_id,
+        )
+        _LOGGER.debug(
+            "Updated config entry with location_id/unique_id entry_id=%s location_id=%s",
+            entry_id,
+            normalized_location_id,
+        )
     
     # Initial data fetch
     data = await get_data(hass, access_token_str, location_id)

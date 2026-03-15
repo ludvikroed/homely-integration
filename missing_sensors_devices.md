@@ -9,8 +9,8 @@ Use this guide when:
 The integration creates entities based on fields available in Homely API payloads.  
 If a device model has states/features we do not map yet, you may only see connectivity.
 
-It may also happen that Homely API does not expose all device types or sensor values yet.  
-Even so, the goal for this integration is to support everything the API exposes, and expand support as API data allows.
+It may also happen that the Homely API does not expose all device types or sensor values yet, even when the device is fully supported in the Homely app.  
+Support can only be added when the relevant device data is available through the API.
 
 ## What to do
 
@@ -26,6 +26,7 @@ Even so, the goal for this integration is to support everything the API exposes,
 If a full device is missing in Home Assistant:
 - Follow the same steps above.
 - In the issue, also write the device name/type you expected to see, and that it was missing completely.
+- If the device is visible in the Homely app but not in the startup payload, it is most likely not exposed through the Homely API yet.
 
 Issue tracker: <https://github.com/ludvikroed/homely-integration/issues>
 

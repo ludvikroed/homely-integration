@@ -29,7 +29,7 @@
       "unknown": "Unexpected error occurred"
     },
     "abort": {
-      "already_configured": "Device is already configured"
+      "already_configured": "This location is already configured"
     }
   },
   "options": {
@@ -52,6 +52,7 @@
       }
     },
     "error": {
+      "already_configured": "This location is already configured in another Homely entry.",
       "cannot_connect": "Could not connect to Homely right now. Check internet connection and try again.",
       "invalid_auth": "Stored username or password is no longer valid. Reconfigure the integration.",
       "invalid_home_id": "Home index is not valid for this account. Use 0 for first home, 1 for second, etc.",

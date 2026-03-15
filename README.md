@@ -1,15 +1,23 @@
 # Homely Alarm Integration for Home Assistant
 
-A Home Assistant integration that connects your Homely alarm system with Home Assistant using the Homely api, providing real-time monitoring your alarm and most of your connected devices available through the API.
+<p>
+  <a href="https://www.home-assistant.io/integrations/"><img src="https://img.shields.io/badge/Home%20Assistant-Integration-41BDF5?style=for-the-badge&logo=home-assistant&logoColor=white" alt="Home Assistant"></a>
+  <a href="https://hacs.xyz/"><img src="https://img.shields.io/badge/HACS-Default-41BDF5?style=for-the-badge" alt="HACS"></a>
+  <a href="https://github.com/ludvikroed/homely-integration/actions/workflows/validate.yaml"><img src="https://img.shields.io/github/actions/workflow/status/ludvikroed/homely-integration/validate.yaml?style=for-the-badge&label=HACS%20Validation" alt="HACS Validation"></a>
+  <a href="https://github.com/ludvikroed/homely-integration/actions/workflows/hassfest.yaml"><img src="https://img.shields.io/github/actions/workflow/status/ludvikroed/homely-integration/hassfest.yaml?style=for-the-badge&label=Hassfest" alt="Hassfest"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/ludvikroed/homely-integration?style=for-the-badge" alt="License"></a>
+</p>
+
+A Home Assistant integration that connects your Homely alarm system to Home Assistant using the Homely API, providing real-time monitoring of your alarm and supported devices.
 
 ## Installation & Setup
 
 ### Via HACS (Recommended)
-Make sure [HACS](https://hacs.xyz/) is installed
+Make sure [HACS](https://hacs.xyz/) is installed.
 
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=ludvikroed&repository=homely-integration&category=integration)
 
-Click "Download" and Restart Home Assistant
+Click **Download**, then restart Home Assistant.
 
 ### Configure
 
@@ -20,35 +28,33 @@ Click "Download" and Restart Home Assistant
 > **Multiple Homes?** Add the integration once per home using Home index 0, 1, 2, etc.
 
 ### Manual Installation
-1. Download the [latest release](https://github.com/ludvikroed/homely-integration/releases)
-2. Extract and copy the `homely` folder to `/config/custom_components/homely/`
-3. Restart Home Assistant and configure
+Download the code, copy the `homely` folder to `/config/custom_components/homely/`, then restart Home Assistant and configure the integration.
 
 ## Advanced Configuration
 
-- **Polling interval**: Adjust API polling frequency shown in seconds (backup for websockets)
+- **Polling interval**: Adjust API polling frequency in seconds as a backup for WebSocket updates
 - **Multiple homes**: Add integration for each Home index (0, 1, 2...)
-- **WebSocket toggle**: Enable/disable instant updates
-- **Polling while WebSocket is connected**: Optional. If disabled, API polling pauses while WebSocket is connected and resumes automatically if WebSocket disconnects
+- **WebSocket toggle**: Enable or disable instant updates
+- **Polling while WebSocket is connected**: Optional. If disabled, API polling pauses while WebSocket is connected and resumes automatically if the WebSocket disconnects
 
-For deeper details and value reference (including battery status values), see [documentation.md](documentation.md).
+For deeper details and value references, including sensor status values, see [documentation.md](documentation.md).
 
 ---
 
-## Troubleshooting steps:
+## Troubleshooting
 
 - Verify your Homely username and password are correct
 - Check the Home index. This is 0 if you only have one Homely home
-- Websockets might take 10-30 seconds to connect
+- WebSocket may take 10-30 seconds to connect
 - Enable debugging (shown below) and check HA logs
 
-If you can't resolve your problem, please open an issue.
+If you can't resolve your problem, please [open an issue](https://github.com/ludvikroed/homely-integration/issues).
 
-If a device is missing or the device is missing sensors, follow [Missing Sensors or Devices](missing_sensors_devices.md).
+If a device is missing, or a device is present but missing sensors, follow [Missing Sensors or Devices](missing_sensors_devices.md).
 
 ### Enable Debug Logging
 
-To troubleshoot issues or monitor WebSocket and API activity, go to the Homely integration, three dots in the upper right corner and select "Enable debug logging" Or add this to your configuration.yaml file:
+To troubleshoot issues or monitor WebSocket and API activity, open the Homely integration, click the three dots in the upper-right corner, and select **Enable debug logging**. You can also add this to your `configuration.yaml`:
 ```yaml
 logger:
   default: info
@@ -62,7 +68,7 @@ Then check the logs under **Settings** → **System** → **Logs**.
 
 ## Supported Devices
 
-### Fully Supported:
+### Currently Supported:
 - Alarm status
 - Yale Doorman lock
 - Temperature sensors
@@ -70,25 +76,22 @@ Then check the logs under **Settings** → **System** → **Logs**.
 - Door/window sensors
 - Smoke detectors
 - Water leak sensors
-- Smart plugs (status monitoring)
-- HAN meter (energy consumption/production)
+- Smart plug
+- HAN meter
 
 ### Not Supported
-- Some devices might not be supported
+- Some devices may not yet be available through the Homely API
 - Direct device control (Homely API is read-only)
 
-> **Note**: This integration is not tested with all devices supported through the Homely API. Please open an issue if you are missing devices or features.
-
-### Battery Status
-The integration provides a sensor called `Status of batteries` that shows the overall battery health for most devices. If any device reports a battery as low or defective, the sensor state will be `Defective`. If all batteries are healthy, the sensor state will be `Healthy`.
+> **Note**: The aim is to support all devices and sensors exposed by the Homely API, but not every device available in the Homely app is necessarily exposed through the API.
 
 ---
 
 ## Contributing
 
-Contributions welcome! [Report bugs or suggest features](https://github.com/ludvikroed/homely-integration/issues).
+Contributions are welcome. You can [report bugs or suggest features](https://github.com/ludvikroed/homely-integration/issues), or submit a pull request.
 
-> ⭐ If you find this integration useful, please consider giving it a star on [GitHub](https://github.com/ludvikroed/homely-integration)!
+⭐ If you find this integration useful, please consider giving it a star on [GitHub](https://github.com/ludvikroed/homely-integration)! ⭐
 
 ## About
 

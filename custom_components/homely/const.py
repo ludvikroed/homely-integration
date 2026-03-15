@@ -5,6 +5,7 @@ DOMAIN = "homely"
 CONF_USERNAME = "username"
 CONF_PASSWORD = "password"
 CONF_HOME_ID = "home_id"
+CONF_LOCATION_ID = "location_id"
 
 # Options
 CONF_SCAN_INTERVAL = "scan_interval"
