@@ -55,6 +55,17 @@ _LOG_REDACT_KEYS = {
 }
 
 
+def _log_identifier(value: Any) -> str | None:
+    """Return a shortened identifier suitable for logs."""
+    if value is None:
+        return None
+
+    text = str(value)
+    if len(text) <= 8:
+        return text
+    return f"{text[:8]}..."
+
+
 def _missing_location_issue_id(entry_id: str) -> str:
     """Return the repair issue id for a missing configured location."""
     return f"configured_location_missing_{entry_id}"
@@ -87,13 +98,13 @@ def _delete_missing_location_issue(hass: HomeAssistant, entry_id: str) -> None:
     ir.async_delete_issue(hass, DOMAIN, _missing_location_issue_id(entry_id))
 
 
-def _ctx(entry_id: str, location_id: str | None = None, device_id: str | None = None) -> str:
+def _ctx(entry_id: str, location_id: str | int | None = None, device_id: str | int | None = None) -> str:
     """Build consistent structured logging context."""
     context = f"entry_id={entry_id}"
     if location_id is not None:
-        context += f" location_id={location_id}"
+        context += f" location_id={_log_identifier(location_id)}"
     if device_id is not None:
-        context += f" device_id={device_id}"
+        context += f" device_id={_log_identifier(device_id)}"
     return context
 
 
@@ -332,7 +343,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             location_item = location_response[home_id]
             location_id = location_item["locationId"]
         except (KeyError, IndexError, TypeError) as err:
-            _LOGGER.error(
+            _LOGGER.debug(
                 "Failed to find location_id for home_id=%s entry_id=%s: %s",
                 home_id,
                 entry_id,
@@ -414,20 +425,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         if runtime_data.topology_reload_pending:
             _LOGGER.debug(
-                "Device topology changed again while reload is pending %s added=%s removed=%s",
+                "Device topology changed again while reload is pending %s added_count=%s removed_count=%s",
                 _ctx(entry_id, location_id),
-                added,
-                removed,
+                len(added),
+                len(removed),
             )
             return
 
         runtime_data.topology_reload_pending = True
         _LOGGER.info(
-            "Homely device topology changed %s added=%s removed=%s",
+            "Homely device topology changed %s added_count=%s removed_count=%s",
             _ctx(entry_id, location_id),
-            added,
-            removed,
+            len(added),
+            len(removed),
         )
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "Device topology identifiers %s added=%s removed=%s",
+                _ctx(entry_id, location_id),
+                [_log_identifier(device_id) for device_id in added],
+                [_log_identifier(device_id) for device_id in removed],
+            )
         hass.async_create_task(_reload_for_device_topology_change())
 
     # WebSocket callback to update data when events are received
@@ -449,7 +467,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.debug(
                 "WebSocket event payload %s payload=%s",
                 _ctx(entry_id, location_id, str(ws_device_id) if ws_device_id is not None else None),
-                _json_debug(event_data),
+                _json_debug(_redact_for_debug_logging(event_data)),
             )
             result = apply_websocket_event_to_data(runtime_data.last_data, event_data)
             event_type = result.get("event_type")
@@ -478,7 +496,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             "device_id=%s feature=%s state=%s value=%s old_value=%s",
                             entry_id,
                             location_id,
-                            change.get("device_id"),
+                            _log_identifier(change.get("device_id")),
                             change.get("feature"),
                             change.get("state_name"),
                             change.get("value"),
@@ -492,7 +510,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         "entry_id=%s location_id=%s device_id=%s",
                         entry_id,
                         location_id,
-                        device_id,
+                        _log_identifier(device_id),
                     )
                 return
 
@@ -604,7 +622,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if success:
                 _LOGGER.debug("WebSocket initial connect succeeded entry_id=%s location_id=%s", entry_id, location_id)
             else:
-                _LOGGER.warning(
+                _LOGGER.info(
                     "WebSocket connection failed entry_id=%s location_id=%s. "
                     "Polling continues and reconnect loop retries",
                     entry_id,
@@ -613,7 +631,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         except KeyError:
             _LOGGER.debug("Skipping websocket init; entry data missing entry_id=%s", entry_id)
         except Exception as err:
-            _LOGGER.error("Error initializing websocket entry_id=%s: %s", entry_id, err, exc_info=True)
+            _LOGGER.warning(
+                "WebSocket initialization failed %s; polling continues: %s",
+                _ctx(entry_id, location_id),
+                err,
+                exc_info=_LOGGER.isEnabledFor(logging.DEBUG),
+            )
 
     async def async_update_data() -> dict:
         """Periodic refresh of location data."""
@@ -629,7 +652,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         def _mark_api_unavailable(message: str) -> None:
             if runtime_data.api_available:
                 runtime_data.api_available = False
-                _LOGGER.warning("%s %s", message, _ctx(entry_id, location_id))
+                _LOGGER.info("%s %s", message, _ctx(entry_id, location_id))
 
         def _mark_api_available() -> None:
             if not runtime_data.api_available:
@@ -644,7 +667,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.debug("Token expires soon; refreshing entry_id=%s location_id=%s", entry_id, location_id)
             refresh_response = await fetch_refresh_token(hass, refresh_token)
             if not refresh_response:
-                _LOGGER.warning(
+                _LOGGER.debug(
                     "Token refresh failed; trying full login entry_id=%s location_id=%s",
                     entry_id,
                     location_id,
@@ -673,7 +696,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 runtime_data.refresh_token = new_refresh_token
                 runtime_data.expires_at = time.time() + new_expires_in_seconds - 60
                 access_token = new_access_token
-                _LOGGER.info(
+                _LOGGER.debug(
                     "Token refreshed via full login entry_id=%s location_id=%s "
                     "access_expires_in_s=%s next_refresh_in_s=%s",
                     entry_id,
@@ -898,7 +921,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         except Exception:
             _LOGGER.debug("Could not register internet_available listener entry_id=%s location_id=%s", entry_id, location_id)
     else:
-        _LOGGER.info("WebSocket disabled in options entry_id=%s location_id=%s; using polling only", entry_id, location_id)
+        _LOGGER.debug(
+            "WebSocket disabled in options entry_id=%s location_id=%s; using polling only",
+            entry_id,
+            location_id,
+        )
     
     await coordinator.async_config_entry_first_refresh()
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -906,7 +933,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Reload the entry when options are updated.
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
     
-    _LOGGER.info("Homely Alarm integration setup completed entry_id=%s location_id=%s", entry_id, location_id)
+    _LOGGER.debug("Homely Alarm integration setup completed entry_id=%s location_id=%s", entry_id, location_id)
     return True
 
 
@@ -947,7 +974,7 @@ async def async_remove_config_entry_device(
     if not has_homely_identifier:
         return False
 
-    _LOGGER.info(
+    _LOGGER.debug(
         "Allowing manual removal of stale Homely device entry_id=%s ha_device_id=%s",
         entry.entry_id,
         device_entry.id,
@@ -982,5 +1009,5 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 )
 
         entry.runtime_data = None
-        _LOGGER.info("Homely Alarm integration unloaded entry_id=%s location_id=%s", entry.entry_id, location_id)
+        _LOGGER.debug("Homely Alarm integration unloaded entry_id=%s location_id=%s", entry.entry_id, location_id)
     return unload_ok

@@ -28,6 +28,11 @@ from tests.common import LOCATION_ID, build_config_entry
 def test_init_helper_functions_and_tracked_ids(location_data):
     """Helper functions should normalize alarm data and tracked device ids."""
     assert _ctx("entry", "loc", "dev") == "entry_id=entry location_id=loc device_id=dev"
+    assert _ctx("entry", LOCATION_ID, location_data["devices"][0]["id"]) == (
+        "entry_id=entry "
+        f"location_id={LOCATION_ID[:8]}... "
+        f"device_id={location_data['devices'][0]['id'][:8]}..."
+    )
     assert _json_debug({"a": 1}) == '{"a":1}'
     assert _get_alarm_state(location_data) == "DISARMED"
 

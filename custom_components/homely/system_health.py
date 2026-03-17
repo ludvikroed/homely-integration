@@ -15,6 +15,15 @@ from .const import (
 from .models import get_entry_runtime_data
 
 
+def _location_hint(value: str | None) -> str | None:
+    """Return a shortened location identifier for system health output."""
+    if value is None:
+        return None
+    if len(value) <= 8:
+        return value
+    return f"{value[:8]}..."
+
+
 @callback
 def async_register(
     hass: HomeAssistant,
@@ -36,7 +45,7 @@ async def system_health_info(hass: HomeAssistant) -> dict[str, Any]:
         entry_key = f"entry_{index}"
         entry_info: dict[str, Any] = {
             "state": entry.state.value,
-            "location_id": entry.data.get("location_id"),
+            "location_id": _location_hint(entry.data.get("location_id")),
             "scan_interval": entry.options.get(CONF_SCAN_INTERVAL),
             "enable_websocket": entry.options.get(CONF_ENABLE_WEBSOCKET),
             "poll_when_websocket": entry.options.get(CONF_POLL_WHEN_WEBSOCKET),

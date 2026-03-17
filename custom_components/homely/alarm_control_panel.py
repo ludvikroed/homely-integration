@@ -77,9 +77,14 @@ class HomelyAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
                 return mapped_state
             if api_state != self._last_unknown_state:
                 self._last_unknown_state = api_state
+                location_hint = (
+                    self._location_id
+                    if len(self._location_id) <= 8
+                    else f"{self._location_id[:8]}..."
+                )
                 _LOGGER.warning(
-                    "Unknown alarm state from API location_id=%s state=%s",
-                    self._location_id,
+                    "Unknown alarm state from API location=%s state=%s",
+                    location_hint,
                     api_state,
                 )
         return None

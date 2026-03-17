@@ -694,20 +694,62 @@ async def test_coordinator_update_method_logs_unavailable_once_and_back_once(
     assert recovered["alarmState"] == "ARMED_AWAY"
     assert runtime_data.api_available is True
 
-    warning_messages = [
-        record.getMessage() for record in caplog.records if record.levelno == logging.WARNING
-    ]
     info_messages = [
         record.getMessage() for record in caplog.records if record.levelno == logging.INFO
     ]
     assert sum(
         "Polling API request failed with transient status=503" in message
-        for message in warning_messages
+        for message in info_messages
     ) == 1
     assert sum(
         "Homely API is reachable again" in message
         for message in info_messages
     ) == 1
+
+
+async def test_websocket_debug_logging_redacts_event_payloads(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+    caplog,
+):
+    """Websocket debug logging should not leak raw names or device identifiers."""
+    _FakeHomelyWebSocket.reset()
+    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: True})
+
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+        extra_patches=(patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),),
+    )
+
+    ws = _FakeHomelyWebSocket.instances[0]
+    event = {
+        "type": "device-state-changed",
+        "data": {
+            "deviceId": location_data["devices"][0]["id"],
+            "name": location_data["devices"][0]["name"],
+            "change": {
+                "feature": "battery",
+                "stateName": "low",
+                "value": True,
+            },
+        },
+    }
+
+    with caplog.at_level(logging.DEBUG):
+        ws.on_data_update(event)
+
+    joined = "\n".join(record.getMessage() for record in caplog.records)
+    assert location_data["devices"][0]["id"] not in joined
+    assert location_data["devices"][0]["name"] not in joined
+    assert "**REDACTED**" in joined
 
 
 async def test_coordinator_update_method_reload_on_new_device_topology(
