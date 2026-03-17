@@ -1,5 +1,30 @@
 """Sensor definitions for Homely devices."""
 
+from __future__ import annotations
+
+from typing import Any
+
+
+def _as_float(value: Any) -> float | None:
+    """Convert numeric API values to float when possible."""
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _wh_to_kwh(value: Any) -> float | Any:
+    """Convert meter totals reported in Wh to kWh."""
+    numeric = _as_float(value)
+    if numeric is None:
+        return value
+    return round(numeric / 1000, 3)
+
+
 # All available sensors that can be discovered and created
 # Structure matches the haugeSander Homely addon
 SENSORS = [
@@ -9,6 +34,7 @@ SENSORS = [
         "format": "boolean",
         "type": "binary_sensor",
         "name": "alarm",
+        "get_translation_key": lambda device: "motion" if "motion" in device.get("modelName", "").lower() else "contact",
         "device_class": "door",
         "device_suffix": "alarm",
         "get_name": lambda device: "motion" if "motion" in device.get("modelName", "").lower() else "contact",
@@ -19,6 +45,7 @@ SENSORS = [
         "format": "boolean",
         "type": "binary_sensor",
         "name": "fire",
+        "translation_key": "fire",
         "device_class": "smoke",
         "device_suffix": "alarm",
     },
@@ -27,6 +54,7 @@ SENSORS = [
         "format": "boolean",
         "type": "binary_sensor",
         "name": "tamper",
+        "translation_key": "tamper",
         "device_class": "tamper",
         "device_suffix": "tamper",
     },
@@ -35,8 +63,9 @@ SENSORS = [
         "format": "boolean",
         "type": "binary_sensor",
         "name": "flood",
+        "translation_key": "flood",
         "device_class": "moisture",
-        "device_suffix": "alarm",
+        "device_suffix": "flood",
     },
     # Battery sensors
     {
@@ -44,6 +73,7 @@ SENSORS = [
         "format": "boolean",
         "type": "binary_sensor",
         "name": "battery_low",
+        "translation_key": "battery_low",
         "device_class": "battery",
         "device_suffix": "battery_low",
         "entity_category": "diagnostic",
@@ -53,9 +83,11 @@ SENSORS = [
         "format": "boolean",
         "type": "binary_sensor",
         "name": "battery_defect",
+        "translation_key": "battery_defect",
         "device_class": None,
         "device_suffix": "battery_defect",
         "entity_category": "diagnostic",
+        "enabled_default": False,
         "icon": "mdi:battery-alert",
     },
     # Practical lock/report sensors (created only when available)
@@ -64,6 +96,7 @@ SENSORS = [
         "format": "boolean",
         "type": "binary_sensor",
         "name": "door",
+        "translation_key": "door",
         "device_class": "door",
         "device_suffix": "door",
         # Home Assistant door binary_sensor expects "on" = open.
@@ -74,6 +107,7 @@ SENSORS = [
         "format": "boolean",
         "type": "binary_sensor",
         "name": "low_battery",
+        "translation_key": "low_battery",
         "device_class": "battery",
         "device_suffix": "report_lowbat",
         "entity_category": "diagnostic",
@@ -87,10 +121,21 @@ SENSORS = [
         "format": "boolean",
         "type": "binary_sensor",
         "name": "jammed",
+        "translation_key": "jammed",
         "device_class": "problem",
         "device_suffix": "jammed",
-        "entity_category": "diagnostic",
         "icon": "mdi:lock-alert",
+    },
+    {
+        "path": "features.metering.states.check.value",
+        "format": "boolean",
+        "type": "binary_sensor",
+        "name": "metering_check",
+        "translation_key": "metering_check",
+        "device_suffix": "metering_check",
+        "entity_category": "diagnostic",
+        "enabled_default": False,
+        "icon": "mdi:counter",
     },
     # Temperature sensors
     {
@@ -98,6 +143,7 @@ SENSORS = [
         "format": "number",
         "type": "sensor",
         "name": "temperature",
+        "translation_key": "temperature",
         "device_class": "temperature",
         "unit": "°C",
         "device_suffix": "temperature",
@@ -109,30 +155,49 @@ SENSORS = [
         "format": "number",
         "type": "sensor",
         "name": "battery_voltage",
+        "translation_key": "battery_voltage",
         "device_class": "voltage",
         "unit": "V",
         "device_suffix": "battery_voltage",
         "entity_category": "diagnostic",
+        "enabled_default": False,
     },
     # Diagnostic sensors
     {
         "path": "features.diagnostic.states.networklinkstrength.value",
         "format": "number",
         "type": "sensor",
-        "name": "networklinkstrength",
-        "device_class": "signal_strength",
-        "unit": "dBm",
+        "name": "link_quality",
+        "translation_key": "link_quality",
+        "device_class": None,
+        "unit": "%",
         "device_suffix": "networklinkstrength",
         "entity_category": "diagnostic",
+        "enabled_default": False,
+        "icon": "mdi:wifi",
     },
     {
         "path": "features.diagnostic.states.networklinkaddress.value",
         "format": "string",
         "type": "sensor",
-        "name": "networklinkaddress",
+        "name": "network_link_address",
+        "translation_key": "network_link_address",
         "device_class": None,
         "device_suffix": "networklinkaddress",
         "entity_category": "diagnostic",
+        "enabled_default": False,
+        "icon": "mdi:identifier",
+    },
+    {
+        "path": "features.report.states.errorcode.value",
+        "format": "string",
+        "type": "sensor",
+        "name": "error_code",
+        "translation_key": "error_code",
+        "device_suffix": "error_code",
+        "entity_category": "diagnostic",
+        "enabled_default": False,
+        "icon": "mdi:alert-circle-outline",
     },
     # Metering sensors (for HAN plugs)
     {
@@ -140,29 +205,34 @@ SENSORS = [
         "format": "number",
         "type": "sensor",
         "name": "consumption",
+        "translation_key": "consumption",
         "device_class": "energy",
         "unit": "kWh",
         "device_suffix": "consumption",
-        "state_class": "total",
+        "state_class": "total_increasing",
+        "transform_value": _wh_to_kwh,
     },
     {
         "path": "features.metering.states.summationreceived.value",
         "format": "number",
         "type": "sensor",
         "name": "production",
+        "translation_key": "production",
         "device_class": "energy",
         "unit": "kWh",
         "device_suffix": "production",
-        "state_class": "total",
+        "state_class": "total_increasing",
+        "transform_value": _wh_to_kwh,
     },
     {
         "path": "features.metering.states.demand.value",
         "format": "number",
         "type": "sensor",
         "name": "demand",
-        "device_class": "energy",
-        "unit": "kWh",
+        "translation_key": "demand",
+        "device_class": "power",
+        "unit": "W",
         "device_suffix": "demand",
-        "state_class": "total",
+        "state_class": "measurement",
     },
 ]

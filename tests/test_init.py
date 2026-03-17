@@ -1,0 +1,1679 @@
+"""Tests for config entry setup and cleanup."""
+from __future__ import annotations
+
+import logging
+from contextlib import ExitStack
+from copy import deepcopy
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from homeassistant.config_entries import ConfigEntryState
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.update_coordinator import UpdateFailed
+
+from custom_components.homely import (
+    _device_id_snapshot,
+    _missing_location_issue_id,
+    _log_startup_device_payloads,
+    _redact_for_debug_logging,
+    async_reload_entry,
+    async_migrate_entry,
+    async_remove_config_entry_device,
+    async_setup_entry,
+    async_unload_entry,
+)
+from custom_components.homely.const import (
+    CONF_ENABLE_WEBSOCKET,
+    CONF_HOME_ID,
+    CONF_LOCATION_ID,
+    CONF_POLL_WHEN_WEBSOCKET,
+    CONF_SCAN_INTERVAL,
+    DOMAIN,
+)
+from custom_components.homely.models import HomelyRuntimeData
+from tests.common import LOCATION_ID, build_config_entry
+
+
+class _FakeHomelyWebSocket:
+    """Minimal websocket stub for integration setup tests."""
+
+    instances: list["_FakeHomelyWebSocket"] = []
+    connect_result = True
+    connect_error: Exception | None = None
+    initial_status = "Not initialized"
+    initial_reason = None
+
+    def __init__(
+        self,
+        location_id,
+        token,
+        on_data_update,
+        status_update_callback=None,
+        entry_id=None,
+    ) -> None:
+        self.entry_id = entry_id
+        self.location_id = location_id
+        self.token = token
+        self.on_data_update = on_data_update
+        self.status_update_callback = status_update_callback
+        self.status = self.initial_status
+        self.status_reason = self.initial_reason
+        self.connected = False
+        self.update_token_calls: list[str] = []
+        self.request_reconnect_calls: list[str] = []
+        self.disconnect = AsyncMock()
+        type(self).instances.append(self)
+
+    @classmethod
+    def reset(cls) -> None:
+        """Reset class state between tests."""
+        cls.instances = []
+        cls.connect_result = True
+        cls.connect_error = None
+        cls.initial_status = "Not initialized"
+        cls.initial_reason = None
+
+    async def connect(self) -> bool:
+        """Return configured connection result."""
+        if self.connect_error is not None:
+            raise self.connect_error
+        self.connected = self.connect_result
+        if self.connected:
+            self.status = "Connected"
+            self.status_reason = None
+        return self.connect_result
+
+    def is_connected(self) -> bool:
+        """Return connection state."""
+        return self.connected
+
+    def update_token(self, token: str) -> None:
+        """Track token refreshes."""
+        self.update_token_calls.append(token)
+        self.token = token
+
+    def request_reconnect(self, reason: str = "manual request") -> None:
+        """Track reconnect requests."""
+        self.request_reconnect_calls.append(reason)
+
+
+def test_debug_redaction_and_device_snapshot_cover_defensive_branches():
+    """Small helper functions should handle sparse payloads predictably."""
+    assert _redact_for_debug_logging([{"name": "Living room"}]) == [
+        {"name": "**REDACTED**"}
+    ]
+    assert _device_id_snapshot(None) == set()
+    assert _device_id_snapshot({"devices": {}}) == set()
+
+
+async def _setup_loaded_entry(
+    hass,
+    config_entry,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+    extra_patches=(),
+):
+    """Helper to load a Homely config entry with mocked API responses."""
+    config_entry.add_to_hass(hass)
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch(
+                "custom_components.homely.fetch_token_with_reason",
+                AsyncMock(return_value=(token_response, None)),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "custom_components.homely.get_location_id",
+                AsyncMock(return_value=location_response),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "custom_components.homely.get_data",
+                AsyncMock(return_value=location_data),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "custom_components.homely.get_data_with_status",
+                AsyncMock(return_value=(updated_location_data, 200)),
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                hass.config_entries,
+                "async_forward_entry_setups",
+                AsyncMock(return_value=None),
+            )
+        )
+        for extra_patch in extra_patches:
+            stack.enter_context(extra_patch)
+        assert await hass.config_entries.async_setup(config_entry.entry_id)
+        await hass.async_block_till_done()
+
+
+async def test_async_setup_entry_loads_runtime_data(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Config entry setup should populate runtime_data and normalize location id."""
+    config_entry = build_config_entry(
+        data_overrides={CONF_LOCATION_ID: None},
+        unique_id=None,
+    )
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+
+    assert config_entry.state is ConfigEntryState.LOADED
+    assert config_entry.unique_id == LOCATION_ID
+    assert config_entry.data[CONF_LOCATION_ID] == LOCATION_ID
+
+    runtime_data = config_entry.runtime_data
+    assert runtime_data.location_id == LOCATION_ID
+    assert runtime_data.last_data["name"] == "JF23"
+    assert runtime_data.coordinator.data["alarmState"] == "ARMED_AWAY"
+
+
+async def test_async_setup_entry_invalid_auth_raises(hass):
+    """Invalid credentials during setup should trigger reauthentication."""
+    config_entry = build_config_entry()
+    config_entry.add_to_hass(hass)
+
+    with patch(
+        "custom_components.homely.fetch_token_with_reason",
+        AsyncMock(return_value=(None, "invalid_auth")),
+    ):
+        assert await hass.config_entries.async_setup(config_entry.entry_id) is False
+
+    assert config_entry.state is not ConfigEntryState.LOADED
+
+
+async def test_async_setup_entry_missing_credentials_raises_auth_failed(hass):
+    """Missing stored credentials should fail immediately."""
+    config_entry = build_config_entry(
+        data_overrides={"username": None, "password": None},
+    )
+
+    try:
+        await async_setup_entry(hass, config_entry)
+    except ConfigEntryAuthFailed:
+        pass
+    else:
+        raise AssertionError("Expected ConfigEntryAuthFailed")
+
+
+async def test_async_setup_entry_missing_locations_raises_not_ready(hass, token_response):
+    """Missing location data should mark the entry as not ready."""
+    config_entry = build_config_entry()
+    config_entry.add_to_hass(hass)
+
+    with (
+        patch(
+            "custom_components.homely.fetch_token_with_reason",
+            AsyncMock(return_value=(token_response, None)),
+        ),
+        patch(
+            "custom_components.homely.get_location_id",
+            AsyncMock(return_value=None),
+        ),
+    ):
+        assert await hass.config_entries.async_setup(config_entry.entry_id) is False
+
+    assert config_entry.state is not ConfigEntryState.LOADED
+
+
+async def test_async_setup_entry_missing_token_fields_raise_not_ready(hass):
+    """Incomplete token payloads should fail setup cleanly."""
+    config_entry = build_config_entry()
+
+    with patch(
+        "custom_components.homely.fetch_token_with_reason",
+        AsyncMock(return_value=({"access_token": "access-only"}, None)),
+    ):
+        try:
+            await async_setup_entry(hass, config_entry)
+        except ConfigEntryNotReady:
+            pass
+        else:
+            raise AssertionError("Expected ConfigEntryNotReady")
+
+
+async def test_async_setup_entry_invalid_expires_in_raises_not_ready(hass):
+    """Non-numeric expires_in should be rejected."""
+    config_entry = build_config_entry()
+
+    with patch(
+        "custom_components.homely.fetch_token_with_reason",
+        AsyncMock(
+            return_value=(
+                {
+                    "access_token": "access-token",
+                    "refresh_token": "refresh-token",
+                    "expires_in": "bad",
+                },
+                None,
+            )
+        ),
+    ):
+        try:
+            await async_setup_entry(hass, config_entry)
+        except ConfigEntryNotReady:
+            pass
+        else:
+            raise AssertionError("Expected ConfigEntryNotReady")
+
+
+async def test_async_setup_entry_login_connection_failure_raises_not_ready(hass):
+    """Non-auth login failures should surface as not-ready."""
+    config_entry = build_config_entry()
+
+    with patch(
+        "custom_components.homely.fetch_token_with_reason",
+        AsyncMock(return_value=(None, "cannot_connect")),
+    ):
+        try:
+            await async_setup_entry(hass, config_entry)
+        except ConfigEntryNotReady:
+            pass
+        else:
+            raise AssertionError("Expected ConfigEntryNotReady")
+
+
+async def test_async_setup_entry_missing_expires_in_raises_not_ready(hass):
+    """Token payloads without expires_in should fail setup."""
+    config_entry = build_config_entry()
+
+    with patch(
+        "custom_components.homely.fetch_token_with_reason",
+        AsyncMock(
+            return_value=(
+                {
+                    "access_token": "access-token",
+                    "refresh_token": "refresh-token",
+                },
+                None,
+            )
+        ),
+    ):
+        try:
+            await async_setup_entry(hass, config_entry)
+        except ConfigEntryNotReady:
+            pass
+        else:
+            raise AssertionError("Expected ConfigEntryNotReady")
+
+
+async def test_async_setup_entry_invalid_home_mapping_raises_not_ready(
+    hass,
+    token_response,
+    location_response,
+):
+    """Legacy entries with invalid home ids should fail setup."""
+    config_entry = build_config_entry(
+        data_overrides={CONF_LOCATION_ID: None},
+        options={CONF_HOME_ID: 99},
+        unique_id=None,
+    )
+
+    with (
+        patch(
+            "custom_components.homely.fetch_token_with_reason",
+            AsyncMock(return_value=(token_response, None)),
+        ),
+        patch(
+            "custom_components.homely.get_location_id",
+            AsyncMock(return_value=location_response),
+        ),
+    ):
+        try:
+            await async_setup_entry(hass, config_entry)
+        except ConfigEntryNotReady:
+            pass
+        else:
+            raise AssertionError("Expected ConfigEntryNotReady")
+
+    issue = ir.async_get(hass).async_get_issue(
+        DOMAIN,
+        _missing_location_issue_id(config_entry.entry_id),
+    )
+    assert issue is not None
+    assert issue.is_fixable is True
+
+
+async def test_async_setup_entry_missing_configured_location_creates_repair_issue(
+    hass,
+    token_response,
+):
+    """Missing configured locations should raise not-ready and create a repair issue."""
+    config_entry = build_config_entry()
+
+    with (
+        patch(
+            "custom_components.homely.fetch_token_with_reason",
+            AsyncMock(return_value=(token_response, None)),
+        ),
+        patch(
+            "custom_components.homely.get_location_id",
+            AsyncMock(return_value=[{"locationId": "other-location", "name": "Other"}]),
+        ),
+    ):
+        try:
+            await async_setup_entry(hass, config_entry)
+        except ConfigEntryNotReady:
+            pass
+        else:
+            raise AssertionError("Expected ConfigEntryNotReady")
+
+    issue = ir.async_get(hass).async_get_issue(
+        DOMAIN,
+        _missing_location_issue_id(config_entry.entry_id),
+    )
+    assert issue is not None
+    assert issue.translation_key == "configured_location_missing"
+
+
+async def test_async_setup_entry_clears_missing_location_repair_issue_on_success(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """A successful setup should clear an earlier missing-location repair issue."""
+    config_entry = build_config_entry()
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        _missing_location_issue_id(config_entry.entry_id),
+        data={"entry_id": config_entry.entry_id},
+        is_fixable=True,
+        is_persistent=True,
+        severity=ir.IssueSeverity.ERROR,
+        translation_key="configured_location_missing",
+        translation_placeholders={
+            "entry_title": config_entry.title,
+            "location": LOCATION_ID,
+        },
+    )
+
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+
+    assert (
+        ir.async_get(hass).async_get_issue(
+            DOMAIN,
+            _missing_location_issue_id(config_entry.entry_id),
+        )
+        is None
+    )
+
+
+async def test_async_setup_entry_missing_location_payload_raises_not_ready(
+    hass,
+    token_response,
+    location_response,
+):
+    """Setup should fail if the first location fetch returns no data."""
+    config_entry = build_config_entry()
+
+    with (
+        patch(
+            "custom_components.homely.fetch_token_with_reason",
+            AsyncMock(return_value=(token_response, None)),
+        ),
+        patch(
+            "custom_components.homely.get_location_id",
+            AsyncMock(return_value=location_response),
+        ),
+        patch(
+            "custom_components.homely.get_data",
+            AsyncMock(return_value=None),
+        ),
+    ):
+        try:
+            await async_setup_entry(hass, config_entry)
+        except ConfigEntryNotReady:
+            pass
+        else:
+            raise AssertionError("Expected ConfigEntryNotReady")
+
+
+async def test_async_remove_config_entry_device_only_allows_stale_devices(hass, location_data):
+    """Only stale Homely devices should be removable from the device registry."""
+    config_entry = build_config_entry()
+    config_entry.runtime_data = HomelyRuntimeData(
+        coordinator=SimpleNamespace(data=location_data),
+        access_token="access-token",
+        refresh_token="refresh-token",
+        expires_at=0,
+        location_id=LOCATION_ID,
+        last_data=location_data,
+    )
+
+    location_device = SimpleNamespace(
+        identifiers={(DOMAIN, f"location_{LOCATION_ID}")},
+        id="location-device",
+    )
+    active_device = SimpleNamespace(
+        identifiers={(DOMAIN, location_data["devices"][0]["id"])},
+        id="active-device",
+    )
+    stale_device = SimpleNamespace(
+        identifiers={(DOMAIN, "stale-device-id")},
+        id="stale-device",
+    )
+    foreign_device = SimpleNamespace(
+        identifiers={("other", "device")},
+        id="foreign-device",
+    )
+
+    assert await async_remove_config_entry_device(hass, config_entry, location_device) is False
+    assert await async_remove_config_entry_device(hass, config_entry, active_device) is False
+    assert await async_remove_config_entry_device(hass, config_entry, stale_device) is True
+    assert await async_remove_config_entry_device(hass, config_entry, foreign_device) is False
+
+
+async def test_async_unload_entry_disconnects_websocket_and_cleans_up(hass, location_data):
+    """Unload should disconnect websocket clients and remove runtime state."""
+    config_entry = build_config_entry()
+    fake_websocket = AsyncMock()
+    config_entry.runtime_data = HomelyRuntimeData(
+        coordinator=SimpleNamespace(data=location_data),
+        access_token="access-token",
+        refresh_token="refresh-token",
+        expires_at=0,
+        location_id=LOCATION_ID,
+        last_data=location_data,
+        websocket=fake_websocket,
+    )
+
+    with patch.object(
+        hass.config_entries,
+        "async_unload_platforms",
+        AsyncMock(return_value=True),
+    ):
+        assert await async_unload_entry(hass, config_entry) is True
+
+    fake_websocket.disconnect.assert_awaited_once()
+    assert config_entry.runtime_data is None
+
+
+async def test_async_unload_entry_returns_false_without_cleanup(hass, location_data):
+    """Failed platform unload should keep runtime data intact."""
+    config_entry = build_config_entry()
+    fake_websocket = AsyncMock()
+    config_entry.runtime_data = HomelyRuntimeData(
+        coordinator=SimpleNamespace(data=location_data),
+        access_token="access-token",
+        refresh_token="refresh-token",
+        expires_at=0,
+        location_id=LOCATION_ID,
+        last_data=location_data,
+        websocket=fake_websocket,
+    )
+
+    with patch.object(
+        hass.config_entries,
+        "async_unload_platforms",
+        AsyncMock(return_value=False),
+    ):
+        assert await async_unload_entry(hass, config_entry) is False
+
+    fake_websocket.disconnect.assert_not_awaited()
+    assert config_entry.runtime_data is not None
+
+
+async def test_async_migrate_entry_moves_options_out_of_data(hass):
+    """Legacy entries should migrate option-like values into entry.options."""
+    config_entry = build_config_entry(
+        data_overrides={
+            CONF_HOME_ID: 1,
+            CONF_SCAN_INTERVAL: 30,
+            CONF_ENABLE_WEBSOCKET: True,
+        },
+        options={},
+        version=1,
+        include_default_options=False,
+    )
+    config_entry.add_to_hass(hass)
+
+    assert await async_migrate_entry(hass, config_entry) is True
+    assert config_entry.version == 2
+    assert config_entry.data[CONF_LOCATION_ID] == LOCATION_ID
+    assert CONF_HOME_ID not in config_entry.data
+    assert config_entry.options[CONF_HOME_ID] == 1
+    assert config_entry.options[CONF_SCAN_INTERVAL] == 30
+    assert config_entry.options[CONF_ENABLE_WEBSOCKET] is True
+
+
+async def test_async_migrate_entry_sets_unique_id_from_location_when_missing(hass):
+    """Migration should promote the location id to unique_id when needed."""
+    config_entry = build_config_entry(
+        unique_id=None,
+        version=1,
+        include_default_options=False,
+    )
+    config_entry.add_to_hass(hass)
+
+    assert await async_migrate_entry(hass, config_entry) is True
+    assert config_entry.unique_id == LOCATION_ID
+
+
+def test_startup_debug_logging_redacts_private_device_fields(location_data, caplog):
+    """Startup payload logging should redact identifiers and human labels."""
+    with caplog.at_level(logging.DEBUG):
+        _log_startup_device_payloads(location_data, "entry-1", LOCATION_ID)
+
+    joined = "\n".join(record.getMessage() for record in caplog.records)
+    assert "Bevegelse stue" not in joined
+    assert "Floor 2 - Living room" not in joined
+    assert "0015BC001A10CD0A" not in joined
+    assert "**REDACTED**" in joined
+
+
+async def test_coordinator_update_method_skips_polling_when_websocket_connected(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Connected websocket should short-circuit polling when polling is disabled."""
+    config_entry = build_config_entry(
+        options={
+            CONF_ENABLE_WEBSOCKET: True,
+            CONF_POLL_WHEN_WEBSOCKET: False,
+        }
+    )
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+    runtime_data.websocket = SimpleNamespace(
+        is_connected=lambda: True,
+        status="Connected",
+        status_reason="ready",
+        update_token=lambda token: None,
+    )
+
+    with patch("custom_components.homely.get_data_with_status", AsyncMock()) as get_data_with_status:
+        result = await runtime_data.coordinator.update_method()
+
+    assert result == runtime_data.last_data
+    get_data_with_status.assert_not_awaited()
+
+
+async def test_coordinator_update_method_uses_cached_data_on_transient_error(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Transient HTTP errors should keep cached data instead of failing hard."""
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+
+    with patch(
+        "custom_components.homely.get_data_with_status",
+        AsyncMock(return_value=(None, 503)),
+    ):
+        result = await runtime_data.coordinator.update_method()
+
+    assert result == runtime_data.last_data
+
+
+async def test_coordinator_update_method_logs_unavailable_once_and_back_once(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+    caplog,
+):
+    """Transient API failures should log once until the API is reachable again."""
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+
+    with caplog.at_level(logging.INFO):
+        with patch(
+            "custom_components.homely.get_data_with_status",
+            AsyncMock(return_value=(None, 503)),
+        ):
+            first = await runtime_data.coordinator.update_method()
+            second = await runtime_data.coordinator.update_method()
+
+        with patch(
+            "custom_components.homely.get_data_with_status",
+            AsyncMock(return_value=(updated_location_data, 200)),
+        ):
+            recovered = await runtime_data.coordinator.update_method()
+
+    assert first == runtime_data.last_data
+    assert second == runtime_data.last_data
+    assert recovered["alarmState"] == "ARMED_AWAY"
+    assert runtime_data.api_available is True
+
+    warning_messages = [
+        record.getMessage() for record in caplog.records if record.levelno == logging.WARNING
+    ]
+    info_messages = [
+        record.getMessage() for record in caplog.records if record.levelno == logging.INFO
+    ]
+    assert sum(
+        "Polling API request failed with transient status=503" in message
+        for message in warning_messages
+    ) == 1
+    assert sum(
+        "Homely API is reachable again" in message
+        for message in info_messages
+    ) == 1
+
+
+async def test_coordinator_update_method_reload_on_new_device_topology(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Device additions or removals should trigger a controlled entry reload."""
+    config_entry = build_config_entry()
+    changed_data = deepcopy(updated_location_data)
+    changed_data["devices"].append(
+        {
+            "id": "new-device-id",
+            "name": "Ny sensor",
+            "modelName": "Alarm Motion Sensor 2",
+            "online": True,
+            "features": {},
+        }
+    )
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+
+    with patch.object(
+        hass.config_entries,
+        "async_reload",
+        AsyncMock(return_value=True),
+    ) as async_reload:
+        with patch(
+            "custom_components.homely.get_data_with_status",
+            AsyncMock(return_value=(changed_data, 200)),
+        ):
+            result = await runtime_data.coordinator.update_method()
+            await hass.async_block_till_done()
+
+    assert result["devices"][-1]["id"] == "new-device-id"
+    assert "new-device-id" in runtime_data.tracked_device_ids
+    async_reload.assert_awaited_once_with(config_entry.entry_id)
+    assert runtime_data.topology_reload_pending is False
+
+
+async def test_coordinator_update_method_does_not_double_schedule_topology_reload(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Repeated topology changes while a reload is pending should not schedule more reloads."""
+    config_entry = build_config_entry()
+    changed_data = deepcopy(updated_location_data)
+    changed_data["devices"].append(
+        {
+            "id": "new-device-id",
+            "name": "Ny sensor",
+            "modelName": "Alarm Motion Sensor 2",
+            "online": True,
+            "features": {},
+        }
+    )
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+    runtime_data.topology_reload_pending = True
+
+    with patch.object(
+        hass.config_entries,
+        "async_reload",
+        AsyncMock(return_value=True),
+    ) as async_reload:
+        with patch(
+            "custom_components.homely.get_data_with_status",
+            AsyncMock(return_value=(changed_data, 200)),
+        ):
+            await runtime_data.coordinator.update_method()
+            await hass.async_block_till_done()
+
+    assert "new-device-id" in runtime_data.tracked_device_ids
+    async_reload.assert_not_awaited()
+
+
+async def test_coordinator_update_method_refresh_auth_failure_raises(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Expired credentials during refresh should raise ConfigEntryAuthFailed."""
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+    runtime_data.expires_at = 0
+
+    with (
+        patch("custom_components.homely.fetch_refresh_token", AsyncMock(return_value=None)),
+        patch(
+            "custom_components.homely.fetch_token_with_reason",
+            AsyncMock(return_value=(None, "invalid_auth")),
+        ),
+    ):
+        try:
+            await runtime_data.coordinator.update_method()
+        except ConfigEntryAuthFailed:
+            pass
+        else:
+            raise AssertionError("Expected ConfigEntryAuthFailed")
+
+
+async def test_coordinator_update_method_refreshes_via_full_login_and_updates_websocket(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Fallback full login should refresh runtime tokens and websocket token."""
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+    runtime_data.expires_at = 0
+    websocket = SimpleNamespace(
+        is_connected=lambda: False,
+        status="Disconnected",
+        status_reason="stale token",
+        update_token=MagicMock(),
+    )
+    runtime_data.websocket = websocket
+    new_tokens = {
+        "access_token": "new-access-token",
+        "refresh_token": "new-refresh-token",
+        "expires_in": 3600,
+    }
+
+    with (
+        patch("custom_components.homely.fetch_refresh_token", AsyncMock(return_value=None)),
+        patch(
+            "custom_components.homely.fetch_token_with_reason",
+            AsyncMock(return_value=(new_tokens, None)),
+        ),
+        patch(
+            "custom_components.homely.get_data_with_status",
+            AsyncMock(return_value=(updated_location_data, 200)),
+        ),
+    ):
+        result = await runtime_data.coordinator.update_method()
+
+    assert result["alarmState"] == "ARMED_AWAY"
+    assert runtime_data.access_token == "new-access-token"
+    assert runtime_data.refresh_token == "new-refresh-token"
+    websocket.update_token.assert_called_once_with("new-access-token")
+
+
+async def test_coordinator_update_method_refresh_fallback_non_auth_failure_raises_update_failed(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Fallback login failures should raise UpdateFailed when auth is still valid."""
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+    runtime_data.expires_at = 0
+
+    with (
+        patch("custom_components.homely.fetch_refresh_token", AsyncMock(return_value=None)),
+        patch(
+            "custom_components.homely.fetch_token_with_reason",
+            AsyncMock(return_value=(None, "cannot_connect")),
+        ),
+    ):
+        try:
+            await runtime_data.coordinator.update_method()
+        except UpdateFailed:
+            pass
+        else:
+            raise AssertionError("Expected UpdateFailed")
+
+
+async def test_coordinator_update_method_full_login_missing_fields_raises_update_failed(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Fallback login without required fields should fail."""
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+    runtime_data.expires_at = 0
+
+    with (
+        patch("custom_components.homely.fetch_refresh_token", AsyncMock(return_value=None)),
+        patch(
+            "custom_components.homely.fetch_token_with_reason",
+            AsyncMock(return_value=({"access_token": "new-access-token"}, None)),
+        ),
+    ):
+        try:
+            await runtime_data.coordinator.update_method()
+        except UpdateFailed:
+            pass
+        else:
+            raise AssertionError("Expected UpdateFailed")
+
+
+async def test_coordinator_update_method_refresh_response_missing_fields_raises_update_failed(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Broken refresh responses should fail with UpdateFailed."""
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+    runtime_data.expires_at = 0
+
+    with patch(
+        "custom_components.homely.fetch_refresh_token",
+        AsyncMock(return_value={"access_token": "access-only"}),
+    ):
+        try:
+            await runtime_data.coordinator.update_method()
+        except UpdateFailed:
+            pass
+        else:
+            raise AssertionError("Expected UpdateFailed")
+
+
+async def test_coordinator_update_method_refresh_response_invalid_expires_raises_update_failed(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Refresh responses with invalid expiry should fail."""
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+    runtime_data.expires_at = 0
+
+    with patch(
+        "custom_components.homely.fetch_refresh_token",
+        AsyncMock(
+            return_value={
+                "access_token": "new-access-token",
+                "refresh_token": "new-refresh-token",
+                "expires_in": "bad",
+            }
+        ),
+    ):
+        try:
+            await runtime_data.coordinator.update_method()
+        except UpdateFailed:
+            pass
+        else:
+            raise AssertionError("Expected UpdateFailed")
+
+
+async def test_coordinator_update_method_refreshes_token_in_place(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """A successful refresh response should update runtime tokens directly."""
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+    runtime_data.expires_at = 0
+    websocket = SimpleNamespace(
+        is_connected=lambda: False,
+        status="Disconnected",
+        status_reason="expired token",
+        update_token=MagicMock(),
+    )
+    runtime_data.websocket = websocket
+
+    with (
+        patch(
+            "custom_components.homely.fetch_refresh_token",
+            AsyncMock(
+                return_value={
+                    "access_token": "refreshed-access-token",
+                    "refresh_token": "refreshed-refresh-token",
+                    "expires_in": 1800,
+                }
+            ),
+        ),
+        patch(
+            "custom_components.homely.get_data_with_status",
+            AsyncMock(return_value=(updated_location_data, 200)),
+        ),
+    ):
+        result = await runtime_data.coordinator.update_method()
+
+    assert result["alarmState"] == "ARMED_AWAY"
+    assert runtime_data.access_token == "refreshed-access-token"
+    assert runtime_data.refresh_token == "refreshed-refresh-token"
+    websocket.update_token.assert_called_once_with("refreshed-access-token")
+
+
+async def test_coordinator_update_method_full_login_invalid_expires_raises_update_failed(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Fallback login with invalid expiry should fail."""
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+    runtime_data.expires_at = 0
+
+    with (
+        patch("custom_components.homely.fetch_refresh_token", AsyncMock(return_value=None)),
+        patch(
+            "custom_components.homely.fetch_token_with_reason",
+            AsyncMock(
+                return_value=(
+                    {
+                        "access_token": "new-access-token",
+                        "refresh_token": "new-refresh-token",
+                        "expires_in": "bad",
+                    },
+                    None,
+                )
+            ),
+        ),
+    ):
+        try:
+            await runtime_data.coordinator.update_method()
+        except UpdateFailed:
+            pass
+        else:
+            raise AssertionError("Expected UpdateFailed")
+
+
+async def test_coordinator_update_method_http_401_raises_auth_failed(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Auth rejections during polling should surface as auth failures."""
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+
+    with patch(
+        "custom_components.homely.get_data_with_status",
+        AsyncMock(return_value=(None, 401)),
+    ):
+        try:
+            await runtime_data.coordinator.update_method()
+        except ConfigEntryAuthFailed:
+            pass
+        else:
+            raise AssertionError("Expected ConfigEntryAuthFailed")
+
+
+async def test_coordinator_update_method_wraps_unexpected_poll_exception(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Unexpected API exceptions should be wrapped in UpdateFailed."""
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+
+    with patch(
+        "custom_components.homely.get_data_with_status",
+        AsyncMock(side_effect=RuntimeError("boom")),
+    ):
+        try:
+            await runtime_data.coordinator.update_method()
+        except UpdateFailed as err:
+            assert "boom" in str(err)
+        else:
+            raise AssertionError("Expected UpdateFailed")
+
+
+async def test_coordinator_update_method_re_raises_update_failed(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Existing UpdateFailed exceptions should pass through unchanged."""
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+
+    with patch(
+        "custom_components.homely.get_data_with_status",
+        AsyncMock(side_effect=UpdateFailed("already wrapped")),
+    ):
+        try:
+            await runtime_data.coordinator.update_method()
+        except UpdateFailed as err:
+            assert str(err) == "already wrapped"
+        else:
+            raise AssertionError("Expected UpdateFailed")
+
+
+async def test_coordinator_update_method_non_transient_empty_response_raises_update_failed(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Non-transient empty API responses should fail."""
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+
+    with patch(
+        "custom_components.homely.get_data_with_status",
+        AsyncMock(return_value=(None, 418)),
+    ):
+        try:
+            await runtime_data.coordinator.update_method()
+        except UpdateFailed:
+            pass
+        else:
+            raise AssertionError("Expected UpdateFailed")
+
+
+async def test_coordinator_update_method_keeps_cached_alarm_if_api_omits_it(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Polling should preserve websocket-updated alarm state when API omits it."""
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+    runtime_data.last_data["alarmState"] = "ARM_PENDING"
+    payload = deepcopy(updated_location_data)
+    payload.pop("alarmState", None)
+    payload["features"]["alarm"]["states"]["alarm"].pop("value", None)
+
+    with patch(
+        "custom_components.homely.get_data_with_status",
+        AsyncMock(return_value=(payload, 200)),
+    ):
+        result = await runtime_data.coordinator.update_method()
+
+    assert result["alarmState"] == "ARM_PENDING"
+    assert (
+        result["features"]["alarm"]["states"]["alarm"]["value"]
+        == "ARM_PENDING"
+    )
+
+
+async def test_async_reload_entry_calls_reload(hass):
+    """Options reload helper should delegate to Home Assistant."""
+    config_entry = build_config_entry()
+
+    with patch.object(
+        hass.config_entries,
+        "async_reload",
+        AsyncMock(return_value=True),
+    ) as async_reload:
+        await async_reload_entry(hass, config_entry)
+
+    async_reload.assert_awaited_once_with(config_entry.entry_id)
+
+
+async def test_async_setup_entry_websocket_callbacks_update_runtime_and_listeners(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Websocket init should wire status callbacks, listeners and event updates."""
+    _FakeHomelyWebSocket.reset()
+    config_entry = build_config_entry(
+        options={
+            CONF_ENABLE_WEBSOCKET: True,
+            CONF_POLL_WHEN_WEBSOCKET: False,
+        }
+    )
+
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+        extra_patches=(
+            patch(
+                "custom_components.homely.HomelyWebSocket",
+                _FakeHomelyWebSocket,
+            ),
+        ),
+    )
+
+    runtime_data = config_entry.runtime_data
+    ws = _FakeHomelyWebSocket.instances[0]
+    runtime_data.coordinator.async_update_listeners = MagicMock()
+    runtime_data.coordinator.async_request_refresh = AsyncMock(return_value=None)
+    listener = MagicMock()
+    runtime_data.ws_status_listeners.append(listener)
+
+    with patch.object(hass.loop, "call_soon_threadsafe", side_effect=lambda cb: cb()):
+        ws.status_update_callback("Disconnected", "network error: boom")
+    await hass.async_block_till_done()
+
+    assert runtime_data.ws_status == "Disconnected"
+    assert runtime_data.ws_status_reason == "network error: boom"
+    listener.assert_called_once()
+    runtime_data.coordinator.async_update_listeners.assert_called()
+    runtime_data.coordinator.async_request_refresh.assert_awaited_once()
+
+    ws.on_data_update(
+        {
+            "type": "alarm-state-changed",
+            "data": {"alarmState": "ARMED_AWAY"},
+        }
+    )
+    assert runtime_data.last_data["alarmState"] == "ARMED_AWAY"
+
+    ws.on_data_update(
+        {
+            "type": "device-state-changed",
+            "data": {
+                "deviceId": runtime_data.last_data["devices"][0]["id"],
+                "change": {
+                    "feature": "battery",
+                    "stateName": "low",
+                    "value": True,
+                },
+            },
+        }
+    )
+    assert (
+        runtime_data.last_data["devices"][0]["features"]["battery"]["states"]["low"]["value"]
+        is True
+    )
+
+    ws.on_data_update({"type": "disconnect"})
+    ws.on_data_update({"type": "unsupported-event"})
+
+
+async def test_async_setup_entry_websocket_handles_connect_failure_and_internet_event(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Failed websocket init should still register reconnect handling."""
+    _FakeHomelyWebSocket.reset()
+    _FakeHomelyWebSocket.connect_result = False
+    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: True})
+
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+        extra_patches=(
+            patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),
+        ),
+    )
+
+    ws = _FakeHomelyWebSocket.instances[0]
+    assert config_entry.runtime_data.websocket is ws
+
+    hass.bus.async_fire("internet_available")
+    await hass.async_block_till_done()
+
+    assert ws.request_reconnect_calls == ["internet_available event"]
+
+
+async def test_async_setup_entry_websocket_status_callback_tolerates_listener_failures(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Broken listeners and coordinator callbacks should not break status updates."""
+    _FakeHomelyWebSocket.reset()
+    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: True})
+
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+        extra_patches=(
+            patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),
+        ),
+    )
+
+    runtime_data = config_entry.runtime_data
+    ws = _FakeHomelyWebSocket.instances[0]
+    runtime_data.ws_status_listeners.append(MagicMock(side_effect=RuntimeError("bad listener")))
+    runtime_data.coordinator.async_update_listeners = MagicMock(side_effect=RuntimeError("bad coordinator"))
+
+    with patch.object(hass.loop, "call_soon_threadsafe", side_effect=lambda cb: cb()):
+        ws.status_update_callback("Connected", "event received")
+    assert runtime_data.ws_status == "Connected"
+    assert runtime_data.ws_status_reason == "event received"
+
+
+async def test_async_setup_entry_websocket_disconnect_refresh_request_failure_is_swallowed(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Refresh request creation failures after disconnect should not bubble."""
+    _FakeHomelyWebSocket.reset()
+    config_entry = build_config_entry(
+        options={
+            CONF_ENABLE_WEBSOCKET: True,
+            CONF_POLL_WHEN_WEBSOCKET: False,
+        }
+    )
+
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+        extra_patches=(patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),),
+    )
+
+    runtime_data = config_entry.runtime_data
+    ws = _FakeHomelyWebSocket.instances[0]
+    runtime_data.coordinator.async_update_listeners = MagicMock()
+    runtime_data.coordinator.async_request_refresh = MagicMock(side_effect=RuntimeError("refresh boom"))
+    with patch.object(hass.loop, "call_soon_threadsafe", side_effect=lambda cb: cb()):
+        ws.status_update_callback("Disconnected", "network error: boom")
+
+
+async def test_async_setup_entry_websocket_status_callback_tolerates_dispatch_failure(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Failures scheduling status updates should be swallowed."""
+    _FakeHomelyWebSocket.reset()
+    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: True})
+
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+        extra_patches=(
+            patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),
+        ),
+    )
+
+    ws = _FakeHomelyWebSocket.instances[0]
+    with patch.object(hass.loop, "call_soon_threadsafe", side_effect=RuntimeError("schedule failed")):
+        ws.status_update_callback("Connected", "event received")
+
+
+async def test_async_setup_entry_websocket_callback_handles_apply_failures(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Unexpected websocket event processing errors should be swallowed."""
+    _FakeHomelyWebSocket.reset()
+    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: True})
+
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+        extra_patches=(
+            patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),
+        ),
+    )
+
+    ws = _FakeHomelyWebSocket.instances[0]
+    with patch(
+        "custom_components.homely.apply_websocket_event_to_data",
+        side_effect=RuntimeError("boom"),
+    ):
+        ws.on_data_update({"type": "device-state-changed", "data": {"deviceId": "dev-1"}})
+
+
+async def test_async_setup_entry_websocket_callback_handles_no_direct_device_changes(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Device websocket events without concrete changes should still be safe."""
+    _FakeHomelyWebSocket.reset()
+    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: True})
+
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+        extra_patches=(
+            patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),
+        ),
+    )
+
+    runtime_data = config_entry.runtime_data
+    runtime_data.coordinator.async_update_listeners = MagicMock()
+    ws = _FakeHomelyWebSocket.instances[0]
+    with patch(
+        "custom_components.homely.apply_websocket_event_to_data",
+        return_value={
+            "event_type": "device-state-changed",
+            "changes": [],
+            "device_id": "missing-device",
+        },
+    ):
+        ws.on_data_update({"type": "device-state-changed"})
+
+    runtime_data.coordinator.async_update_listeners.assert_not_called()
+
+
+async def test_async_setup_entry_websocket_constructor_errors_are_swallowed(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Websocket init should survive constructor-level failures."""
+    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: True})
+
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+        extra_patches=(
+            patch("custom_components.homely.HomelyWebSocket", side_effect=RuntimeError("boom")),
+        ),
+    )
+
+    assert config_entry.runtime_data.websocket is None
+
+
+async def test_async_setup_entry_websocket_key_error_is_swallowed(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """KeyError during websocket init should be swallowed."""
+    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: True})
+
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+        extra_patches=(
+            patch("custom_components.homely.HomelyWebSocket", side_effect=KeyError("missing")),
+        ),
+    )
+
+    assert config_entry.runtime_data.websocket is None
+
+
+async def test_async_setup_entry_tolerates_internet_listener_registration_error(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Setup should still succeed if the internet event listener cannot be registered."""
+    _FakeHomelyWebSocket.reset()
+    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: True})
+
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+        extra_patches=(
+            patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),
+            patch.object(type(hass.bus), "async_listen", side_effect=RuntimeError("no bus")),
+        ),
+    )
+
+    assert config_entry.state is ConfigEntryState.LOADED
+
+
+async def test_async_setup_entry_internet_available_callback_swallows_reconnect_errors(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Reconnect callback failures from the internet event should be swallowed."""
+    _FakeHomelyWebSocket.reset()
+    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: True})
+
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+        extra_patches=(patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),),
+    )
+
+    ws = _FakeHomelyWebSocket.instances[0]
+    ws.request_reconnect = MagicMock(side_effect=RuntimeError("boom"))
+    hass.bus.async_fire("internet_available")
+    await hass.async_block_till_done()

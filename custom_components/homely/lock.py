@@ -9,13 +9,15 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
+from .models import get_entry_runtime_data
 from .naming import (
-    build_entity_name,
     build_suggested_object_id,
     get_device_area,
     get_device_display_name,
 )
 from .sensors.discover import _get_value_by_path
+
+PARALLEL_UPDATES = 0
 
 
 def _coerce_bool(value: Any) -> bool | None:
@@ -55,8 +57,9 @@ def _is_lock_device(device: dict[str, Any]) -> bool:
 
 async def async_setup_entry(hass, entry, async_add_entities):
     """Set up lock entities for Homely devices."""
-    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    data = coordinator.data or hass.data[DOMAIN][entry.entry_id].get("data") or {}
+    runtime_data = get_entry_runtime_data(entry)
+    coordinator = runtime_data.coordinator
+    data = coordinator.data or runtime_data.last_data or {}
 
     entities = []
     for device in data.get("devices", []):
@@ -71,10 +74,11 @@ class HomelyLock(CoordinatorEntity, LockEntity):
 
     def __init__(self, coordinator, device):
         super().__init__(coordinator)
+        self._attr_has_entity_name = True
         self._device_id = device.get("id")
         self._device_name = get_device_display_name(device)
 
-        self._attr_name = build_entity_name(device, "lock")
+        self._attr_name = None
         self._attr_unique_id = f"{self._device_id}_lock"
         suggested_object_id = build_suggested_object_id(device, "lock")
         if suggested_object_id:

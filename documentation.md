@@ -8,15 +8,19 @@ Some devices that are fully supported in the Homely app may still be missing in 
 
 If a device is missing, or a device only shows partial data, follow [missing_sensors_devices.md](missing_sensors_devices.md).
 
-## Home index
+When Homely adds or removes devices on a location, the integration detects the topology change and reloads the config entry automatically so the entity list stays in sync.
 
-`Home index` selects which home in your Homely account is used by this config entry.
+## Location selection
 
-- `0` = first home
-- `1` = second home
-- `2` = third home
+The config flow now selects locations by the actual Homely location name returned by the API.
 
-If you have multiple homes, add one integration entry per home index.
+- If your account has only one location, it is selected automatically during setup.
+- If your account has multiple locations, Home Assistant shows a location picker.
+- Add the integration multiple times, once per location, if you want more than one location in Home Assistant.
+- The integration prevents adding the same location twice.
+- Use **Reconfigure** if you want to switch an existing entry to a different location on the same account. The integration clears the old entry registry bindings before reloading, so stale entities from the previous location are not kept.
+
+Advanced runtime settings such as polling interval and WebSocket behavior live in the integration **Options** flow, not in the initial login step.
 
 ## Battery status values
 
@@ -76,6 +80,28 @@ Practical lock-related binary sensors are also exposed when present in API data:
 - `Low Battery` (`device_class: battery`) from `features.report.states.lowbat`
 - `Jammed` (`device_class: problem`) from `features.report.states.Broken/broken`
 
+Additional lock/config sensors may be exposed when available:
+
+- `Error Code`
+
+## Flood alarm support
+
+Flood alarms are exposed from `features.alarm.states.flood` and can also provide:
+
+- temperature
+- battery status
+- diagnostic link sensors
+
+## HAN meter support
+
+HAN devices such as `EMI Norwegian HAN` expose:
+
+- `Consumption` from `summationdelivered`, converted from Wh to kWh
+- `Production` from `summationreceived`, converted from Wh to kWh
+- `Demand` from `demand`, shown in W
+- `Metering Check`
+- diagnostic link sensors
+
 ## WebSocket status sensor values
 
 The WebSocket status sensor can show:
@@ -86,6 +112,33 @@ The WebSocket status sensor can show:
 - `Disconnected`
 
 When available, the `reason` attribute contains the latest disconnect/connect reason.
+
+## Reauthentication
+
+If Homely rejects stored credentials, Home Assistant can start a reauthentication flow for the integration.
+
+- Open the repair or reauthentication prompt in Home Assistant
+- Enter updated Homely credentials
+- The config entry reloads with the new credentials
+
+## Diagnostics
+
+The integration exposes diagnostics data for support and debugging.
+
+- credentials and tokens are redacted
+- device ids, serial numbers, and location identifiers are redacted
+- websocket status and the last cached data snapshot are included in sanitized form
+
+## System health
+
+The integration exposes Home Assistant system health information for each loaded Homely entry, including:
+
+- config entry state
+- selected location id
+- scan interval and WebSocket-related options
+- API availability
+- WebSocket status and last reason
+- tracked device count
 
 ## Remove stale devices
 

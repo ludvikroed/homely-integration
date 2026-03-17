@@ -36,6 +36,17 @@ def _resolve_path_and_value(device: dict[str, Any], sensor_config: dict[str, Any
     return path, _get_value_by_path(device, path)
 
 
+def _transform_value(sensor_config: dict[str, Any], value: Any) -> Any:
+    """Apply optional value transform from the sensor config."""
+    transform = sensor_config.get("transform_value")
+    if callable(transform):
+        try:
+            return transform(value)
+        except (TypeError, ValueError):
+            return value
+    return value
+
+
 def discover_device_sensors(device: dict[str, Any]) -> list[dict[str, Any]]:
     """Discover all available sensors for a device.
     
@@ -48,11 +59,17 @@ def discover_device_sensors(device: dict[str, Any]) -> list[dict[str, Any]]:
         
         # Only add sensor if device has this feature
         if matched_path is not None and value is not None:
+            transformed_value = _transform_value(sensor_config, value)
             # Build sensor name (use get_name function if available)
             if "get_name" in sensor_config:
                 sensor_name = sensor_config["get_name"](device)
             else:
                 sensor_name = sensor_config["name"]
+
+            if "get_translation_key" in sensor_config:
+                translation_key = sensor_config["get_translation_key"](device)
+            else:
+                translation_key = sensor_config.get("translation_key")
             
             # Build device class (use get_device_class function if available)
             device_class = sensor_config.get("device_class")
@@ -67,8 +84,9 @@ def discover_device_sensors(device: dict[str, Any]) -> list[dict[str, Any]]:
                 "model_name": device.get("modelName"),
                 "serial_number": device.get("serialNumber"),
                 "resolved_name": sensor_name,
+                "resolved_translation_key": translation_key,
                 "resolved_device_class": device_class,
-                "value": value,
+                "value": transformed_value,
             })
     
     return discovered

@@ -1,0 +1,200 @@
+"""Tests for the Homely API client."""
+from __future__ import annotations
+
+import asyncio
+from unittest.mock import AsyncMock, patch
+
+import aiohttp
+
+from custom_components.homely import api
+
+
+class _FakeResponse:
+    """Simple async HTTP response stub."""
+
+    def __init__(self, *, status: int, json_data=None, text_data: str = "") -> None:
+        self.status = status
+        self._json_data = json_data
+        self._text_data = text_data
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def json(self):
+        return self._json_data
+
+    async def text(self):
+        return self._text_data
+
+
+class _FakeSession:
+    """Simple aiohttp client stub."""
+
+    def __init__(self, *, post_response=None, get_response=None, post_exc=None, get_exc=None) -> None:
+        self._post_response = post_response
+        self._get_response = get_response
+        self._post_exc = post_exc
+        self._get_exc = get_exc
+
+    def post(self, *args, **kwargs):
+        if self._post_exc is not None:
+            raise self._post_exc
+        return self._post_response
+
+    def get(self, *args, **kwargs):
+        if self._get_exc is not None:
+            raise self._get_exc
+        return self._get_response
+
+
+async def test_auth_header_value_normalizes_bearer_prefix():
+    """Tokens should always be returned as bearer values."""
+    assert api._auth_header_value("abc") == "Bearer abc"
+    assert api._auth_header_value(" Bearer abc ") == "Bearer abc"
+
+
+async def test_fetch_token_with_reason_success(hass):
+    """Token fetch should return payload on success."""
+    session = _FakeSession(
+        post_response=_FakeResponse(
+            status=200,
+            json_data={"access_token": "token"},
+        )
+    )
+
+    with patch("custom_components.homely.api.async_get_clientsession", return_value=session):
+        response, reason = await api.fetch_token_with_reason(hass, "user", "pass")
+
+    assert response == {"access_token": "token"}
+    assert reason is None
+
+
+async def test_fetch_token_with_reason_invalid_auth(hass):
+    """Auth rejections should map to invalid_auth."""
+    session = _FakeSession(post_response=_FakeResponse(status=401))
+
+    with patch("custom_components.homely.api.async_get_clientsession", return_value=session):
+        response, reason = await api.fetch_token_with_reason(hass, "user", "pass")
+
+    assert response is None
+    assert reason == "invalid_auth"
+
+
+async def test_fetch_token_with_reason_server_error(hass):
+    """Unexpected HTTP statuses should map to cannot_connect."""
+    session = _FakeSession(post_response=_FakeResponse(status=500))
+
+    with patch("custom_components.homely.api.async_get_clientsession", return_value=session):
+        response, reason = await api.fetch_token_with_reason(hass, "user", "pass")
+
+    assert response is None
+    assert reason == "cannot_connect"
+
+
+async def test_fetch_token_with_reason_network_error(hass):
+    """Network failures should map to cannot_connect."""
+    session = _FakeSession(post_exc=aiohttp.ClientError("boom"))
+
+    with patch("custom_components.homely.api.async_get_clientsession", return_value=session):
+        response, reason = await api.fetch_token_with_reason(hass, "user", "pass")
+
+    assert response is None
+    assert reason == "cannot_connect"
+
+
+async def test_fetch_token_wrapper_returns_payload_only(hass):
+    """fetch_token should unwrap the reason tuple."""
+    with patch(
+        "custom_components.homely.api.fetch_token_with_reason",
+        AsyncMock(return_value=({"access_token": "token"}, None)),
+    ):
+        response = await api.fetch_token(hass, "user", "pass")
+
+    assert response == {"access_token": "token"}
+
+
+async def test_fetch_refresh_token_and_locations(hass):
+    """Refresh and locations helpers should return parsed JSON."""
+    refresh_session = _FakeSession(
+        post_response=_FakeResponse(status=200, json_data={"access_token": "new-token"})
+    )
+    locations_session = _FakeSession(
+        get_response=_FakeResponse(status=200, json_data=[{"locationId": "abc"}])
+    )
+
+    with patch("custom_components.homely.api.async_get_clientsession", return_value=refresh_session):
+        refresh_data = await api.fetch_refresh_token(hass, "refresh")
+    with patch("custom_components.homely.api.async_get_clientsession", return_value=locations_session):
+        locations = await api.get_location_id(hass, "token")
+
+    assert refresh_data == {"access_token": "new-token"}
+    assert locations == [{"locationId": "abc"}]
+
+
+async def test_fetch_refresh_token_handles_failure_status_and_network_error(hass):
+    """Refresh helper should return None on HTTP and network failures."""
+    status_session = _FakeSession(post_response=_FakeResponse(status=500))
+    network_session = _FakeSession(post_exc=asyncio.TimeoutError())
+
+    with patch("custom_components.homely.api.async_get_clientsession", return_value=status_session):
+        assert await api.fetch_refresh_token(hass, "refresh") is None
+
+    with patch("custom_components.homely.api.async_get_clientsession", return_value=network_session):
+        assert await api.fetch_refresh_token(hass, "refresh") is None
+
+
+async def test_get_location_id_handles_failure_status_and_network_error(hass):
+    """Location helper should return None on HTTP and network failures."""
+    status_session = _FakeSession(get_response=_FakeResponse(status=500))
+    network_session = _FakeSession(get_exc=aiohttp.ClientError("boom"))
+
+    with patch("custom_components.homely.api.async_get_clientsession", return_value=status_session):
+        assert await api.get_location_id(hass, "token") is None
+
+    with patch("custom_components.homely.api.async_get_clientsession", return_value=network_session):
+        assert await api.get_location_id(hass, "token") is None
+
+
+async def test_get_data_with_status_handles_http_error_and_network_error(hass):
+    """Location fetch should expose status codes and network errors."""
+    error_session = _FakeSession(
+        get_response=_FakeResponse(status=500, text_data="server error")
+    )
+    timeout_session = _FakeSession(get_exc=asyncio.TimeoutError())
+
+    with patch("custom_components.homely.api.async_get_clientsession", return_value=error_session):
+        data, status = await api.get_data_with_status(hass, "token", "loc-1")
+    assert data is None
+    assert status == 500
+
+    with patch("custom_components.homely.api.async_get_clientsession", return_value=timeout_session):
+        data, status = await api.get_data_with_status(hass, "token", "loc-1")
+    assert data is None
+    assert status is None
+
+
+async def test_get_data_with_status_success(hass):
+    """Successful location fetches should return payload and status."""
+    success_session = _FakeSession(
+        get_response=_FakeResponse(status=200, json_data={"name": "JF23"})
+    )
+
+    with patch("custom_components.homely.api.async_get_clientsession", return_value=success_session):
+        data, status = await api.get_data_with_status(hass, "token", "loc-1")
+
+    assert data == {"name": "JF23"}
+    assert status == 200
+
+
+async def test_get_data_wrapper_returns_only_payload(hass):
+    """get_data should unwrap the helper status tuple."""
+    with patch(
+        "custom_components.homely.api.get_data_with_status",
+        return_value=({"name": "JF23"}, 200),
+    ):
+        data = await api.get_data(hass, "token", "loc-1")
+
+    assert data == {"name": "JF23"}

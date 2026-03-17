@@ -24,27 +24,33 @@ Click **Download**, then restart Home Assistant.
 1. Go to **Settings** → **Devices & Services** → **"+ Add Integration"**
 2. Search for **"Homely"**
 3. Enter your Homely account credentials (username and password)
-4. Click **"Submit"**
-> **Multiple Homes?** Add the integration once per home using Home index 0, 1, 2, etc.
+4. If your account has multiple Homely locations, choose which location to add
+5. Finish setup
+
+> **Multiple locations?** Add the integration multiple times, once per location. 
 
 ### Manual Installation
 Download the code, copy the `homely` folder to `/config/custom_components/homely/`, then restart Home Assistant and configure the integration.
 
 ## Advanced Configuration
 
+After setup, open the integration options to adjust:
+
 - **Polling interval**: Adjust API polling frequency in seconds as a backup for WebSocket updates
-- **Multiple homes**: Add integration for each Home index (0, 1, 2...)
 - **WebSocket toggle**: Enable or disable instant updates
 - **Polling while WebSocket is connected**: Optional. If disabled, API polling pauses while WebSocket is connected and resumes automatically if the WebSocket disconnects
 
 For deeper details and value references, including sensor status values, see [documentation.md](documentation.md).
+
+If Homely adds or removes devices on a location, the integration now detects the topology change and reloads the entry automatically so new entities appear without manual cleanup.
 
 ---
 
 ## Troubleshooting
 
 - Verify your Homely username and password are correct
-- Check the Home index. This is 0 if you only have one Homely home
+- If your account has multiple locations, make sure the correct location was selected during setup
+- If you want to move an existing entry to another Homely location, use **Reconfigure** from the integration menu
 - WebSocket may take 10-30 seconds to connect
 - Enable debugging (shown below) and check HA logs
 
@@ -63,6 +69,14 @@ logger:
 ```
 
 Then check the logs under **Settings** → **System** → **Logs**.
+
+### Diagnostics
+
+The integration supports Home Assistant diagnostics for safer troubleshooting. Diagnostics redact credentials, tokens, serial numbers, and other sensitive identifiers before export.
+
+### System Health
+
+The integration also exposes Home Assistant system health information, including entry count, API availability, WebSocket status, and tracked device count.
 
 ---
 

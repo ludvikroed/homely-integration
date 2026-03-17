@@ -1,25 +1,29 @@
 """Sensor platform for Homely."""
 from __future__ import annotations
 
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import CONF_ENABLE_WEBSOCKET, DEFAULT_ENABLE_WEBSOCKET, DOMAIN
+from .models import get_entry_runtime_data
 from .naming import (
-    build_entity_name,
     build_suggested_object_id,
     get_device_area,
     get_device_display_name,
+    humanize_label,
 )
 from .sensors.discover import discover_device_sensors, _get_value_by_path
+
+PARALLEL_UPDATES = 0
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
     """Set up sensor entities for Homely devices."""
-    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    data = coordinator.data or hass.data[DOMAIN][entry.entry_id].get("data") or {}
-    location_id = hass.data[DOMAIN][entry.entry_id].get("location_id")
+    runtime_data = get_entry_runtime_data(entry)
+    coordinator = runtime_data.coordinator
+    data = coordinator.data or runtime_data.last_data or {}
+    location_id = runtime_data.location_id
     
     entities = []
     
@@ -47,13 +51,19 @@ class HomelySensor(CoordinatorEntity, SensorEntity):
     
     def __init__(self, coordinator, device, sensor_config):
         super().__init__(coordinator)
+        self._attr_has_entity_name = True
         self._device_id = device.get("id")
         self._path = sensor_config["path"]
+        self._transform_value = sensor_config.get("transform_value")
         self._device_name = get_device_display_name(device)
         
         # Build entity name
         sensor_name = sensor_config.get("resolved_name", sensor_config.get("name", "sensor"))
-        self._attr_name = build_entity_name(device, sensor_name)
+        translation_key = sensor_config.get("resolved_translation_key")
+        if translation_key:
+            self._attr_translation_key = translation_key
+        else:
+            self._attr_name = humanize_label(sensor_name)
         
         # Build unique ID from device suffix
         device_suffix = sensor_config.get("device_suffix", sensor_config["name"])
@@ -61,6 +71,9 @@ class HomelySensor(CoordinatorEntity, SensorEntity):
         suggested_object_id = build_suggested_object_id(device, device_suffix)
         if suggested_object_id:
             self._attr_suggested_object_id = suggested_object_id
+        self._attr_entity_registry_enabled_default = bool(
+            sensor_config.get("enabled_default", True)
+        )
         
         # Set device class
         if sensor_config.get("device_class"):
@@ -101,7 +114,13 @@ class HomelySensor(CoordinatorEntity, SensorEntity):
         data = self.coordinator.data or {}
         for device in data.get("devices", []):
             if device.get("id") == self._device_id:
-                return _get_value_by_path(device, self._path)
+                value = _get_value_by_path(device, self._path)
+                if callable(self._transform_value):
+                    try:
+                        return self._transform_value(value)
+                    except (TypeError, ValueError):
+                        return value
+                return value
         return None
 
 
@@ -111,15 +130,31 @@ class HomelyWebSocketStatusSensor(CoordinatorEntity, SensorEntity):
     def __init__(self, coordinator, hass, entry, location_id):
         """Initialize the WebSocket status sensor."""
         super().__init__(coordinator)
-        self._hass = hass
-        self._entry = entry
+        self._attr_has_entity_name = True
+        self._runtime_data = get_entry_runtime_data(entry)
+        self._websocket_enabled = bool(
+            entry.options.get(
+                CONF_ENABLE_WEBSOCKET,
+                entry.data.get(CONF_ENABLE_WEBSOCKET, DEFAULT_ENABLE_WEBSOCKET),
+            )
+        )
         self._location_id = location_id
-        location_name = (hass.data[DOMAIN][entry.entry_id].get("data") or {}).get("name", "Location")
+        location_name = (self._runtime_data.last_data or {}).get("name", "Location")
         
-        self._attr_name = f"{location_name} WebSocket Status"
+        self._attr_translation_key = "websocket_status"
         self._attr_unique_id = f"location_{location_id}_websocket_status"
         self._attr_icon = "mdi:web"
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self._attr_entity_registry_enabled_default = False
+        self._attr_device_class = SensorDeviceClass.ENUM
+        self._attr_options = [
+            "Disabled",
+            "Not initialized",
+            "Connecting",
+            "Connected",
+            "Disconnected",
+            "Unknown",
+        ]
         
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"location_{location_id}")},
@@ -132,33 +167,24 @@ class HomelyWebSocketStatusSensor(CoordinatorEntity, SensorEntity):
     async def async_added_to_hass(self) -> None:
         """Register for immediate websocket status callbacks."""
         await super().async_added_to_hass()
-        try:
-            entry_data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id)
-            if entry_data is None:
-                return
+        listeners = getattr(self._runtime_data, "ws_status_listeners", None)
+        if not isinstance(listeners, list):
+            return
 
-            def _listener() -> None:
-                # Schedule state write on HA loop when websocket status changes.
-                if self.hass is not None and self.entity_id is not None:
-                    self.async_schedule_update_ha_state()
+        def _listener() -> None:
+            # Schedule state write on HA loop when websocket status changes.
+            if self.hass is not None and self.entity_id is not None:
+                self.async_schedule_update_ha_state()
 
-            listeners = entry_data.setdefault("ws_status_listeners", [])
-            listeners.append(_listener)
-            self._status_listener = _listener
-            self.async_schedule_update_ha_state()
-        except Exception:
-            pass
+        listeners.append(_listener)
+        self._status_listener = _listener
+        self.async_schedule_update_ha_state()
 
     async def async_will_remove_from_hass(self) -> None:
         """Unregister websocket status callback."""
-        try:
-            entry_data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id)
-            if entry_data is not None and self._status_listener is not None:
-                listeners = entry_data.get("ws_status_listeners", [])
-                if self._status_listener in listeners:
-                    listeners.remove(self._status_listener)
-        except Exception:
-            pass
+        listeners = getattr(self._runtime_data, "ws_status_listeners", None)
+        if isinstance(listeners, list) and self._status_listener in listeners:
+            listeners.remove(self._status_listener)
         self._status_listener = None
         await super().async_will_remove_from_hass()
     
@@ -166,27 +192,28 @@ class HomelyWebSocketStatusSensor(CoordinatorEntity, SensorEntity):
     def native_value(self) -> str:
         """Return the WebSocket connection status."""
         try:
-            entry_data = self._hass.data[DOMAIN][self._entry.entry_id]
-            status = entry_data.get("ws_status")
+            if not self._websocket_enabled:
+                return "Disabled"
+
+            status = self._runtime_data.ws_status
             if isinstance(status, str) and status:
                 return status
 
             # Fallback if status has not yet been initialized.
-            ws = entry_data.get("websocket")
+            ws = self._runtime_data.websocket
             if ws is None:
                 return "Not initialized"
             return "Connected" if ws.is_connected() else "Disconnected"
-        except (KeyError, AttributeError):
+        except (AttributeError, ValueError):
             return "Unknown"
 
     @property
     def extra_state_attributes(self) -> dict[str, str] | None:
         """Expose last websocket status reason for debugging."""
         try:
-            entry_data = self._hass.data[DOMAIN][self._entry.entry_id]
-            reason = entry_data.get("ws_status_reason")
+            reason = self._runtime_data.ws_status_reason
             if reason:
                 return {"reason": reason}
-        except (KeyError, AttributeError):
+        except (AttributeError, ValueError):
             return None
         return None

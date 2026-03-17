@@ -8,24 +8,27 @@ import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 
-_LOGGER = logging.getLogger(__name__)
+from homely import HomelyClient
 
 from .const import (
+    CONF_ENABLE_WEBSOCKET,
     CONF_HOME_ID,
     CONF_LOCATION_ID,
     CONF_PASSWORD,
-    CONF_USERNAME,
-    CONF_SCAN_INTERVAL,
-    CONF_ENABLE_WEBSOCKET,
     CONF_POLL_WHEN_WEBSOCKET,
-    DEFAULT_HOME_ID,
-    DEFAULT_SCAN_INTERVAL,
+    CONF_SCAN_INTERVAL,
+    CONF_USERNAME,
     DEFAULT_ENABLE_WEBSOCKET,
+    DEFAULT_HOME_ID,
     DEFAULT_POLL_WHEN_WEBSOCKET,
+    DEFAULT_SCAN_INTERVAL,
     DOMAIN,
 )
-from .api import fetch_token_with_reason, get_location_id, get_data
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _redact(data: dict[str, Any]) -> dict[str, Any]:
@@ -46,7 +49,7 @@ def _normalize_location_id(location_id: Any) -> str | None:
 
 
 def _entry_home_id(entry: config_entries.ConfigEntry) -> int:
-    """Read home index from entry options/data with fallback."""
+    """Read legacy home index from entry options/data with fallback."""
     try:
         return int(
             entry.options.get(
@@ -56,6 +59,108 @@ def _entry_home_id(entry: config_entries.ConfigEntry) -> int:
         )
     except (TypeError, ValueError):
         return DEFAULT_HOME_ID
+
+
+def _location_name(location: dict[str, Any]) -> str:
+    """Return a human-friendly location name."""
+    name = str(location.get("name") or "").strip()
+    if name:
+        return name
+
+    gateway_serial = str(location.get("gatewayserial") or "").strip()
+    if gateway_serial:
+        return f"Homely {gateway_serial}"
+
+    normalized_location_id = _normalize_location_id(location.get("locationId"))
+    if normalized_location_id:
+        return f"Homely {normalized_location_id[:8]}"
+
+    return "Homely"
+
+
+def _location_label(location: dict[str, Any], *, duplicate_names: set[str]) -> str:
+    """Return a selector label for a location."""
+    base_name = _location_name(location)
+    if base_name not in duplicate_names:
+        return base_name
+
+    gateway_serial = str(location.get("gatewayserial") or "").strip()
+    if gateway_serial:
+        return f"{base_name} ({gateway_serial})"
+
+    normalized_location_id = _normalize_location_id(location.get("locationId"))
+    if normalized_location_id:
+        return f"{base_name} ({normalized_location_id[:8]})"
+
+    return base_name
+
+
+def _location_options(locations: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    """Return selector options for location choice."""
+    names = [_location_name(location) for location in locations]
+    duplicate_names = {name for name in names if names.count(name) > 1}
+
+    options: list[tuple[str, str]] = []
+    for location in locations:
+        normalized_location_id = _normalize_location_id(location.get("locationId"))
+        if normalized_location_id is None:
+            continue
+        options.append(
+            (
+                normalized_location_id,
+                _location_label(location, duplicate_names=duplicate_names),
+            )
+        )
+    return options
+
+
+def _find_location_by_id(
+    locations: list[dict[str, Any]],
+    location_id: str | None,
+) -> dict[str, Any] | None:
+    """Find a location item by location id."""
+    if location_id is None:
+        return None
+    for location in locations:
+        if _normalize_location_id(location.get("locationId")) == location_id:
+            return location
+    return None
+
+
+def _coerce_scan_interval(value: Any, default: int = DEFAULT_SCAN_INTERVAL) -> int:
+    """Return a valid scan interval with safe fallback."""
+    try:
+        return max(10, int(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _get_client(hass) -> HomelyClient:
+    """Build a Homely SDK client bound to Home Assistant's shared session."""
+    return HomelyClient(async_get_clientsession(hass))
+
+
+async def fetch_token_with_reason(
+    hass,
+    username: str,
+    password: str,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Fetch credentials through the SDK client."""
+    return await _get_client(hass).fetch_token_with_reason(username, password)
+
+
+async def get_location_id(hass, token: str) -> list[dict[str, Any]] | None:
+    """Fetch account locations through the SDK client."""
+    return await _get_client(hass).get_locations(token)
+
+
+async def get_data(
+    hass,
+    token: str,
+    location_id: str | int,
+) -> dict[str, Any] | None:
+    """Fetch location data through the SDK client."""
+    return await _get_client(hass).get_home_data(token, location_id)
 
 
 async def _fetch_locations_for_credentials(
@@ -80,10 +185,110 @@ async def _fetch_locations_for_credentials(
     return locations, access_token, None
 
 
+async def fetch_locations_for_entry(
+    hass,
+    entry: config_entries.ConfigEntry,
+) -> tuple[list[dict[str, Any]] | None, str | None]:
+    """Fetch locations for an existing config entry."""
+    username = str(entry.data.get(CONF_USERNAME, ""))
+    password = str(entry.data.get(CONF_PASSWORD, ""))
+    locations, _access_token, reason = await _fetch_locations_for_credentials(
+        hass,
+        username,
+        password,
+    )
+    return locations, reason
+
+
+def clear_entry_registries(hass, entry: config_entries.ConfigEntry) -> None:
+    """Remove entity and device registry items for an entry before reconfigure."""
+    entity_registry = er.async_get(hass)
+    for entity_entry in er.async_entries_for_config_entry(entity_registry, entry.entry_id):
+        entity_registry.async_remove(entity_entry.entity_id)
+
+    device_registry = dr.async_get(hass)
+    device_registry.async_clear_config_entry(entry.entry_id)
+
+
+def is_duplicate_location_configured(
+    hass,
+    location_id: str | None,
+    *,
+    ignore_entry_id: str | None = None,
+) -> bool:
+    """Check whether a location is already configured for this domain."""
+    if location_id is None:
+        return False
+
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        if ignore_entry_id is not None and entry.entry_id == ignore_entry_id:
+            continue
+
+        existing_location = _normalize_location_id(entry.data.get(CONF_LOCATION_ID))
+        if existing_location == location_id:
+            return True
+        if entry.unique_id == location_id:
+            return True
+
+    return False
+
+
+async def reconfigure_entry_location(
+    hass,
+    entry: config_entries.ConfigEntry,
+    location: dict[str, Any],
+) -> str | None:
+    """Switch an entry to a different location safely."""
+    normalized_location_id = _normalize_location_id(location.get("locationId"))
+    if normalized_location_id is None:
+        return "invalid_location"
+
+    unload_ok = await hass.config_entries.async_unload(entry.entry_id)
+    if not unload_ok:
+        return "cannot_reconfigure"
+
+    clear_entry_registries(hass, entry)
+
+    previous_data = dict(entry.data)
+    previous_title = entry.title
+    previous_unique_id = entry.unique_id
+    updated_data = dict(entry.data)
+    updated_data[CONF_LOCATION_ID] = normalized_location_id
+    hass.config_entries.async_update_entry(
+        entry,
+        title=_location_name(location),
+        data=updated_data,
+        unique_id=normalized_location_id,
+    )
+
+    setup_ok = await hass.config_entries.async_setup(entry.entry_id)
+    if not setup_ok:
+        hass.config_entries.async_update_entry(
+            entry,
+            title=previous_title,
+            data=previous_data,
+            unique_id=previous_unique_id,
+        )
+        restore_ok = await hass.config_entries.async_setup(entry.entry_id)
+        if not restore_ok:
+            _LOGGER.error(
+                "Failed to restore previous Homely configuration after reconfigure failure"
+            )
+        return "cannot_reconfigure"
+
+    return None
+
+
 class HomelyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Homely Alarm."""
 
-    VERSION = 1
+    VERSION = 2
+
+    _pending_username: str | None = None
+    _pending_password: str | None = None
+    _pending_locations: list[dict[str, Any]] | None = None
+    _reauth_entry: config_entries.ConfigEntry | None = None
+    _reconfigure_locations: list[dict[str, Any]] | None = None
 
     @staticmethod
     def async_get_options_flow(
@@ -112,62 +317,89 @@ class HomelyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ): selector.TextSelector(
                     selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
                 ),
-                vol.Optional(
-                    CONF_HOME_ID,
-                    default=default_values.get(CONF_HOME_ID, DEFAULT_HOME_ID),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        mode=selector.NumberSelectorMode.BOX,
-                        min=0,
-                    )
-                ),
-                vol.Optional(
-                    CONF_SCAN_INTERVAL,
-                    default=default_values.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        mode=selector.NumberSelectorMode.BOX,
-                        min=10,
-                        unit_of_measurement="seconds",
-                    )
-                ),
-                vol.Optional(
-                    CONF_ENABLE_WEBSOCKET,
-                    default=default_values.get(CONF_ENABLE_WEBSOCKET, DEFAULT_ENABLE_WEBSOCKET),
-                ): selector.BooleanSelector(),
-                vol.Optional(
-                    CONF_POLL_WHEN_WEBSOCKET,
-                    default=default_values.get(
-                        CONF_POLL_WHEN_WEBSOCKET,
-                        DEFAULT_POLL_WHEN_WEBSOCKET,
-                    ),
-                ): selector.BooleanSelector(),
             }
         )
+
+    @staticmethod
+    def _build_location_schema(locations: list[dict[str, Any]]):
+        """Build schema for selecting a location."""
+        from homeassistant.helpers import selector
+
+        options = [
+            selector.SelectOptionDict(value=value, label=label)
+            for value, label in _location_options(locations)
+        ]
+        default_value = options[0]["value"] if options else None
+        return vol.Schema(
+            {
+                vol.Required(
+                    CONF_LOCATION_ID,
+                    default=default_value,
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=options,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+            }
+        )
+
+    def _clear_pending_user_selection(self) -> None:
+        """Reset transient state for multi-step user flow."""
+        self._pending_username = None
+        self._pending_password = None
+        self._pending_locations = None
+
+    def _clear_pending_reconfigure_selection(self) -> None:
+        """Reset transient state for reconfigure flow."""
+        self._reconfigure_locations = None
 
     def _is_duplicate_location(
         self,
         location_id: str | None,
-        username: str,
-        home_id: int,
+        *,
+        ignore_entry_id: str | None = None,
     ) -> bool:
-        """Check for duplicate integration entries."""
-        for entry in self._async_current_entries():
-            if location_id is not None:
-                existing_location = _normalize_location_id(
-                    entry.data.get(CONF_LOCATION_ID)
-                )
-                if existing_location == location_id:
-                    return True
-                if entry.unique_id == location_id:
-                    return True
+        """Check whether a location is already configured."""
+        return is_duplicate_location_configured(
+            self.hass,
+            location_id,
+            ignore_entry_id=ignore_entry_id,
+        )
 
-            existing_username = entry.data.get(CONF_USERNAME)
-            existing_home_id = _entry_home_id(entry)
-            if existing_username == username and existing_home_id == home_id:
-                return True
+    async def _create_entry_for_location(
+        self,
+        *,
+        username: str,
+        password: str,
+        location: dict[str, Any],
+    ) -> FlowResult:
+        """Create a config entry for the selected location."""
+        normalized_location_id = _normalize_location_id(location.get("locationId"))
+        if normalized_location_id is None:
+            return self.async_abort(reason="invalid_location")
 
-        return False
+        if self._is_duplicate_location(normalized_location_id):
+            return self.async_abort(reason="already_configured")
+
+        await self.async_set_unique_id(normalized_location_id)
+        self._abort_if_unique_id_configured()
+
+        self._clear_pending_user_selection()
+
+        return self.async_create_entry(
+            title=_location_name(location),
+            data={
+                CONF_USERNAME: username,
+                CONF_PASSWORD: password,
+                CONF_LOCATION_ID: normalized_location_id,
+            },
+            options={
+                CONF_SCAN_INTERVAL: DEFAULT_SCAN_INTERVAL,
+                CONF_ENABLE_WEBSOCKET: DEFAULT_ENABLE_WEBSOCKET,
+                CONF_POLL_WHEN_WEBSOCKET: DEFAULT_POLL_WHEN_WEBSOCKET,
+            },
+        )
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -177,79 +409,204 @@ class HomelyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             input_values = dict(user_input)
+            username = user_input[CONF_USERNAME]
+            password = user_input[CONF_PASSWORD]
 
-            # Get the location name (default to 0 if not specified)
-            try:
-                home_id = int(user_input.get(CONF_HOME_ID, DEFAULT_HOME_ID))
-            except (TypeError, ValueError):
-                errors[CONF_HOME_ID] = "invalid_home_id"
-                return self.async_show_form(step_id="user", data_schema=self._build_user_schema(input_values), errors=errors)
+            locations, _access_token, reason = await _fetch_locations_for_credentials(
+                self.hass,
+                username,
+                password,
+            )
+            if reason or not locations:
+                errors["base"] = reason or "cannot_connect"
+                return self.async_show_form(
+                    step_id="user",
+                    data_schema=self._build_user_schema(input_values),
+                    errors=errors,
+                )
 
-            try:
-                scan_interval = int(user_input.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))
-                if scan_interval < 10:
-                    raise ValueError
-            except (TypeError, ValueError):
-                errors[CONF_SCAN_INTERVAL] = "invalid_scan_interval"
-                return self.async_show_form(step_id="user", data_schema=self._build_user_schema(input_values), errors=errors)
+            if len(locations) == 1:
+                return await self._create_entry_for_location(
+                    username=username,
+                    password=password,
+                    location=locations[0],
+                )
 
-            location_response, access_token, reason = await _fetch_locations_for_credentials(
+            self._pending_username = username
+            self._pending_password = password
+            self._pending_locations = locations
+            return await self.async_step_select_location()
+
+        return self.async_show_form(
+            step_id="user",
+            data_schema=self._build_user_schema(),
+            errors=errors,
+        )
+
+    async def async_step_select_location(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> FlowResult:
+        """Handle location selection for accounts with multiple locations."""
+        errors: dict[str, str] = {}
+        locations = self._pending_locations
+        username = self._pending_username
+        password = self._pending_password
+
+        if not locations or username is None or password is None:
+            return self.async_abort(reason="unknown")
+
+        if user_input is not None:
+            selected_location_id = _normalize_location_id(user_input.get(CONF_LOCATION_ID))
+            location = _find_location_by_id(locations, selected_location_id)
+            if location is None:
+                errors[CONF_LOCATION_ID] = "invalid_location"
+            else:
+                return await self._create_entry_for_location(
+                    username=username,
+                    password=password,
+                    location=location,
+                )
+
+        return self.async_show_form(
+            step_id="select_location",
+            data_schema=self._build_location_schema(locations),
+            errors=errors,
+        )
+
+    async def async_step_reauth(
+        self,
+        entry_data: dict[str, Any],
+    ) -> FlowResult:
+        """Handle a reauth flow."""
+        self._reauth_entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> FlowResult:
+        """Confirm reauthentication with updated credentials."""
+        errors: dict[str, str] = {}
+        reauth_entry = self._reauth_entry
+        if reauth_entry is None:
+            return self.async_abort(reason="unknown")
+
+        defaults = {
+            CONF_USERNAME: reauth_entry.data.get(CONF_USERNAME, ""),
+            CONF_PASSWORD: "",
+        }
+
+        if user_input is not None:
+            input_values = dict(user_input)
+            locations, _access_token, reason = await _fetch_locations_for_credentials(
                 self.hass,
                 user_input[CONF_USERNAME],
                 user_input[CONF_PASSWORD],
             )
-            if reason or not location_response:
+            current_location_id = _normalize_location_id(
+                reauth_entry.data.get(CONF_LOCATION_ID)
+            )
+            if reason or not locations:
                 errors["base"] = reason or "cannot_connect"
-                return self.async_show_form(step_id="user", data_schema=self._build_user_schema(input_values), errors=errors)
+            elif _find_location_by_id(locations, current_location_id) is None:
+                errors["base"] = "invalid_location"
+            else:
+                updated_data = dict(reauth_entry.data)
+                updated_data[CONF_USERNAME] = user_input[CONF_USERNAME]
+                updated_data[CONF_PASSWORD] = user_input[CONF_PASSWORD]
+                return self.async_update_reload_and_abort(
+                    reauth_entry,
+                    data_updates=updated_data,
+                )
 
-            if home_id < 0 or home_id >= len(location_response):
-                errors[CONF_HOME_ID] = "invalid_home_id"
-                return self.async_show_form(step_id="user", data_schema=self._build_user_schema(input_values), errors=errors)
-            enable_websocket = user_input.get(CONF_ENABLE_WEBSOCKET, DEFAULT_ENABLE_WEBSOCKET)
-            poll_when_websocket = user_input.get(
-                CONF_POLL_WHEN_WEBSOCKET,
-                DEFAULT_POLL_WHEN_WEBSOCKET,
-            )
+            defaults.update(input_values)
 
-            location_item = location_response[home_id]
-            location_id = location_item.get("locationId")
-            normalized_location_id = _normalize_location_id(location_id)
+        from homeassistant.helpers import selector
 
-            if normalized_location_id is not None:
-                await self.async_set_unique_id(normalized_location_id)
-                self._abort_if_unique_id_configured()
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_USERNAME,
+                        default=defaults.get(CONF_USERNAME, ""),
+                    ): selector.TextSelector(
+                        selector.TextSelectorConfig(type=selector.TextSelectorType.EMAIL)
+                    ),
+                    vol.Required(
+                        CONF_PASSWORD,
+                        default=defaults.get(CONF_PASSWORD, ""),
+                    ): selector.TextSelector(
+                        selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+                    ),
+                }
+            ),
+            errors=errors,
+        )
 
-            if self._is_duplicate_location(
-                normalized_location_id,
-                user_input[CONF_USERNAME],
-                home_id,
+    async def async_step_reconfigure(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> FlowResult:
+        """Handle switching this entry to another location on the same account."""
+        if self.source == config_entries.SOURCE_RECONFIGURE:
+            entry = self._get_reconfigure_entry()
+        else:
+            entry_id = self.context.get("entry_id")
+            entry = self.hass.config_entries.async_get_entry(entry_id) if entry_id else None
+
+        if entry is None:
+            return self.async_abort(reason="unknown")
+
+        errors: dict[str, str] = {}
+
+        if user_input is None or self._reconfigure_locations is None:
+            locations, reason = await fetch_locations_for_entry(self.hass, entry)
+            if reason == "invalid_auth":
+                return self.async_abort(reason="reauth_required")
+            if reason:
+                return self.async_abort(reason=reason)
+            if not locations:
+                return self.async_abort(reason="no_homes")
+            self._reconfigure_locations = locations
+
+        locations = self._reconfigure_locations
+        if not locations:
+            return self.async_abort(reason="unknown")
+
+        if user_input is not None:
+            selected_location_id = _normalize_location_id(user_input.get(CONF_LOCATION_ID))
+            location = _find_location_by_id(locations, selected_location_id)
+            if location is None:
+                errors[CONF_LOCATION_ID] = "invalid_location"
+            elif self._is_duplicate_location(
+                selected_location_id,
+                ignore_entry_id=entry.entry_id,
             ):
+                self._clear_pending_reconfigure_selection()
                 return self.async_abort(reason="already_configured")
+            else:
+                current_location_id = _normalize_location_id(entry.data.get(CONF_LOCATION_ID))
+                if selected_location_id == current_location_id:
+                    self.hass.config_entries.async_update_entry(
+                        entry,
+                        title=_location_name(location),
+                    )
+                    self._clear_pending_reconfigure_selection()
+                    return self.async_abort(reason="reconfigure_successful")
 
-            # Fetch location data to get the name
-            location_data = None
-            if location_id is not None and access_token:
-                location_data = await get_data(self.hass, access_token, location_id)
-            location_name = (
-                location_data.get("name", f"Homely Alarm {home_id}")
-                if isinstance(location_data, dict)
-                else f"Homely Alarm {home_id}"
-            )
+                reason = await reconfigure_entry_location(self.hass, entry, location)
+                self._clear_pending_reconfigure_selection()
+                if reason is None:
+                    return self.async_abort(reason="reconfigure_successful")
+                return self.async_abort(reason=reason)
 
-            entry_data = dict(user_input)
-            entry_data[CONF_HOME_ID] = home_id
-            entry_data[CONF_SCAN_INTERVAL] = scan_interval
-            entry_data[CONF_ENABLE_WEBSOCKET] = bool(enable_websocket)
-            entry_data[CONF_POLL_WHEN_WEBSOCKET] = bool(poll_when_websocket)
-            if normalized_location_id is not None:
-                entry_data[CONF_LOCATION_ID] = normalized_location_id
-
-            return self.async_create_entry(
-                title=location_name,
-                data=entry_data,
-            )
-
-        return self.async_show_form(step_id="user", data_schema=self._build_user_schema(), errors=errors)
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=self._build_location_schema(locations),
+            errors=errors,
+        )
 
 
 class HomelyOptionsFlow(config_entries.OptionsFlow):
@@ -257,7 +614,6 @@ class HomelyOptionsFlow(config_entries.OptionsFlow):
 
     @staticmethod
     def _build_options_schema(
-        home_id: int,
         scan_interval: int,
         enable_websocket: bool,
         poll_when_websocket: bool,
@@ -267,15 +623,6 @@ class HomelyOptionsFlow(config_entries.OptionsFlow):
 
         return vol.Schema(
             {
-                vol.Optional(
-                    CONF_HOME_ID,
-                    default=home_id,
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        mode=selector.NumberSelectorMode.BOX,
-                        min=0,
-                    )
-                ),
                 vol.Optional(
                     CONF_SCAN_INTERVAL,
                     default=scan_interval,
@@ -297,160 +644,74 @@ class HomelyOptionsFlow(config_entries.OptionsFlow):
             }
         )
 
-    def _is_duplicate_location(
-        self,
-        location_id: str | None,
-        username: str,
-        home_id: int,
-    ) -> bool:
-        """Check for duplicate target when updating options."""
-        for entry in self.hass.config_entries.async_entries(DOMAIN):
-            if entry.entry_id == self.config_entry.entry_id:
-                continue
-
-            if location_id is not None:
-                existing_location = _normalize_location_id(
-                    entry.data.get(CONF_LOCATION_ID)
-                )
-                if existing_location == location_id:
-                    return True
-                if entry.unique_id == location_id:
-                    return True
-
-            existing_username = entry.data.get(CONF_USERNAME)
-            existing_home_id = _entry_home_id(entry)
-            if existing_username == username and existing_home_id == home_id:
-                return True
-
-        return False
-
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Manage the options."""
-        try:
-            if user_input is not None:
-                _LOGGER.debug(
-                    "Options flow submitted with data=%s",
-                    _redact(dict(user_input)),
-                )
-            else:
-                _LOGGER.debug("Options flow opened")
-
-            # Get current options or use defaults
-            _LOGGER.debug("Config entry data: %s", _redact(dict(self.config_entry.data)))
-            _LOGGER.debug("Config entry options: %s", dict(self.config_entry.options))
-
-            home_id = int(self.config_entry.options.get(
-                CONF_HOME_ID,
-                self.config_entry.data.get(CONF_HOME_ID, DEFAULT_HOME_ID)
-            ))
-            scan_interval = int(self.config_entry.options.get(
+        """Manage advanced runtime options."""
+        scan_interval = _coerce_scan_interval(
+            self.config_entry.options.get(
                 CONF_SCAN_INTERVAL,
-                self.config_entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
-            ))
-            enable_websocket = self.config_entry.options.get(
+                self.config_entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
+            )
+        )
+        enable_websocket = bool(
+            self.config_entry.options.get(
                 CONF_ENABLE_WEBSOCKET,
-                self.config_entry.data.get(CONF_ENABLE_WEBSOCKET, DEFAULT_ENABLE_WEBSOCKET)
+                self.config_entry.data.get(CONF_ENABLE_WEBSOCKET, DEFAULT_ENABLE_WEBSOCKET),
             )
-            poll_when_websocket = self.config_entry.options.get(
+        )
+        poll_when_websocket = bool(
+            self.config_entry.options.get(
                 CONF_POLL_WHEN_WEBSOCKET,
-                self.config_entry.data.get(CONF_POLL_WHEN_WEBSOCKET, DEFAULT_POLL_WHEN_WEBSOCKET),
+                self.config_entry.data.get(
+                    CONF_POLL_WHEN_WEBSOCKET,
+                    DEFAULT_POLL_WHEN_WEBSOCKET,
+                ),
+            )
+        )
+
+        if user_input is not None:
+            errors: dict[str, str] = {}
+
+            raw_scan_interval = user_input.get(CONF_SCAN_INTERVAL, scan_interval)
+            try:
+                scan_interval = int(raw_scan_interval)
+                if scan_interval < 10:
+                    raise ValueError
+            except (TypeError, ValueError):
+                errors[CONF_SCAN_INTERVAL] = "invalid_scan_interval"
+                scan_interval = _coerce_scan_interval(raw_scan_interval, scan_interval)
+
+            enable_websocket = bool(user_input.get(CONF_ENABLE_WEBSOCKET, enable_websocket))
+            poll_when_websocket = bool(
+                user_input.get(CONF_POLL_WHEN_WEBSOCKET, poll_when_websocket)
             )
 
-            if user_input is not None:
-                errors: dict[str, str] = {}
-                target_location_id: str | None = None
-
-                try:
-                    home_id = int(user_input.get(CONF_HOME_ID, home_id))
-                except (TypeError, ValueError):
-                    errors[CONF_HOME_ID] = "invalid_home_id"
-
-                try:
-                    scan_interval = int(user_input.get(CONF_SCAN_INTERVAL, scan_interval))
-                    if scan_interval < 10:
-                        raise ValueError
-                except (TypeError, ValueError):
-                    errors[CONF_SCAN_INTERVAL] = "invalid_scan_interval"
-
-                enable_websocket = bool(user_input.get(CONF_ENABLE_WEBSOCKET, enable_websocket))
-                poll_when_websocket = bool(
-                    user_input.get(CONF_POLL_WHEN_WEBSOCKET, poll_when_websocket)
+            if errors:
+                return self.async_show_form(
+                    step_id="init",
+                    data_schema=self._build_options_schema(
+                        scan_interval,
+                        enable_websocket,
+                        poll_when_websocket,
+                    ),
+                    errors=errors,
                 )
 
-                if not errors:
-                    username = self.config_entry.data.get(CONF_USERNAME)
-                    password = self.config_entry.data.get(CONF_PASSWORD)
-                    if not username or not password:
-                        errors["base"] = "invalid_auth"
-                    else:
-                        location_response, _access_token, reason = await _fetch_locations_for_credentials(
-                            self.hass,
-                            username,
-                            password,
-                        )
-                        if reason or not location_response:
-                            errors["base"] = reason or "cannot_connect"
-                        elif home_id < 0 or home_id >= len(location_response):
-                            errors[CONF_HOME_ID] = "invalid_home_id"
-                        else:
-                            target_location_id = _normalize_location_id(
-                                location_response[home_id].get("locationId")
-                            )
-                            if self._is_duplicate_location(
-                                target_location_id,
-                                username,
-                                home_id,
-                            ):
-                                errors["base"] = "already_configured"
+            return self.async_create_entry(
+                title="",
+                data={
+                    CONF_SCAN_INTERVAL: scan_interval,
+                    CONF_ENABLE_WEBSOCKET: enable_websocket,
+                    CONF_POLL_WHEN_WEBSOCKET: poll_when_websocket,
+                },
+            )
 
-                if errors:
-                    return self.async_show_form(
-                        step_id="init",
-                        data_schema=self._build_options_schema(
-                            home_id,
-                            scan_interval,
-                            enable_websocket,
-                            poll_when_websocket,
-                        ),
-                        errors=errors,
-                    )
-
-                if target_location_id is not None:
-                    updated_data = dict(self.config_entry.data)
-                    updated_data[CONF_LOCATION_ID] = target_location_id
-                    self.hass.config_entries.async_update_entry(
-                        self.config_entry,
-                        data=updated_data,
-                        unique_id=target_location_id,
-                    )
-
-                user_input[CONF_HOME_ID] = home_id
-                user_input[CONF_SCAN_INTERVAL] = scan_interval
-                user_input[CONF_ENABLE_WEBSOCKET] = enable_websocket
-                user_input[CONF_POLL_WHEN_WEBSOCKET] = poll_when_websocket
-                _LOGGER.debug("Saving options: %s", dict(user_input))
-                return self.async_create_entry(title="", data=user_input)
-
-            _LOGGER.debug(
-                "Options values: home_id=%s, scan_interval=%s, enable_websocket=%s, "
-                "poll_when_websocket=%s",
-                home_id,
+        return self.async_show_form(
+            step_id="init",
+            data_schema=self._build_options_schema(
                 scan_interval,
                 enable_websocket,
                 poll_when_websocket,
-            )
-
-            return self.async_show_form(
-                step_id="init",
-                data_schema=self._build_options_schema(
-                    home_id,
-                    scan_interval,
-                    enable_websocket,
-                    poll_when_websocket,
-                ),
-            )
-        except Exception as err:
-            _LOGGER.error("Error in options flow: %s", err, exc_info=True)
-            return self.async_abort(reason="unknown")
+            ),
+        )

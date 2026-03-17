@@ -24,6 +24,7 @@ class HomelyAllBatteriesHealthySensor(CoordinatorEntity, BinarySensorEntity):
     """Binary sensor that is on when any battery reports low/defective."""
     def __init__(self, coordinator, location_name, location_id):
         super().__init__(coordinator)
+        self._attr_has_entity_name = True
         self._attr_name = AGGREGATE_SENSOR_NAME
         self._attr_unique_id = battery_problem_unique_id(location_id)
         self._attr_icon = "mdi:battery-alert"
@@ -41,11 +42,31 @@ class HomelyAllBatteriesHealthySensor(CoordinatorEntity, BinarySensorEntity):
         """Return True when any device reports battery issue."""
         data = self.coordinator.data or {}
         for device in data.get("devices", []):
-            battery = device.get("features", {}).get("battery", {}).get("states", {})
+            if not isinstance(device, dict):
+                continue
+
+            features = device.get("features", {})
+            if not isinstance(features, dict):
+                continue
+
+            battery_feature = features.get("battery", {})
+            if isinstance(battery_feature, dict):
+                battery = battery_feature.get("states", {})
+            else:
+                battery = {}
+            if not isinstance(battery, dict):
+                battery = {}
+
             battery_defect = battery.get("defect", {}).get("value")
             battery_low = battery.get("low", {}).get("value")
             # Some lock devices (e.g. Yale Doorman) report battery state under report.lowbat.
-            report_states = device.get("features", {}).get("report", {}).get("states", {})
+            report_feature = features.get("report", {})
+            if isinstance(report_feature, dict):
+                report_states = report_feature.get("states", {})
+            else:
+                report_states = {}
+            if not isinstance(report_states, dict):
+                report_states = {}
             report_low_battery = report_states.get("lowbat", {}).get("value")
             if _is_true(battery_defect) or _is_true(battery_low) or _is_true(report_low_battery):
                 return True

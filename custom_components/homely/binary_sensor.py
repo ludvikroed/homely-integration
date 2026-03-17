@@ -8,13 +8,16 @@ from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
+from .models import get_entry_runtime_data
 from .naming import (
-    build_entity_name,
     build_suggested_object_id,
     get_device_area,
     get_device_display_name,
+    humanize_label,
 )
 from .sensors.discover import discover_device_sensors, _get_value_by_path
+
+PARALLEL_UPDATES = 0
 
 
 def _coerce_bool(value: Any) -> bool | None:
@@ -38,8 +41,9 @@ def _coerce_bool(value: Any) -> bool | None:
 
 async def async_setup_entry(hass, entry, async_add_entities):
     """Set up binary sensor entities for Homely devices."""
-    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    data = coordinator.data or hass.data[DOMAIN][entry.entry_id].get("data") or {}
+    runtime_data = get_entry_runtime_data(entry)
+    coordinator = runtime_data.coordinator
+    data = coordinator.data or runtime_data.last_data or {}
     
     entities = []
 
@@ -58,7 +62,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
         entities.append(HomelyDeviceOnlineSensor(coordinator, device))
 
     # Legg til aggregert sensor for batterihelse (alle batterier OK)
-    location_id = hass.data[DOMAIN][entry.entry_id].get("location_id")
+    location_id = runtime_data.location_id
     location_name = (data or {}).get("name", "Location")
     try:
         from .all_batteries_healthy import HomelyAllBatteriesHealthySensor
@@ -73,15 +77,17 @@ class HomelyDeviceOnlineSensor(CoordinatorEntity, BinarySensorEntity):
     """Binary sensor for device online status."""
     def __init__(self, coordinator, device):
         super().__init__(coordinator)
+        self._attr_has_entity_name = True
         self._device_id = device.get("id")
         self._device_name = get_device_display_name(device)
-        self._attr_name = build_entity_name(device, "online")
+        self._attr_translation_key = "online"
         self._attr_unique_id = f"{self._device_id}_online"
         suggested_object_id = build_suggested_object_id(device, "online")
         if suggested_object_id:
             self._attr_suggested_object_id = suggested_object_id
         self._attr_icon = "mdi:lan-connect"
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self._attr_entity_registry_enabled_default = False
         self._attr_device_class = "connectivity"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, self._device_id)},
@@ -106,6 +112,7 @@ class HomelyBinarySensor(CoordinatorEntity, BinarySensorEntity):
     
     def __init__(self, coordinator, device, sensor_config):
         super().__init__(coordinator)
+        self._attr_has_entity_name = True
         self._device_id = device.get("id")
         self._path = sensor_config["path"]
         self._invert = bool(sensor_config.get("invert", False))
@@ -113,7 +120,11 @@ class HomelyBinarySensor(CoordinatorEntity, BinarySensorEntity):
         
         # Build entity name using resolved name
         sensor_name = sensor_config.get("resolved_name", sensor_config.get("name", "sensor"))
-        self._attr_name = build_entity_name(device, sensor_name)
+        translation_key = sensor_config.get("resolved_translation_key")
+        if translation_key:
+            self._attr_translation_key = translation_key
+        else:
+            self._attr_name = humanize_label(sensor_name)
         
         # Build unique ID from device suffix
         device_suffix = sensor_config.get("device_suffix", sensor_config["name"])
@@ -121,6 +132,9 @@ class HomelyBinarySensor(CoordinatorEntity, BinarySensorEntity):
         suggested_object_id = build_suggested_object_id(device, device_suffix)
         if suggested_object_id:
             self._attr_suggested_object_id = suggested_object_id
+        self._attr_entity_registry_enabled_default = bool(
+            sensor_config.get("enabled_default", True)
+        )
         
         # Set device class using resolved device class
         device_class = sensor_config.get("resolved_device_class")
