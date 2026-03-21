@@ -1,0 +1,36 @@
+from __future__ import annotations
+
+from collections.abc import Callable
+from typing import Any
+
+
+class HomelyWebSocket:
+    WEBSOCKET_URL: str
+    context_id: str | None
+    entry_id: str | None
+    location_id: str | int
+    token: str
+    socket: Any | None
+
+    def __init__(
+        self,
+        location_id: str | int,
+        token: str,
+        on_data_update: Callable[[dict[str, Any]], None],
+        status_update_callback: Callable[[str, str | None], None] | None = ...,
+        context_id: str | None = ...,
+        entry_id: str | None = ...,
+    ) -> None: ...
+    @property
+    def websocket_url(self) -> str: ...
+    @property
+    def status(self) -> str: ...
+    @property
+    def status_reason(self) -> str | None: ...
+    async def connect(self, from_reconnect_loop: bool = ...) -> bool: ...
+    async def connect_or_raise(self) -> None: ...
+    async def disconnect(self) -> None: ...
+    def is_connected(self) -> bool: ...
+    def update_token(self, token: str, reconnect_if_disconnected: bool = ...) -> None: ...
+    def set_token(self, token: str, reconnect_if_disconnected: bool = ...) -> None: ...
+    def request_reconnect(self, reason: str = ...) -> None: ...
