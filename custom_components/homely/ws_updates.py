@@ -1,4 +1,5 @@
 """Helpers for applying websocket events to cached Homely data."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -12,12 +13,23 @@ def _normalize_event_type(event_type: Any) -> str | None:
     return normalized or None
 
 
+def _ensure_nested_dict(parent: dict[str, Any], key: str) -> dict[str, Any]:
+    """Ensure a nested value exists and is a dict."""
+    existing = parent.get(key)
+    if isinstance(existing, dict):
+        return existing
+
+    created: dict[str, Any] = {}
+    parent[key] = created
+    return created
+
+
 def ensure_alarm_root(data_dict: dict[str, Any]) -> dict[str, Any]:
     """Ensure location alarm structure exists and return alarm state dict."""
-    features = data_dict.setdefault("features", {})
-    alarm_feature = features.setdefault("alarm", {})
-    states = alarm_feature.setdefault("states", {})
-    return states.setdefault("alarm", {})
+    features = _ensure_nested_dict(data_dict, "features")
+    alarm_feature = _ensure_nested_dict(features, "alarm")
+    states = _ensure_nested_dict(alarm_feature, "states")
+    return _ensure_nested_dict(states, "alarm")
 
 
 def apply_device_state_changes(
@@ -57,10 +69,10 @@ def apply_device_state_changes(
         value = change.get("value")
         last_updated = change.get("lastUpdated")
 
-        features = device.setdefault("features", {})
-        feature_dict = features.setdefault(feature, {})
-        states = feature_dict.setdefault("states", {})
-        state = states.setdefault(state_name, {})
+        features = _ensure_nested_dict(device, "features")
+        feature_dict = _ensure_nested_dict(features, str(feature))
+        states = _ensure_nested_dict(feature_dict, "states")
+        state = _ensure_nested_dict(states, str(state_name))
 
         old_value = state.get("value")
         state["value"] = value

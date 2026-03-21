@@ -1,7 +1,9 @@
 """Tests for config entry setup and cleanup."""
+
 from __future__ import annotations
 
 import logging
+import time
 from contextlib import ExitStack
 from copy import deepcopy
 from types import SimpleNamespace
@@ -12,7 +14,9 @@ from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
+from custom_components.homely import api
 from custom_components.homely import (
+    _cached_data_grace_seconds,
     _device_id_snapshot,
     _missing_location_issue_id,
     _log_startup_device_payloads,
@@ -103,8 +107,32 @@ def test_debug_redaction_and_device_snapshot_cover_defensive_branches():
     assert _redact_for_debug_logging([{"name": "Living room"}]) == [
         {"name": "**REDACTED**"}
     ]
+    assert _redact_for_debug_logging(
+        [
+            {
+                "gatewayId": "gw-1",
+                "rootLocationId": "loc-1",
+                "modelId": "model-1",
+                "userId": "user-1",
+            }
+        ]
+    ) == [
+        {
+            "gatewayId": "**REDACTED**",
+            "rootLocationId": "**REDACTED**",
+            "modelId": "**REDACTED**",
+            "userId": "**REDACTED**",
+        }
+    ]
     assert _device_id_snapshot(None) == set()
     assert _device_id_snapshot({"devices": {}}) == set()
+
+
+def test_cached_data_grace_seconds_stays_short_when_websocket_is_down():
+    """Cached polling data should expire quickly without websocket connectivity."""
+    assert _cached_data_grace_seconds(30) == 60
+    assert _cached_data_grace_seconds(120) == 120
+    assert _cached_data_grace_seconds(600) == 300
 
 
 async def _setup_loaded_entry(
@@ -215,7 +243,9 @@ async def test_async_setup_entry_missing_credentials_raises_auth_failed(hass):
         raise AssertionError("Expected ConfigEntryAuthFailed")
 
 
-async def test_async_setup_entry_missing_locations_raises_not_ready(hass, token_response):
+async def test_async_setup_entry_missing_locations_raises_not_ready(
+    hass, token_response
+):
     """Missing location data should mark the entry as not ready."""
     config_entry = build_config_entry()
     config_entry.add_to_hass(hass)
@@ -457,7 +487,9 @@ async def test_async_setup_entry_missing_location_payload_raises_not_ready(
             raise AssertionError("Expected ConfigEntryNotReady")
 
 
-async def test_async_remove_config_entry_device_only_allows_stale_devices(hass, location_data):
+async def test_async_remove_config_entry_device_only_allows_stale_devices(
+    hass, location_data
+):
     """Only stale Homely devices should be removable from the device registry."""
     config_entry = build_config_entry()
     config_entry.runtime_data = HomelyRuntimeData(
@@ -486,13 +518,26 @@ async def test_async_remove_config_entry_device_only_allows_stale_devices(hass, 
         id="foreign-device",
     )
 
-    assert await async_remove_config_entry_device(hass, config_entry, location_device) is False
-    assert await async_remove_config_entry_device(hass, config_entry, active_device) is False
-    assert await async_remove_config_entry_device(hass, config_entry, stale_device) is True
-    assert await async_remove_config_entry_device(hass, config_entry, foreign_device) is False
+    assert (
+        await async_remove_config_entry_device(hass, config_entry, location_device)
+        is False
+    )
+    assert (
+        await async_remove_config_entry_device(hass, config_entry, active_device)
+        is False
+    )
+    assert (
+        await async_remove_config_entry_device(hass, config_entry, stale_device) is True
+    )
+    assert (
+        await async_remove_config_entry_device(hass, config_entry, foreign_device)
+        is False
+    )
 
 
-async def test_async_unload_entry_disconnects_websocket_and_cleans_up(hass, location_data):
+async def test_async_unload_entry_disconnects_websocket_and_cleans_up(
+    hass, location_data
+):
     """Unload should disconnect websocket clients and remove runtime state."""
     config_entry = build_config_entry()
     fake_websocket = AsyncMock()
@@ -620,7 +665,9 @@ async def test_coordinator_update_method_skips_polling_when_websocket_connected(
         update_token=lambda token: None,
     )
 
-    with patch("custom_components.homely.get_data_with_status", AsyncMock()) as get_data_with_status:
+    with patch(
+        "custom_components.homely.get_data_with_status", AsyncMock()
+    ) as get_data_with_status:
         result = await runtime_data.coordinator.update_method()
 
     assert result == runtime_data.last_data
@@ -695,16 +742,21 @@ async def test_coordinator_update_method_logs_unavailable_once_and_back_once(
     assert runtime_data.api_available is True
 
     info_messages = [
-        record.getMessage() for record in caplog.records if record.levelno == logging.INFO
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.INFO
     ]
-    assert sum(
-        "Polling API request failed with transient status=503" in message
-        for message in info_messages
-    ) == 1
-    assert sum(
-        "Homely API is reachable again" in message
-        for message in info_messages
-    ) == 1
+    assert (
+        sum(
+            "Polling API request failed with transient status=503" in message
+            for message in info_messages
+        )
+        == 1
+    )
+    assert (
+        sum("Homely API is reachable again" in message for message in info_messages)
+        == 1
+    )
 
 
 async def test_websocket_debug_logging_redacts_event_payloads(
@@ -726,7 +778,9 @@ async def test_websocket_debug_logging_redacts_event_payloads(
         location_response,
         location_data,
         updated_location_data,
-        extra_patches=(patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),),
+        extra_patches=(
+            patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),
+        ),
     )
 
     ws = _FakeHomelyWebSocket.instances[0]
@@ -735,6 +789,9 @@ async def test_websocket_debug_logging_redacts_event_payloads(
         "data": {
             "deviceId": location_data["devices"][0]["id"],
             "name": location_data["devices"][0]["name"],
+            "gatewayId": "gw-1",
+            "rootLocationId": LOCATION_ID,
+            "modelId": "model-1",
             "change": {
                 "feature": "battery",
                 "stateName": "low",
@@ -746,10 +803,36 @@ async def test_websocket_debug_logging_redacts_event_payloads(
     with caplog.at_level(logging.DEBUG):
         ws.on_data_update(event)
 
-    joined = "\n".join(record.getMessage() for record in caplog.records)
+    websocket_messages = [
+        record.getMessage()
+        for record in caplog.records
+        if "WebSocket event payload" in record.getMessage()
+        or "Applied websocket device update" in record.getMessage()
+    ]
+    joined = "\n".join(websocket_messages)
     assert location_data["devices"][0]["id"] not in joined
     assert location_data["devices"][0]["name"] not in joined
+    assert LOCATION_ID not in joined
+    assert "gw-1" not in joined
+    assert "model-1" not in joined
     assert "**REDACTED**" in joined
+
+
+def test_debug_redaction_is_case_insensitive():
+    """Debug redaction should catch known identifier keys regardless of casing."""
+    payload = {
+        "GatewayID": "gw-1",
+        "RootLocationID": LOCATION_ID,
+        "ModelID": "model-1",
+        "nested": {"UserID": "user-1"},
+    }
+
+    assert _redact_for_debug_logging(payload) == {
+        "GatewayID": "**REDACTED**",
+        "RootLocationID": "**REDACTED**",
+        "ModelID": "**REDACTED**",
+        "nested": {"UserID": "**REDACTED**"},
+    }
 
 
 async def test_coordinator_update_method_reload_on_new_device_topology(
@@ -866,7 +949,9 @@ async def test_coordinator_update_method_refresh_auth_failure_raises(
     runtime_data.expires_at = 0
 
     with (
-        patch("custom_components.homely.fetch_refresh_token", AsyncMock(return_value=None)),
+        patch(
+            "custom_components.homely.fetch_refresh_token", AsyncMock(return_value=None)
+        ),
         patch(
             "custom_components.homely.fetch_token_with_reason",
             AsyncMock(return_value=(None, "invalid_auth")),
@@ -913,7 +998,9 @@ async def test_coordinator_update_method_refreshes_via_full_login_and_updates_we
     }
 
     with (
-        patch("custom_components.homely.fetch_refresh_token", AsyncMock(return_value=None)),
+        patch(
+            "custom_components.homely.fetch_refresh_token", AsyncMock(return_value=None)
+        ),
         patch(
             "custom_components.homely.fetch_token_with_reason",
             AsyncMock(return_value=(new_tokens, None)),
@@ -928,17 +1015,73 @@ async def test_coordinator_update_method_refreshes_via_full_login_and_updates_we
     assert result["alarmState"] == "ARMED_AWAY"
     assert runtime_data.access_token == "new-access-token"
     assert runtime_data.refresh_token == "new-refresh-token"
-    websocket.update_token.assert_called_once_with("new-access-token")
+    websocket.update_token.assert_called_once_with(
+        "new-access-token",
+        reconnect_if_disconnected=True,
+    )
 
 
-async def test_coordinator_update_method_refresh_fallback_non_auth_failure_raises_update_failed(
+async def test_coordinator_update_method_refresh_fallback_non_auth_failure_uses_cache(
     hass,
     token_response,
     location_response,
     location_data,
     updated_location_data,
+    caplog,
 ):
-    """Fallback login failures should raise UpdateFailed when auth is still valid."""
+    """Fallback login failures should keep cached data during transient outages."""
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+    runtime_data.expires_at = 0
+    runtime_data.websocket = SimpleNamespace(
+        is_connected=lambda: True,
+        status="Connected",
+        status_reason="ready",
+        update_token=MagicMock(),
+        disconnect=AsyncMock(),
+    )
+    runtime_data.last_data_activity_monotonic = time.monotonic() - 7200
+
+    with caplog.at_level(logging.WARNING):
+        with (
+            patch(
+                "custom_components.homely.fetch_refresh_token",
+                AsyncMock(return_value=None),
+            ),
+            patch(
+                "custom_components.homely.fetch_token_with_reason",
+                AsyncMock(return_value=(None, "cannot_connect")),
+            ),
+        ):
+            result = await runtime_data.coordinator.update_method()
+
+    assert result == runtime_data.last_data
+    assert runtime_data.api_available is False
+    assert runtime_data.ws_status == "Connected"
+    assert runtime_data.ws_status_reason == "ready"
+    joined = "\n".join(record.getMessage() for record in caplog.records)
+    assert "Fallback full login returned no token" in joined
+    assert "reason=cannot_connect" in joined
+    assert "websocket_connected=True" in joined
+
+
+async def test_coordinator_update_method_refresh_exception_uses_cache(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+    caplog,
+):
+    """Refresh request exceptions should keep cached data during network issues."""
     config_entry = build_config_entry()
     await _setup_loaded_entry(
         hass,
@@ -951,8 +1094,46 @@ async def test_coordinator_update_method_refresh_fallback_non_auth_failure_raise
     runtime_data = config_entry.runtime_data
     runtime_data.expires_at = 0
 
+    with caplog.at_level(logging.WARNING):
+        with patch(
+            "custom_components.homely.fetch_refresh_token",
+            AsyncMock(side_effect=RuntimeError("network down")),
+        ):
+            result = await runtime_data.coordinator.update_method()
+
+    assert result == runtime_data.last_data
+    assert runtime_data.api_available is False
+    assert "Token refresh request failed" in "\n".join(
+        record.getMessage() for record in caplog.records
+    )
+
+
+async def test_coordinator_update_method_marks_stale_cached_data_unavailable(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Stale cached data should stop masking failures when websocket is down."""
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+    runtime_data.expires_at = 0
+    runtime_data.websocket = None
+    runtime_data.last_data_activity_monotonic = time.monotonic() - 301
+
     with (
-        patch("custom_components.homely.fetch_refresh_token", AsyncMock(return_value=None)),
+        patch(
+            "custom_components.homely.fetch_refresh_token", AsyncMock(return_value=None)
+        ),
         patch(
             "custom_components.homely.fetch_token_with_reason",
             AsyncMock(return_value=(None, "cannot_connect")),
@@ -960,10 +1141,54 @@ async def test_coordinator_update_method_refresh_fallback_non_auth_failure_raise
     ):
         try:
             await runtime_data.coordinator.update_method()
-        except UpdateFailed:
-            pass
+        except UpdateFailed as err:
+            assert "Failed to refresh token and full login also failed" in str(err)
         else:
             raise AssertionError("Expected UpdateFailed")
+
+    assert runtime_data.api_available is False
+
+
+async def test_coordinator_update_method_invalid_refresh_payload_and_stale_cache_raises(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Invalid refresh payloads should not mask failures once websocket and cache are both dead."""
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+    runtime_data.expires_at = 0
+    runtime_data.websocket = None
+    runtime_data.last_data_activity_monotonic = time.monotonic() - 301
+
+    with (
+        patch(
+            "custom_components.homely.fetch_refresh_token",
+            AsyncMock(return_value={"access_token": "access-only"}),
+        ),
+        patch(
+            "custom_components.homely.fetch_token_with_reason",
+            AsyncMock(return_value=(None, "cannot_connect")),
+        ),
+    ):
+        try:
+            await runtime_data.coordinator.update_method()
+        except UpdateFailed as err:
+            assert "Failed to refresh token and full login also failed" in str(err)
+        else:
+            raise AssertionError("Expected UpdateFailed")
+
+    assert runtime_data.api_available is False
 
 
 async def test_coordinator_update_method_full_login_missing_fields_raises_update_failed(
@@ -987,7 +1212,9 @@ async def test_coordinator_update_method_full_login_missing_fields_raises_update
     runtime_data.expires_at = 0
 
     with (
-        patch("custom_components.homely.fetch_refresh_token", AsyncMock(return_value=None)),
+        patch(
+            "custom_components.homely.fetch_refresh_token", AsyncMock(return_value=None)
+        ),
         patch(
             "custom_components.homely.fetch_token_with_reason",
             AsyncMock(return_value=({"access_token": "new-access-token"}, None)),
@@ -1001,14 +1228,14 @@ async def test_coordinator_update_method_full_login_missing_fields_raises_update
             raise AssertionError("Expected UpdateFailed")
 
 
-async def test_coordinator_update_method_refresh_response_missing_fields_raises_update_failed(
+async def test_coordinator_update_method_refresh_response_missing_fields_falls_back_to_full_login(
     hass,
     token_response,
     location_response,
     location_data,
     updated_location_data,
 ):
-    """Broken refresh responses should fail with UpdateFailed."""
+    """Broken refresh responses should retry full login instead of failing hard."""
     config_entry = build_config_entry()
     await _setup_loaded_entry(
         hass,
@@ -1020,55 +1247,155 @@ async def test_coordinator_update_method_refresh_response_missing_fields_raises_
     )
     runtime_data = config_entry.runtime_data
     runtime_data.expires_at = 0
-
-    with patch(
-        "custom_components.homely.fetch_refresh_token",
-        AsyncMock(return_value={"access_token": "access-only"}),
-    ):
-        try:
-            await runtime_data.coordinator.update_method()
-        except UpdateFailed:
-            pass
-        else:
-            raise AssertionError("Expected UpdateFailed")
-
-
-async def test_coordinator_update_method_refresh_response_invalid_expires_raises_update_failed(
-    hass,
-    token_response,
-    location_response,
-    location_data,
-    updated_location_data,
-):
-    """Refresh responses with invalid expiry should fail."""
-    config_entry = build_config_entry()
-    await _setup_loaded_entry(
-        hass,
-        config_entry,
-        token_response,
-        location_response,
-        location_data,
-        updated_location_data,
+    websocket = SimpleNamespace(
+        is_connected=lambda: False,
+        status="Disconnected",
+        status_reason="stale token",
+        update_token=MagicMock(),
     )
-    runtime_data = config_entry.runtime_data
-    runtime_data.expires_at = 0
+    runtime_data.websocket = websocket
+    new_tokens = {
+        "access_token": "new-access-token",
+        "refresh_token": "new-refresh-token",
+        "expires_in": 3600,
+    }
 
-    with patch(
-        "custom_components.homely.fetch_refresh_token",
-        AsyncMock(
-            return_value={
-                "access_token": "new-access-token",
-                "refresh_token": "new-refresh-token",
-                "expires_in": "bad",
-            }
+    with (
+        patch(
+            "custom_components.homely.fetch_refresh_token",
+            AsyncMock(return_value={"access_token": "access-only"}),
+        ),
+        patch(
+            "custom_components.homely.fetch_token_with_reason",
+            AsyncMock(return_value=(new_tokens, None)),
+        ),
+        patch(
+            "custom_components.homely.get_data_with_status",
+            AsyncMock(return_value=(updated_location_data, 200)),
         ),
     ):
-        try:
-            await runtime_data.coordinator.update_method()
-        except UpdateFailed:
-            pass
-        else:
-            raise AssertionError("Expected UpdateFailed")
+        result = await runtime_data.coordinator.update_method()
+
+    assert result["alarmState"] == "ARMED_AWAY"
+    assert runtime_data.access_token == "new-access-token"
+    assert runtime_data.refresh_token == "new-refresh-token"
+    websocket.update_token.assert_called_once_with(
+        "new-access-token",
+        reconnect_if_disconnected=True,
+    )
+
+
+async def test_coordinator_update_method_refresh_response_invalid_expires_uses_cache(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+    caplog,
+):
+    """Invalid refresh expiry should use the same cache fallback as other refresh failures."""
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+    runtime_data.expires_at = 0
+    runtime_data.websocket = SimpleNamespace(
+        is_connected=lambda: True,
+        status="Connected",
+        status_reason="ready",
+        update_token=MagicMock(),
+    )
+
+    with caplog.at_level(logging.WARNING):
+        with (
+            patch(
+                "custom_components.homely.fetch_refresh_token",
+                AsyncMock(
+                    return_value={
+                        "access_token": "new-access-token",
+                        "refresh_token": "new-refresh-token",
+                        "expires_in": "bad",
+                    }
+                ),
+            ),
+            patch(
+                "custom_components.homely.fetch_token_with_reason",
+                AsyncMock(return_value=(None, "cannot_connect")),
+            ),
+        ):
+            result = await runtime_data.coordinator.update_method()
+
+    assert result == runtime_data.last_data
+    assert runtime_data.api_available is False
+    joined = "\n".join(record.getMessage() for record in caplog.records)
+    assert "Fallback full login returned no token" in joined
+    assert "invalid_expires_in" in joined
+
+
+async def test_coordinator_update_method_logs_refresh_failure_detail_and_body_preview(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+    caplog,
+):
+    """Refresh failure logs should keep structured SDK diagnostics visible."""
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+    runtime_data.expires_at = 0
+    runtime_data.websocket = SimpleNamespace(
+        is_connected=lambda: True,
+        status="Connected",
+        status_reason="ready",
+        update_token=MagicMock(),
+        disconnect=AsyncMock(),
+    )
+    refresh_snapshot = api.RefreshTokenResult(
+        response=None,
+        reason="invalid_payload",
+        status=200,
+        detail="missing access_token or expires_in",
+        body_preview="{'access_token': 'token'}",
+    )
+
+    with caplog.at_level(logging.WARNING):
+        with (
+            patch(
+                "custom_components.homely.fetch_refresh_token",
+                AsyncMock(return_value=None),
+            ),
+            patch(
+                "custom_components.homely.get_last_refresh_token_result",
+                return_value=refresh_snapshot,
+            ),
+            patch(
+                "custom_components.homely.fetch_token_with_reason",
+                AsyncMock(return_value=(None, "cannot_connect")),
+            ),
+        ):
+            result = await runtime_data.coordinator.update_method()
+
+    assert result == runtime_data.last_data
+    joined = "\n".join(record.getMessage() for record in caplog.records)
+    assert "reason=invalid_payload" in joined
+    assert "detail=missing access_token or expires_in" in joined
+    assert "body_preview=" in joined
+    assert "{'access_token': 'token'}" in joined
 
 
 async def test_coordinator_update_method_refreshes_token_in_place(
@@ -1119,7 +1446,67 @@ async def test_coordinator_update_method_refreshes_token_in_place(
     assert result["alarmState"] == "ARMED_AWAY"
     assert runtime_data.access_token == "refreshed-access-token"
     assert runtime_data.refresh_token == "refreshed-refresh-token"
-    websocket.update_token.assert_called_once_with("refreshed-access-token")
+    websocket.update_token.assert_called_once_with(
+        "refreshed-access-token",
+        reconnect_if_disconnected=True,
+    )
+
+
+async def test_coordinator_update_method_refreshes_token_with_legacy_websocket_api(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Legacy websocket clients without reconnect kwargs should still be updated."""
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+    runtime_data.expires_at = 0
+
+    class _LegacyWebSocket:
+        def __init__(self) -> None:
+            self.tokens: list[str] = []
+            self.status = "Disconnected"
+            self.status_reason = "expired token"
+
+        def is_connected(self) -> bool:
+            return False
+
+        def update_token(self, token: str) -> None:
+            self.tokens.append(token)
+
+    websocket = _LegacyWebSocket()
+    runtime_data.websocket = websocket
+
+    with (
+        patch(
+            "custom_components.homely.fetch_refresh_token",
+            AsyncMock(
+                return_value={
+                    "access_token": "legacy-access-token",
+                    "refresh_token": "legacy-refresh-token",
+                    "expires_in": 1800,
+                }
+            ),
+        ),
+        patch(
+            "custom_components.homely.get_data_with_status",
+            AsyncMock(return_value=(updated_location_data, 200)),
+        ),
+    ):
+        result = await runtime_data.coordinator.update_method()
+
+    assert result["alarmState"] == "ARMED_AWAY"
+    assert websocket.tokens == ["legacy-access-token"]
 
 
 async def test_coordinator_update_method_full_login_invalid_expires_raises_update_failed(
@@ -1143,7 +1530,9 @@ async def test_coordinator_update_method_full_login_invalid_expires_raises_updat
     runtime_data.expires_at = 0
 
     with (
-        patch("custom_components.homely.fetch_refresh_token", AsyncMock(return_value=None)),
+        patch(
+            "custom_components.homely.fetch_refresh_token", AsyncMock(return_value=None)
+        ),
         patch(
             "custom_components.homely.fetch_token_with_reason",
             AsyncMock(
@@ -1197,14 +1586,14 @@ async def test_coordinator_update_method_http_401_raises_auth_failed(
             raise AssertionError("Expected ConfigEntryAuthFailed")
 
 
-async def test_coordinator_update_method_wraps_unexpected_poll_exception(
+async def test_coordinator_update_method_uses_cache_on_unexpected_poll_exception(
     hass,
     token_response,
     location_response,
     location_data,
     updated_location_data,
 ):
-    """Unexpected API exceptions should be wrapped in UpdateFailed."""
+    """Unexpected polling exceptions should fall back to cached data when possible."""
     config_entry = build_config_entry()
     await _setup_loaded_entry(
         hass,
@@ -1215,6 +1604,36 @@ async def test_coordinator_update_method_wraps_unexpected_poll_exception(
         updated_location_data,
     )
     runtime_data = config_entry.runtime_data
+
+    with patch(
+        "custom_components.homely.get_data_with_status",
+        AsyncMock(side_effect=RuntimeError("boom")),
+    ):
+        result = await runtime_data.coordinator.update_method()
+
+    assert result == runtime_data.last_data
+    assert runtime_data.api_available is False
+
+
+async def test_coordinator_update_method_wraps_unexpected_poll_exception_without_cache(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Unexpected polling exceptions should still fail if no cache exists."""
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+    runtime_data.last_data = {}
 
     with patch(
         "custom_components.homely.get_data_with_status",
@@ -1320,10 +1739,7 @@ async def test_coordinator_update_method_keeps_cached_alarm_if_api_omits_it(
         result = await runtime_data.coordinator.update_method()
 
     assert result["alarmState"] == "ARM_PENDING"
-    assert (
-        result["features"]["alarm"]["states"]["alarm"]["value"]
-        == "ARM_PENDING"
-    )
+    assert result["features"]["alarm"]["states"]["alarm"]["value"] == "ARM_PENDING"
 
 
 async def test_async_reload_entry_calls_reload(hass):
@@ -1388,6 +1804,8 @@ async def test_async_setup_entry_websocket_callbacks_update_runtime_and_listener
     runtime_data.coordinator.async_update_listeners.assert_called()
     runtime_data.coordinator.async_request_refresh.assert_awaited_once()
 
+    runtime_data.last_data_activity_monotonic = 0
+
     ws.on_data_update(
         {
             "type": "alarm-state-changed",
@@ -1395,6 +1813,7 @@ async def test_async_setup_entry_websocket_callbacks_update_runtime_and_listener
         }
     )
     assert runtime_data.last_data["alarmState"] == "ARMED_AWAY"
+    assert runtime_data.last_data_activity_monotonic > 0
 
     ws.on_data_update(
         {
@@ -1410,7 +1829,9 @@ async def test_async_setup_entry_websocket_callbacks_update_runtime_and_listener
         }
     )
     assert (
-        runtime_data.last_data["devices"][0]["features"]["battery"]["states"]["low"]["value"]
+        runtime_data.last_data["devices"][0]["features"]["battery"]["states"]["low"][
+            "value"
+        ]
         is True
     )
 
@@ -1476,8 +1897,12 @@ async def test_async_setup_entry_websocket_status_callback_tolerates_listener_fa
 
     runtime_data = config_entry.runtime_data
     ws = _FakeHomelyWebSocket.instances[0]
-    runtime_data.ws_status_listeners.append(MagicMock(side_effect=RuntimeError("bad listener")))
-    runtime_data.coordinator.async_update_listeners = MagicMock(side_effect=RuntimeError("bad coordinator"))
+    runtime_data.ws_status_listeners.append(
+        MagicMock(side_effect=RuntimeError("bad listener"))
+    )
+    runtime_data.coordinator.async_update_listeners = MagicMock(
+        side_effect=RuntimeError("bad coordinator")
+    )
 
     with patch.object(hass.loop, "call_soon_threadsafe", side_effect=lambda cb: cb()):
         ws.status_update_callback("Connected", "event received")
@@ -1508,13 +1933,17 @@ async def test_async_setup_entry_websocket_disconnect_refresh_request_failure_is
         location_response,
         location_data,
         updated_location_data,
-        extra_patches=(patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),),
+        extra_patches=(
+            patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),
+        ),
     )
 
     runtime_data = config_entry.runtime_data
     ws = _FakeHomelyWebSocket.instances[0]
     runtime_data.coordinator.async_update_listeners = MagicMock()
-    runtime_data.coordinator.async_request_refresh = MagicMock(side_effect=RuntimeError("refresh boom"))
+    runtime_data.coordinator.async_request_refresh = MagicMock(
+        side_effect=RuntimeError("refresh boom")
+    )
     with patch.object(hass.loop, "call_soon_threadsafe", side_effect=lambda cb: cb()):
         ws.status_update_callback("Disconnected", "network error: boom")
 
@@ -1543,7 +1972,9 @@ async def test_async_setup_entry_websocket_status_callback_tolerates_dispatch_fa
     )
 
     ws = _FakeHomelyWebSocket.instances[0]
-    with patch.object(hass.loop, "call_soon_threadsafe", side_effect=RuntimeError("schedule failed")):
+    with patch.object(
+        hass.loop, "call_soon_threadsafe", side_effect=RuntimeError("schedule failed")
+    ):
         ws.status_update_callback("Connected", "event received")
 
 
@@ -1575,7 +2006,9 @@ async def test_async_setup_entry_websocket_callback_handles_apply_failures(
         "custom_components.homely.apply_websocket_event_to_data",
         side_effect=RuntimeError("boom"),
     ):
-        ws.on_data_update({"type": "device-state-changed", "data": {"deviceId": "dev-1"}})
+        ws.on_data_update(
+            {"type": "device-state-changed", "data": {"deviceId": "dev-1"}}
+        )
 
 
 async def test_async_setup_entry_websocket_callback_handles_no_direct_device_changes(
@@ -1617,6 +2050,61 @@ async def test_async_setup_entry_websocket_callback_handles_no_direct_device_cha
     runtime_data.coordinator.async_update_listeners.assert_not_called()
 
 
+async def test_async_setup_entry_ignores_stale_websocket_callbacks_after_runtime_replacement(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Old websocket callbacks should not mutate a replacement runtime object."""
+    _FakeHomelyWebSocket.reset()
+    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: True})
+
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+        extra_patches=(
+            patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),
+        ),
+    )
+
+    original_runtime = config_entry.runtime_data
+    replacement_runtime = HomelyRuntimeData(
+        coordinator=original_runtime.coordinator,
+        access_token=original_runtime.access_token,
+        refresh_token=original_runtime.refresh_token,
+        expires_at=original_runtime.expires_at,
+        location_id=original_runtime.location_id,
+        last_data=deepcopy(original_runtime.last_data),
+        tracked_device_ids=set(original_runtime.tracked_device_ids),
+    )
+    config_entry.runtime_data = replacement_runtime
+
+    ws = _FakeHomelyWebSocket.instances[0]
+    with patch(
+        "custom_components.homely.apply_websocket_event_to_data",
+        return_value={
+            "event_type": "alarm-state-changed",
+            "updated": True,
+            "alarm_state": "TRIGGERED",
+        },
+    ) as apply_event:
+        ws.on_data_update({"type": "alarm-state-changed"})
+        await hass.async_block_till_done()
+
+    ws.status_update_callback("Disconnected", "stale callback")
+    await hass.async_block_till_done()
+
+    apply_event.assert_not_called()
+    assert replacement_runtime.last_data == original_runtime.last_data
+    assert replacement_runtime.ws_status == "Not initialized"
+
+
 async def test_async_setup_entry_websocket_constructor_errors_are_swallowed(
     hass,
     token_response,
@@ -1635,7 +2123,10 @@ async def test_async_setup_entry_websocket_constructor_errors_are_swallowed(
         location_data,
         updated_location_data,
         extra_patches=(
-            patch("custom_components.homely.HomelyWebSocket", side_effect=RuntimeError("boom")),
+            patch(
+                "custom_components.homely.HomelyWebSocket",
+                side_effect=RuntimeError("boom"),
+            ),
         ),
     )
 
@@ -1660,7 +2151,10 @@ async def test_async_setup_entry_websocket_key_error_is_swallowed(
         location_data,
         updated_location_data,
         extra_patches=(
-            patch("custom_components.homely.HomelyWebSocket", side_effect=KeyError("missing")),
+            patch(
+                "custom_components.homely.HomelyWebSocket",
+                side_effect=KeyError("missing"),
+            ),
         ),
     )
 
@@ -1687,7 +2181,9 @@ async def test_async_setup_entry_tolerates_internet_listener_registration_error(
         updated_location_data,
         extra_patches=(
             patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),
-            patch.object(type(hass.bus), "async_listen", side_effect=RuntimeError("no bus")),
+            patch.object(
+                type(hass.bus), "async_listen", side_effect=RuntimeError("no bus")
+            ),
         ),
     )
 
@@ -1712,7 +2208,9 @@ async def test_async_setup_entry_internet_available_callback_swallows_reconnect_
         location_response,
         location_data,
         updated_location_data,
-        extra_patches=(patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),),
+        extra_patches=(
+            patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),
+        ),
     )
 
     ws = _FakeHomelyWebSocket.instances[0]

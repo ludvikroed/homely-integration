@@ -25,20 +25,25 @@ def _wh_to_kwh(value: Any) -> float | Any:
     return round(numeric / 1000, 3)
 
 
-# All available sensors that can be discovered and created
-# Structure matches the haugeSander Homely addon
-SENSORS = [
+# Sensor definitions grouped by feature type.
+SENSORS: list[dict[str, Any]] = [
     # Alarm sensors
     {
         "path": "features.alarm.states.alarm.value",
         "format": "boolean",
         "type": "binary_sensor",
         "name": "alarm",
-        "get_translation_key": lambda device: "motion" if "motion" in device.get("modelName", "").lower() else "contact",
+        "get_translation_key": lambda device: (
+            "motion" if "motion" in device.get("modelName", "").lower() else "contact"
+        ),
         "device_class": "door",
         "device_suffix": "alarm",
-        "get_name": lambda device: "motion" if "motion" in device.get("modelName", "").lower() else "contact",
-        "get_device_class": lambda device: "motion" if "motion" in device.get("modelName", "").lower() else "door",
+        "get_name": lambda device: (
+            "motion" if "motion" in device.get("modelName", "").lower() else "contact"
+        ),
+        "get_device_class": lambda device: (
+            "motion" if "motion" in device.get("modelName", "").lower() else "door"
+        ),
     },
     {
         "path": "features.alarm.states.fire.value",

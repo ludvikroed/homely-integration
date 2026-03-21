@@ -1,4 +1,5 @@
 """Tests for sensor platform behavior."""
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -27,10 +28,13 @@ def test_sensor_entity_reads_transformed_values(location_data):
     """Sensor entities should expose transformed runtime values."""
     coordinator = MagicMock()
     coordinator.data = location_data
+    coordinator.last_update_success = True
 
     han_device = location_data["devices"][4]
     discovered = discover_device_sensors(han_device)
-    consumption = next(sensor for sensor in discovered if sensor["device_suffix"] == "consumption")
+    consumption = next(
+        sensor for sensor in discovered if sensor["device_suffix"] == "consumption"
+    )
     entity = HomelySensor(coordinator, han_device, consumption)
 
     assert entity.native_value == 769.67
@@ -40,6 +44,7 @@ def test_sensor_entity_returns_raw_value_without_transform(location_data):
     """Sensors without transforms should return the raw state value."""
     coordinator = MagicMock()
     coordinator.data = location_data
+    coordinator.last_update_success = True
 
     motion_device = location_data["devices"][0]
     sensor_config = {
@@ -52,15 +57,24 @@ def test_sensor_entity_returns_raw_value_without_transform(location_data):
     assert entity.native_value == 21.8
 
 
-def test_sensor_entity_uses_diagnostic_defaults_and_correct_link_quality_unit(location_data):
+def test_sensor_entity_uses_diagnostic_defaults_and_correct_link_quality_unit(
+    location_data,
+):
     """Diagnostic sensors should avoid UI spam and use correct units."""
     coordinator = MagicMock()
     coordinator.data = location_data
+    coordinator.last_update_success = True
 
     motion_device = location_data["devices"][0]
     discovered = discover_device_sensors(motion_device)
-    link_quality = next(sensor for sensor in discovered if sensor["device_suffix"] == "networklinkstrength")
-    battery_voltage = next(sensor for sensor in discovered if sensor["device_suffix"] == "battery_voltage")
+    link_quality = next(
+        sensor
+        for sensor in discovered
+        if sensor["device_suffix"] == "networklinkstrength"
+    )
+    battery_voltage = next(
+        sensor for sensor in discovered if sensor["device_suffix"] == "battery_voltage"
+    )
 
     link_quality_entity = HomelySensor(coordinator, motion_device, link_quality)
     battery_voltage_entity = HomelySensor(coordinator, motion_device, battery_voltage)
@@ -74,6 +88,7 @@ def test_sensor_entity_handles_transform_errors_gracefully(location_data):
     """Broken transforms should fall back to raw values instead of crashing."""
     coordinator = MagicMock()
     coordinator.data = location_data
+    coordinator.last_update_success = True
     motion_device = location_data["devices"][0]
     sensor_config = {
         "path": "features.temperature.states.temperature.value",
@@ -90,6 +105,7 @@ def test_sensor_entity_handles_missing_devices_and_type_errors(location_data):
     """Sensors should handle missing devices and transform type errors safely."""
     coordinator = MagicMock()
     coordinator.data = location_data
+    coordinator.last_update_success = True
     motion_device = location_data["devices"][0]
     sensor_config = {
         "path": "features.temperature.states.temperature.value",
@@ -102,13 +118,35 @@ def test_sensor_entity_handles_missing_devices_and_type_errors(location_data):
     assert entity.native_value == 21.8
 
     coordinator.data = {"devices": []}
+    assert entity.available is False
     assert entity.native_value is None
+
+
+def test_sensor_entity_becomes_unavailable_when_device_is_offline(location_data):
+    """Device-bound sensors should be unavailable when the device is offline."""
+    coordinator = MagicMock()
+    coordinator.data = location_data
+    coordinator.last_update_success = True
+
+    motion_device = location_data["devices"][0]
+    sensor_config = {
+        "path": "features.temperature.states.temperature.value",
+        "name": "temperature",
+        "device_suffix": "temperature",
+    }
+    entity = HomelySensor(coordinator, motion_device, sensor_config)
+
+    assert entity.available is True
+
+    coordinator.data["devices"][0]["online"] = False
+    assert entity.available is False
 
 
 def test_sensor_entity_supports_config_category(location_data):
     """Config-category sensors should map to the proper HA entity category."""
     coordinator = MagicMock()
     coordinator.data = location_data
+    coordinator.last_update_success = True
     motion_device = location_data["devices"][0]
     sensor_config = {
         "path": "features.alarm.states.sensitivitylevel.value",
@@ -136,7 +174,9 @@ def test_websocket_status_sensor_uses_runtime_data(hass, location_data):
     )
     config_entry.runtime_data = runtime_data
 
-    entity = HomelyWebSocketStatusSensor(runtime_data.coordinator, hass, config_entry, LOCATION_ID)
+    entity = HomelyWebSocketStatusSensor(
+        runtime_data.coordinator, hass, config_entry, LOCATION_ID
+    )
     assert entity.native_value == "Connected"
     assert entity.extra_state_attributes == {"reason": "event received"}
     assert entity.entity_registry_enabled_default is False
@@ -170,13 +210,17 @@ def test_websocket_status_sensor_reports_disabled_when_websocket_is_off(
     )
     config_entry.runtime_data = runtime_data
 
-    entity = HomelyWebSocketStatusSensor(runtime_data.coordinator, hass, config_entry, LOCATION_ID)
+    entity = HomelyWebSocketStatusSensor(
+        runtime_data.coordinator, hass, config_entry, LOCATION_ID
+    )
 
     assert entity.native_value == "Disabled"
     assert "Disabled" in entity.options
 
 
-async def test_sensor_async_setup_entry_creates_ws_status_and_device_sensors(hass, location_data):
+async def test_sensor_async_setup_entry_creates_ws_status_and_device_sensors(
+    hass, location_data
+):
     """Sensor platform setup should create status sensor and discovered sensors."""
     config_entry = build_config_entry()
     config_entry.runtime_data = HomelyRuntimeData(
@@ -197,7 +241,49 @@ async def test_sensor_async_setup_entry_creates_ws_status_and_device_sensors(has
     assert "1d6d0206-bfcc-4c8b-83f1-c23d7270fe9f_consumption" in unique_ids
 
 
-async def test_websocket_status_sensor_registers_and_unregisters_listeners(hass, location_data):
+async def test_sensor_async_setup_entry_handles_sparse_device_lists(
+    hass, location_data
+):
+    """Sensor setup should ignore malformed device collections gracefully."""
+    config_entry = build_config_entry()
+    config_entry.runtime_data = HomelyRuntimeData(
+        coordinator=SimpleNamespace(data={"name": "JF23", "devices": {}}),
+        access_token="access",
+        refresh_token="refresh",
+        expires_at=0,
+        location_id=LOCATION_ID,
+        last_data={"name": "JF23", "devices": {}},
+    )
+    collected = []
+
+    await async_setup_entry(hass, config_entry, collected.extend)
+
+    assert [entity.unique_id for entity in collected] == [
+        f"location_{LOCATION_ID}_websocket_status"
+    ]
+
+    config_entry.runtime_data = HomelyRuntimeData(
+        coordinator=SimpleNamespace(
+            data={"name": "JF23", "devices": ["broken", location_data["devices"][0]]}
+        ),
+        access_token="access",
+        refresh_token="refresh",
+        expires_at=0,
+        location_id=LOCATION_ID,
+        last_data={"name": "JF23", "devices": ["broken", location_data["devices"][0]]},
+    )
+    collected = []
+
+    await async_setup_entry(hass, config_entry, collected.extend)
+
+    unique_ids = {entity.unique_id for entity in collected}
+    assert f"location_{LOCATION_ID}_websocket_status" in unique_ids
+    assert "70b9db72-5c00-4316-9ffa-ac7bf60fcb47_temperature" in unique_ids
+
+
+async def test_websocket_status_sensor_registers_and_unregisters_listeners(
+    hass, location_data
+):
     """Status sensor should manage listener lifecycle cleanly."""
     config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: True})
     runtime_data = HomelyRuntimeData(
@@ -209,11 +295,19 @@ async def test_websocket_status_sensor_registers_and_unregisters_listeners(hass,
         last_data=location_data,
     )
     config_entry.runtime_data = runtime_data
-    entity = HomelyWebSocketStatusSensor(runtime_data.coordinator, hass, config_entry, LOCATION_ID)
+    entity = HomelyWebSocketStatusSensor(
+        runtime_data.coordinator, hass, config_entry, LOCATION_ID
+    )
 
     with (
-        patch.object(CoordinatorEntity, "async_added_to_hass", AsyncMock(return_value=None)),
-        patch.object(CoordinatorEntity, "async_will_remove_from_hass", AsyncMock(return_value=None)),
+        patch.object(
+            CoordinatorEntity, "async_added_to_hass", AsyncMock(return_value=None)
+        ),
+        patch.object(
+            CoordinatorEntity,
+            "async_will_remove_from_hass",
+            AsyncMock(return_value=None),
+        ),
         patch.object(entity, "async_schedule_update_ha_state"),
     ):
         await entity.async_added_to_hass()
@@ -222,7 +316,9 @@ async def test_websocket_status_sensor_registers_and_unregisters_listeners(hass,
         assert runtime_data.ws_status_listeners == []
 
 
-async def test_websocket_status_sensor_listener_triggers_state_update(hass, location_data):
+async def test_websocket_status_sensor_listener_triggers_state_update(
+    hass, location_data
+):
     """Registered websocket status listeners should schedule state writes."""
     config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: True})
     runtime_data = HomelyRuntimeData(
@@ -234,12 +330,16 @@ async def test_websocket_status_sensor_listener_triggers_state_update(hass, loca
         last_data=location_data,
     )
     config_entry.runtime_data = runtime_data
-    entity = HomelyWebSocketStatusSensor(runtime_data.coordinator, hass, config_entry, LOCATION_ID)
+    entity = HomelyWebSocketStatusSensor(
+        runtime_data.coordinator, hass, config_entry, LOCATION_ID
+    )
     entity.hass = hass
     entity.entity_id = "sensor.test"
 
     with (
-        patch.object(CoordinatorEntity, "async_added_to_hass", AsyncMock(return_value=None)),
+        patch.object(
+            CoordinatorEntity, "async_added_to_hass", AsyncMock(return_value=None)
+        ),
         patch.object(entity, "async_schedule_update_ha_state") as schedule_mock,
     ):
         await entity.async_added_to_hass()
@@ -248,7 +348,9 @@ async def test_websocket_status_sensor_listener_triggers_state_update(hass, loca
     assert schedule_mock.call_count >= 2
 
 
-async def test_websocket_status_sensor_handles_missing_listener_storage(hass, location_data):
+async def test_websocket_status_sensor_handles_missing_listener_storage(
+    hass, location_data
+):
     """Broken runtime listener storage should not crash add/remove hooks."""
     config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: True})
     runtime_data = HomelyRuntimeData(
@@ -260,12 +362,20 @@ async def test_websocket_status_sensor_handles_missing_listener_storage(hass, lo
         last_data=location_data,
     )
     config_entry.runtime_data = runtime_data
-    entity = HomelyWebSocketStatusSensor(runtime_data.coordinator, hass, config_entry, LOCATION_ID)
+    entity = HomelyWebSocketStatusSensor(
+        runtime_data.coordinator, hass, config_entry, LOCATION_ID
+    )
     entity._runtime_data = SimpleNamespace(ws_status="Connected")
 
     with (
-        patch.object(CoordinatorEntity, "async_added_to_hass", AsyncMock(return_value=None)),
-        patch.object(CoordinatorEntity, "async_will_remove_from_hass", AsyncMock(return_value=None)),
+        patch.object(
+            CoordinatorEntity, "async_added_to_hass", AsyncMock(return_value=None)
+        ),
+        patch.object(
+            CoordinatorEntity,
+            "async_will_remove_from_hass",
+            AsyncMock(return_value=None),
+        ),
     ):
         await entity.async_added_to_hass()
         await entity.async_will_remove_from_hass()
@@ -283,7 +393,9 @@ def test_websocket_status_sensor_handles_unknown_runtime_state(hass, location_da
         last_data=location_data,
     )
     config_entry.runtime_data = runtime_data
-    entity = HomelyWebSocketStatusSensor(runtime_data.coordinator, hass, config_entry, LOCATION_ID)
+    entity = HomelyWebSocketStatusSensor(
+        runtime_data.coordinator, hass, config_entry, LOCATION_ID
+    )
 
     entity._runtime_data = SimpleNamespace()
     assert entity.native_value == "Unknown"

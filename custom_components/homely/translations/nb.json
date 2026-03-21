@@ -1,0 +1,167 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Sett opp Homely Alarm",
+        "description": "Skriv inn e-postadresse og passord for Homely nedenfor.",
+        "data": {
+          "username": "E-postadresse",
+          "password": "Passord"
+        }
+      },
+      "select_location": {
+        "title": "Velg hjem",
+        "description": "Velg hvilket hjem i Homely som skal legges til.",
+        "data": {
+          "location_id": "Hjem"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Koble til Homely på nytt",
+        "description": "Oppdater e-postadresse og passord for Homely.",
+        "data": {
+          "username": "E-postadresse",
+          "password": "Passord"
+        }
+      },
+      "reconfigure": {
+        "title": "Velg hjem",
+        "description": "Velg et annet hjem i Homely for denne integrasjonsoppføringen.",
+        "data": {
+          "location_id": "Hjem"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Kunne ikke koble til Homely akkurat nå. Sjekk internettforbindelsen og prøv igjen.",
+      "invalid_auth": "Feil brukernavn eller passord.",
+      "invalid_location": "Det valgte hjemmet er ikke gyldig for denne kontoen.",
+      "invalid_scan_interval": "Oppdateringsintervallet må være 30 sekunder eller høyere.",
+      "no_homes": "Fant ingen hjem på denne kontoen.",
+      "unknown": "Det oppstod en uventet feil"
+    },
+    "abort": {
+      "already_configured": "Dette hjemmet er allerede konfigurert",
+      "cannot_connect": "Kunne ikke koble til Homely akkurat nå. Sjekk internettforbindelsen og prøv igjen.",
+      "cannot_reconfigure": "Home Assistant klarte ikke å bytte denne oppføringen til det valgte hjemmet.",
+      "no_homes": "Fant ingen hjem på denne kontoen.",
+      "reauth_required": "Du må oppdatere e-postadresse og passord for Homely før du kan bytte hjem.",
+      "reauth_successful": "Påloggingen ble oppdatert",
+      "reconfigure_successful": "Oppsettet ble oppdatert"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Avanserte innstillinger",
+        "description": "Velg hvordan Homely Alarm-integrasjonen skal oppdateres.",
+        "data": {
+          "scan_interval": "Oppdateringsintervall (sekunder, minimum 30)",
+          "enable_websocket": "Aktiver WebSocket for sanntidsoppdateringer",
+          "poll_when_websocket": "Bruk polling også når WebSocket er tilkoblet"
+        }
+      }
+    },
+    "error": {
+      "invalid_scan_interval": "Oppdateringsintervallet må være 30 sekunder eller høyere.",
+      "no_homes": "Fant ingen hjem på denne kontoen.",
+      "unknown": "Det oppstod en uventet feil"
+    }
+  },
+  "issues": {
+    "configured_location_missing": {
+      "title": "Det konfigurerte hjemmet i Homely er ikke lenger tilgjengelig",
+      "fix_flow": {
+        "abort": {
+          "already_configured": "Dette hjemmet er allerede konfigurert",
+          "cannot_reconfigure": "Home Assistant klarte ikke å bytte denne oppføringen til det valgte hjemmet.",
+          "reauth_required": "Du må oppdatere e-postadresse og passord for Homely før du kan bytte hjem."
+        },
+        "error": {
+          "cannot_connect": "Kunne ikke koble til Homely akkurat nå. Sjekk internettforbindelsen og prøv igjen.",
+          "invalid_location": "Det valgte hjemmet er ikke gyldig for denne kontoen.",
+          "no_homes": "Fant ingen hjem på denne kontoen."
+        },
+        "step": {
+          "select_location": {
+            "title": "Velg hjem",
+            "description": "Det konfigurerte hjemmet i Homely for {entry_title} er ikke lenger tilgjengelig. Velg et nytt hjem for å holde denne integrasjonsoppføringen i drift.",
+            "data": {
+              "location_id": "Hjem"
+            }
+          }
+        }
+      }
+    }
+  },
+  "entity": {
+    "alarm_control_panel": {},
+    "binary_sensor": {
+      "motion": {
+        "name": "Bevegelse"
+      },
+      "contact": {
+        "name": "Kontakt"
+      },
+      "fire": {
+        "name": "Brann"
+      },
+      "tamper": {
+        "name": "Sabotasje"
+      },
+      "flood": {
+        "name": "Vannlekkasje"
+      },
+      "battery_low": {
+        "name": "Lavt batteri"
+      },
+      "battery_defect": {
+        "name": "Batterifeil"
+      },
+      "door": {
+        "name": "Dør"
+      },
+      "low_battery": {
+        "name": "Lavt batteri"
+      },
+      "jammed": {
+        "name": "Blokkert"
+      },
+      "metering_check": {
+        "name": "Målersjekk"
+      },
+      "online": {
+        "name": "Tilkoblet"
+      }
+    },
+    "sensor": {
+      "temperature": {
+        "name": "Temperatur"
+      },
+      "battery_voltage": {
+        "name": "Batterispenning"
+      },
+      "link_quality": {
+        "name": "Signalkvalitet"
+      },
+      "network_link_address": {
+        "name": "Nettverksadresse"
+      },
+      "error_code": {
+        "name": "Feilkode"
+      },
+      "consumption": {
+        "name": "Forbruk"
+      },
+      "production": {
+        "name": "Produksjon"
+      },
+      "demand": {
+        "name": "Effekt"
+      },
+      "websocket_status": {
+        "name": "WebSocket-status"
+      }
+    }
+  }
+}

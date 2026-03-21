@@ -1,4 +1,5 @@
 """Helpers for stable, user-friendly Homely entity naming."""
+
 from __future__ import annotations
 
 from typing import Any, Mapping
@@ -18,14 +19,10 @@ def _location_parts(location: Any) -> tuple[str | None, str | None]:
     """Extract floor and room from Homely location payload."""
     if isinstance(location, dict):
         floor = _clean_text(
-            location.get("floor")
-            or location.get("floorName")
-            or location.get("level")
+            location.get("floor") or location.get("floorName") or location.get("level")
         )
         room = _clean_text(
-            location.get("room")
-            or location.get("roomName")
-            or location.get("name")
+            location.get("room") or location.get("roomName") or location.get("name")
         )
         return floor, room
 
@@ -89,7 +86,9 @@ def _extend_tokens(target: list[str], value: str | None) -> None:
             target.append(token)
 
 
-def build_suggested_object_id(device: Mapping[str, Any], suffix: str | None) -> str | None:
+def build_suggested_object_id(
+    device: Mapping[str, Any], suffix: str | None
+) -> str | None:
     """Build deterministic floor/room/device_type suggested object id."""
     floor, room = _location_parts(device.get("location"))
 

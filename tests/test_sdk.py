@@ -1,7 +1,10 @@
 """Tests for the reusable Homely SDK package."""
+
 from __future__ import annotations
 
 import asyncio
+import json
+from pathlib import Path
 
 import aiohttp
 
@@ -43,7 +46,9 @@ class _FakeResponse:
 class _FakeSession:
     """Simple aiohttp client stub."""
 
-    def __init__(self, *, post_response=None, get_response=None, post_exc=None, get_exc=None) -> None:
+    def __init__(
+        self, *, post_response=None, get_response=None, post_exc=None, get_exc=None
+    ) -> None:
         self._post_response = post_response
         self._get_response = get_response
         self._post_exc = post_exc
@@ -64,7 +69,20 @@ async def test_sdk_exports_public_client_and_websocket_symbols():
     """The reusable package should expose the core client surface."""
     assert auth_header_value("token") == "Bearer token"
     assert CompatibilityWebSocket is HomelyWebSocket
-    assert __version__ == "0.1.0"
+    assert __version__ == "0.1.2"
+
+
+async def test_manifest_runtime_dependency_matches_tested_sdk_version():
+    """The integration should pin the same SDK version that CI verifies."""
+    manifest_path = (
+        Path(__file__).resolve().parents[1]
+        / "custom_components"
+        / "homely"
+        / "manifest.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert f"python-homely=={__version__}" in manifest["requirements"]
 
 
 async def test_homely_client_fetch_token_with_reason_success():
@@ -156,7 +174,9 @@ async def test_homely_client_public_methods_raise_typed_exceptions():
 
 async def test_homely_client_get_home_data_or_raise_includes_response_status():
     """Unexpected data fetch failures should raise a response error with status."""
-    client = HomelyClient(_FakeSession(get_response=_FakeResponse(status=500, text_data="server error")))
+    client = HomelyClient(
+        _FakeSession(get_response=_FakeResponse(status=500, text_data="server error"))
+    )
 
     try:
         await client.get_home_data_or_raise("token", "loc-1")

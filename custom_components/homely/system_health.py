@@ -1,7 +1,8 @@
 """System health support for Homely."""
+
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from homeassistant.components import system_health
 from homeassistant.core import HomeAssistant, callback
@@ -12,16 +13,8 @@ from .const import (
     CONF_SCAN_INTERVAL,
     DOMAIN,
 )
-from .models import get_entry_runtime_data
-
-
-def _location_hint(value: str | None) -> str | None:
-    """Return a shortened location identifier for system health output."""
-    if value is None:
-        return None
-    if len(value) <= 8:
-        return value
-    return f"{value[:8]}..."
+from .models import HomelyConfigEntry, get_entry_runtime_data
+from .runtime_state import runtime_observability_snapshot
 
 
 @callback
@@ -41,26 +34,19 @@ async def system_health_info(hass: HomeAssistant) -> dict[str, Any]:
     }
 
     for index, entry in enumerate(entries, start=1):
+        typed_entry = cast(HomelyConfigEntry, entry)
         runtime = getattr(entry, "runtime_data", None)
         entry_key = f"entry_{index}"
         entry_info: dict[str, Any] = {
             "state": entry.state.value,
-            "location_id": _location_hint(entry.data.get("location_id")),
             "scan_interval": entry.options.get(CONF_SCAN_INTERVAL),
             "enable_websocket": entry.options.get(CONF_ENABLE_WEBSOCKET),
             "poll_when_websocket": entry.options.get(CONF_POLL_WHEN_WEBSOCKET),
         }
 
         if runtime is not None:
-            runtime_data = get_entry_runtime_data(entry)
-            entry_info.update(
-                {
-                    "api_available": runtime_data.api_available,
-                    "ws_status": runtime_data.ws_status,
-                    "ws_status_reason": runtime_data.ws_status_reason,
-                    "tracked_devices": len(runtime_data.tracked_device_ids),
-                }
-            )
+            runtime_data = get_entry_runtime_data(typed_entry)
+            entry_info.update(runtime_observability_snapshot(runtime_data))
 
         info[entry_key] = entry_info
 

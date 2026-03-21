@@ -1,4 +1,5 @@
 """Tests for websocket client behavior."""
+
 from __future__ import annotations
 
 import asyncio
@@ -24,14 +25,17 @@ class _FakeAsyncClient:
         self._events[func.__name__] = func
         return func
 
-    def on(self, name):
-        def _decorator(func):
+    def on(self, name, handler=None):
+        def _register(func):
             if name == "*":
                 self._catch_all = func
             else:
                 self._events[name] = func
             return func
-        return _decorator
+
+        if handler is not None:
+            return _register(handler)
+        return _register
 
     async def connect(self, *args, **kwargs):
         self.connected = True
@@ -67,7 +71,9 @@ def test_websocket_token_helpers_and_status_callback():
         location_id="loc-1",
         token="token",
         on_data_update=lambda data: None,
-        status_update_callback=lambda status, reason: callback_calls.append((status, reason)),
+        status_update_callback=lambda status, reason: callback_calls.append(
+            (status, reason)
+        ),
     )
 
     assert ws._bearer_value(" abc ") == "Bearer abc"
@@ -141,9 +147,9 @@ async def test_websocket_connect_handles_missing_socketio():
         patch("builtins.__import__", side_effect=_fake_import),
         patch.object(ws, "_start_reconnect_loop"),
     ):
-            assert await ws.connect() is False
-            assert ws.status == "Disconnected"
-            assert ws.status_reason == "socketio missing"
+        assert await ws.connect() is False
+        assert ws.status == "Disconnected"
+        assert ws.status_reason == "socketio missing"
 
 
 def test_websocket_reconnect_request_and_token_update():
@@ -228,7 +234,9 @@ async def test_websocket_connect_handles_network_error():
     with (
         patch.dict(sys.modules, {"socketio": fake_socketio}),
         patch.object(ws, "_start_reconnect_loop"),
-        patch.object(_FakeAsyncClient, "connect", side_effect=aiohttp.ClientError("boom")),
+        patch.object(
+            _FakeAsyncClient, "connect", side_effect=aiohttp.ClientError("boom")
+        ),
     ):
         assert await ws.connect() is False
         assert ws.status == "Disconnected"
@@ -338,8 +346,12 @@ async def test_websocket_message_and_event_handlers_forward_payloads():
 
     with patch.dict(sys.modules, {"socketio": fake_socketio}):
         assert await ws.connect() is True
-        await ws.socket._events["message"]({"type": "message", "data": {"deviceId": "dev-1"}})
-        await ws.socket._events["event"]({"type": "event", "data": {"deviceId": "dev-2"}})
+        await ws.socket._events["message"](
+            {"type": "message", "data": {"deviceId": "dev-1"}}
+        )
+        await ws.socket._events["event"](
+            {"type": "event", "data": {"deviceId": "dev-2"}}
+        )
 
     assert received[0]["type"] == "message"
     assert received[1]["type"] == "event"
@@ -553,7 +565,9 @@ def test_websocket_start_reconnect_loop_fallback_event_loop_and_closing_guard():
 async def test_websocket_connect_cleans_up_stale_socket_and_disconnect_swallows_errors():
     """Stale sockets should be disconnected before reconnecting, and disconnect should be robust."""
     fake_socketio = SimpleNamespace(AsyncClient=_FakeAsyncClient)
-    stale_socket = SimpleNamespace(disconnect=AsyncMock(side_effect=RuntimeError("boom")), connected=False)
+    stale_socket = SimpleNamespace(
+        disconnect=AsyncMock(side_effect=RuntimeError("boom")), connected=False
+    )
     ws = HomelyWebSocket(
         entry_id="entry-1",
         location_id="loc-1",
@@ -565,6 +579,8 @@ async def test_websocket_connect_cleans_up_stale_socket_and_disconnect_swallows_
     with patch.dict(sys.modules, {"socketio": fake_socketio}):
         assert await ws.connect() is True
 
-    ws.socket = SimpleNamespace(disconnect=AsyncMock(side_effect=RuntimeError("boom")), connected=False)
+    ws.socket = SimpleNamespace(
+        disconnect=AsyncMock(side_effect=RuntimeError("boom")), connected=False
+    )
     await ws.disconnect()
     assert ws.status == "Disconnected"

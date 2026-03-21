@@ -1,15 +1,22 @@
 """Lock platform for Homely."""
+
 from __future__ import annotations
 
 from typing import Any
 
 from homeassistant.components.lock import LockEntity
+from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.entity import DeviceInfo
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import (
+    CoordinatorEntity,
+    DataUpdateCoordinator,
+)
 
 from .const import DOMAIN
-from .models import get_entry_runtime_data
+from .device_state import get_current_device, is_device_available
+from .models import HomelyConfigEntry, get_entry_runtime_data
 from .naming import (
     build_suggested_object_id,
     get_device_area,
@@ -41,7 +48,9 @@ def _coerce_bool(value: Any) -> bool | None:
 
 def _is_lock_device(device: dict[str, Any]) -> bool:
     """Return True when device payload includes a lock feature."""
-    lock_state = _get_value_by_path(device, "features.lock.states.state.value") is not None
+    lock_state = (
+        _get_value_by_path(device, "features.lock.states.state.value") is not None
+    )
     if lock_state:
         return True
 
@@ -49,20 +58,32 @@ def _is_lock_device(device: dict[str, Any]) -> bool:
     if report_locked is None:
         return False
 
-    report_lock_model = _get_value_by_path(device, "features.report.states.lockmodel.value")
+    report_lock_model = _get_value_by_path(
+        device, "features.report.states.lockmodel.value"
+    )
     model_name = str(device.get("modelName", "")).lower()
     looks_like_lock = any(part in model_name for part in ("lock", "doorman", "yale"))
     return report_lock_model is not None or looks_like_lock
 
 
-async def async_setup_entry(hass, entry, async_add_entities):
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: HomelyConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
     """Set up lock entities for Homely devices."""
     runtime_data = get_entry_runtime_data(entry)
     coordinator = runtime_data.coordinator
     data = coordinator.data or runtime_data.last_data or {}
 
-    entities = []
-    for device in data.get("devices", []):
+    entities: list[LockEntity] = []
+    devices = data.get("devices", [])
+    if not isinstance(devices, list):
+        devices = []
+
+    for device in devices:
+        if not isinstance(device, dict):
+            continue
         if _is_lock_device(device):
             entities.append(HomelyLock(coordinator, device))
 
@@ -72,10 +93,14 @@ async def async_setup_entry(hass, entry, async_add_entities):
 class HomelyLock(CoordinatorEntity, LockEntity):
     """Read-only lock entity backed by Homely device state."""
 
-    def __init__(self, coordinator, device):
+    def __init__(
+        self,
+        coordinator: DataUpdateCoordinator[dict[str, Any]],
+        device: dict[str, Any],
+    ) -> None:
         super().__init__(coordinator)
         self._attr_has_entity_name = True
-        self._device_id = device.get("id")
+        self._device_id = str(device.get("id"))
         self._device_name = get_device_display_name(device)
 
         self._attr_name = None
@@ -95,20 +120,12 @@ class HomelyLock(CoordinatorEntity, LockEntity):
 
     def _get_current_device(self) -> dict[str, Any] | None:
         """Return latest device payload from coordinator cache."""
-        data = self.coordinator.data or {}
-        for device in data.get("devices", []):
-            if device.get("id") == self._device_id:
-                return device
-        return None
+        return get_current_device(self.coordinator.data, self._device_id)
 
     @property
     def available(self) -> bool:
         """Return if entity is available."""
-        device = self._get_current_device()
-        if not device:
-            return False
-        online = device.get("online")
-        return True if online is None else bool(online)
+        return super().available and is_device_available(self._get_current_device())
 
     @property
     def is_locked(self) -> bool | None:
@@ -143,11 +160,21 @@ class HomelyLock(CoordinatorEntity, LockEntity):
 
         attrs: dict[str, Any] = {}
         event = _get_value_by_path(device, "features.report.states.event.value")
-        door_closed = _coerce_bool(_get_value_by_path(device, "features.report.states.doorclosed.value"))
-        low_battery = _coerce_bool(_get_value_by_path(device, "features.report.states.lowbat.value"))
-        part_of_alarm = _coerce_bool(_get_value_by_path(device, "features.report.states.partofalarm.value"))
-        lock_model = _get_value_by_path(device, "features.report.states.lockmodel.value")
-        error_code = _get_value_by_path(device, "features.report.states.errorcode.value")
+        door_closed = _coerce_bool(
+            _get_value_by_path(device, "features.report.states.doorclosed.value")
+        )
+        low_battery = _coerce_bool(
+            _get_value_by_path(device, "features.report.states.lowbat.value")
+        )
+        part_of_alarm = _coerce_bool(
+            _get_value_by_path(device, "features.report.states.partofalarm.value")
+        )
+        lock_model = _get_value_by_path(
+            device, "features.report.states.lockmodel.value"
+        )
+        error_code = _get_value_by_path(
+            device, "features.report.states.errorcode.value"
+        )
 
         if event is not None:
             attrs["event"] = event

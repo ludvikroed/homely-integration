@@ -1,22 +1,26 @@
 """Diagnostics support for Homely."""
+
 from __future__ import annotations
 
 from typing import Any
 
 from homeassistant.components.diagnostics import async_redact_data
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .models import get_entry_runtime_data
+from .models import HomelyConfigEntry, get_entry_runtime_data
+from .runtime_state import runtime_observability_snapshot
 
 _REDACT_KEYS = {
     "access_token",
     "refresh_token",
+    "gatewayId",
     "username",
     "password",
     "name",
     "location",
     "gatewayserial",
+    "modelId",
+    "rootLocationId",
     "serialNumber",
     "networklinkaddress",
     "id",
@@ -24,12 +28,13 @@ _REDACT_KEYS = {
     "locationId",
     "location_id",
     "unique_id",
+    "userId",
 }
 
 
 async def async_get_config_entry_diagnostics(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: HomelyConfigEntry,
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
     runtime_data = get_entry_runtime_data(entry)
@@ -43,9 +48,8 @@ async def async_get_config_entry_diagnostics(
         },
         "runtime": {
             "location_id": runtime_data.location_id,
-            "ws_status": runtime_data.ws_status,
-            "ws_status_reason": runtime_data.ws_status_reason,
             "coordinator_last_update_success": runtime_data.coordinator.last_update_success,
+            "observability": runtime_observability_snapshot(runtime_data),
             "data": runtime_data.coordinator.data or runtime_data.last_data,
         },
     }

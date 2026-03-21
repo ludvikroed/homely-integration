@@ -1,9 +1,11 @@
 """Runtime models for the Homely integration."""
+
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from time import monotonic
+from typing import Any, cast
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
@@ -26,14 +28,21 @@ class HomelyRuntimeData:
     ws_status_reason: str | None = None
     ws_status_listeners: list[Callable[[], None]] = field(default_factory=list)
     ws_disconnect_refresh_monotonic: float = 0.0
+    last_successful_poll_monotonic: float = field(default_factory=monotonic)
+    last_data_activity_monotonic: float = field(default_factory=monotonic)
+    last_websocket_event_monotonic: float | None = None
+    last_websocket_event_type: str | None = None
     api_available: bool = True
     tracked_device_ids: set[str] = field(default_factory=set)
     topology_reload_pending: bool = False
 
 
-def get_entry_runtime_data(entry: ConfigEntry) -> HomelyRuntimeData:
+type HomelyConfigEntry = ConfigEntry[HomelyRuntimeData]
+
+
+def get_entry_runtime_data(entry: HomelyConfigEntry) -> HomelyRuntimeData:
     """Return runtime data for a loaded config entry."""
     runtime_data = getattr(entry, "runtime_data", None)
     if runtime_data is None:
         raise ValueError(f"Config entry {entry.entry_id} is not loaded")
-    return runtime_data
+    return cast(HomelyRuntimeData, runtime_data)

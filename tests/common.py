@@ -1,4 +1,5 @@
 """Shared test data and helpers for Homely tests."""
+
 from __future__ import annotations
 
 from copy import deepcopy
@@ -214,7 +215,9 @@ LOCATION_DATA: dict[str, Any] = {
 
 UPDATED_LOCATION_DATA: dict[str, Any] = deepcopy(LOCATION_DATA)
 UPDATED_LOCATION_DATA["alarmState"] = "ARMED_AWAY"
-UPDATED_LOCATION_DATA["devices"][0]["features"]["temperature"]["states"]["temperature"]["value"] = 22.4
+UPDATED_LOCATION_DATA["devices"][0]["features"]["temperature"]["states"]["temperature"][
+    "value"
+] = 22.4
 
 
 def copy_location_data() -> dict[str, Any]:

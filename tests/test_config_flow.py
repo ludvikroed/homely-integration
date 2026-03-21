@@ -1,4 +1,5 @@
 """Tests for config and options flows."""
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -17,7 +18,9 @@ from custom_components.homely.config_flow import (
     HomelyConfigFlow,
     HomelyOptionsFlow,
     _coerce_scan_interval,
+    _device_entry_matches_current_entry,
     _entry_home_id,
+    _entity_unique_id_matches_current_entry,
     _fetch_locations_for_credentials,
     _find_location_by_id,
     _get_client,
@@ -26,9 +29,11 @@ from custom_components.homely.config_flow import (
     _location_options,
     _normalize_location_id,
     _redact,
+    cleanup_stale_entry_registries,
     fetch_token_with_reason,
     get_data,
     get_location_id,
+    reconfigure_entry_location,
 )
 from custom_components.homely.const import (
     CONF_ENABLE_WEBSOCKET,
@@ -43,7 +48,13 @@ from custom_components.homely.const import (
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
 )
-from tests.common import LOCATION_ID, PASSWORD, SECOND_LOCATION_ID, USERNAME, build_config_entry
+from tests.common import (
+    LOCATION_ID,
+    PASSWORD,
+    SECOND_LOCATION_ID,
+    USERNAME,
+    build_config_entry,
+)
 
 
 def test_config_flow_helper_functions():
@@ -99,7 +110,10 @@ def test_location_helpers_cover_name_and_label_fallbacks():
     assert _location_name(no_name) == "Homely GW123"
     assert _location_name(no_name_or_gateway) == f"Homely {LOCATION_ID[:8]}"
     assert _location_name(empty) == "Homely"
-    assert _location_label(duplicate_locations[0], duplicate_names={"Home"}) == f"Home ({LOCATION_ID[:8]})"
+    assert (
+        _location_label(duplicate_locations[0], duplicate_names={"Home"})
+        == f"Home ({LOCATION_ID[:8]})"
+    )
     assert _location_label({"name": "Home"}, duplicate_names={"Home"}) == "Home"
     assert _location_options([{"name": "Missing ID"}]) == []
     assert _find_location_by_id(duplicate_locations, None) is None
@@ -110,7 +124,7 @@ def test_scan_interval_coercion_uses_safe_defaults():
     """Invalid stored scan intervals should fall back safely."""
     assert _coerce_scan_interval("30") == 30
     assert _coerce_scan_interval("bad") == DEFAULT_SCAN_INTERVAL
-    assert _coerce_scan_interval(5) == 10
+    assert _coerce_scan_interval(5) == 30
 
 
 def test_get_client_builds_sdk_client_from_ha_session(hass):
@@ -144,7 +158,9 @@ async def test_fetch_locations_for_credentials_handles_missing_access_token(hass
     assert reason == "invalid_auth"
 
 
-async def test_fetch_locations_for_credentials_translates_location_errors(hass, token_response):
+async def test_fetch_locations_for_credentials_translates_location_errors(
+    hass, token_response
+):
     """Location fetch failures should map to user-friendly reasons."""
     with (
         patch(
@@ -187,12 +203,12 @@ async def test_fetch_locations_for_credentials_translates_location_errors(hass, 
     assert reason == "no_homes"
 
 
-
-
 async def test_config_flow_sdk_wrappers_delegate_through_client(hass):
     """Config flow helpers should delegate directly to the SDK client."""
     client = SimpleNamespace(
-        fetch_token_with_reason=AsyncMock(return_value=({"access_token": "token"}, None)),
+        fetch_token_with_reason=AsyncMock(
+            return_value=({"access_token": "token"}, None)
+        ),
         get_locations=AsyncMock(return_value=[{"locationId": LOCATION_ID}]),
         get_home_data=AsyncMock(return_value={"name": "JF23"}),
     )
@@ -392,11 +408,16 @@ async def test_duplicate_location_helper_honors_ignore_entry_and_unique_id(hass)
     flow.hass = hass
 
     assert flow._is_duplicate_location(None) is False
-    assert flow._is_duplicate_location(LOCATION_ID, ignore_entry_id=entry.entry_id) is False
+    assert (
+        flow._is_duplicate_location(LOCATION_ID, ignore_entry_id=entry.entry_id)
+        is False
+    )
     assert flow._is_duplicate_location(SECOND_LOCATION_ID) is True
 
 
-async def test_duplicate_location_helper_detects_unique_id_match_without_data_match(hass):
+async def test_duplicate_location_helper_detects_unique_id_match_without_data_match(
+    hass,
+):
     """Duplicate detection should also consider entry unique ids."""
     entry = build_config_entry(
         data_overrides={CONF_LOCATION_ID: "different-location"},
@@ -408,6 +429,100 @@ async def test_duplicate_location_helper_detects_unique_id_match_without_data_ma
     flow.hass = hass
 
     assert flow._is_duplicate_location(SECOND_LOCATION_ID) is True
+
+
+def test_registry_match_helpers_cover_location_and_missing_values():
+    """Registry helper predicates should recognize location and device records."""
+    assert (
+        _entity_unique_id_matches_current_entry(
+            None,
+            LOCATION_ID,
+            {"device-1"},
+        )
+        is False
+    )
+    assert (
+        _entity_unique_id_matches_current_entry(
+            f"location_{LOCATION_ID}_alarm_panel",
+            LOCATION_ID,
+            {"device-1"},
+        )
+        is True
+    )
+    assert (
+        _entity_unique_id_matches_current_entry(
+            "device-1_temperature",
+            LOCATION_ID,
+            {"device-1"},
+        )
+        is True
+    )
+
+    assert (
+        _device_entry_matches_current_entry(
+            SimpleNamespace(
+                identifiers={
+                    ("other_domain", "ignored"),
+                    (DOMAIN, f"location_{LOCATION_ID}"),
+                },
+            ),
+            LOCATION_ID,
+            {"device-1"},
+        )
+        is True
+    )
+    assert (
+        _device_entry_matches_current_entry(
+            SimpleNamespace(identifiers={(DOMAIN, "device-1")}),
+            LOCATION_ID,
+            {"device-1"},
+        )
+        is True
+    )
+    assert (
+        _device_entry_matches_current_entry(
+            SimpleNamespace(identifiers={(DOMAIN, "device-2")}),
+            LOCATION_ID,
+            {"device-1"},
+        )
+        is False
+    )
+
+
+def test_cleanup_stale_entry_registries_ignores_missing_registry_entries(hass):
+    """Cleanup should swallow missing entity/device registry entries."""
+    entry = build_config_entry()
+    entry.runtime_data = SimpleNamespace(
+        location_id=LOCATION_ID,
+        tracked_device_ids={"device-1"},
+    )
+    entity_registry = SimpleNamespace(async_remove=Mock(side_effect=KeyError))
+    device_registry = SimpleNamespace(async_remove_device=Mock(side_effect=KeyError))
+
+    with (
+        patch(
+            "custom_components.homely.config_flow.er.async_get",
+            return_value=entity_registry,
+        ),
+        patch(
+            "custom_components.homely.config_flow.dr.async_get",
+            return_value=device_registry,
+        ),
+    ):
+        cleanup_stale_entry_registries(
+            hass,
+            entry,
+            [
+                SimpleNamespace(
+                    entity_id="sensor.stale",
+                    unique_id="device-2_temperature",
+                )
+            ],
+            [SimpleNamespace(id="stale-device", identifiers={(DOMAIN, "device-2")})],
+        )
+
+    entity_registry.async_remove.assert_called_once_with("sensor.stale")
+    device_registry.async_remove_device.assert_called_once_with("stale-device")
 
 
 async def test_user_flow_rejects_duplicate_location(
@@ -556,7 +671,9 @@ async def test_reauth_requires_current_location_to_still_exist(
         ),
         patch(
             "custom_components.homely.config_flow.get_location_id",
-            AsyncMock(return_value=[{"locationId": SECOND_LOCATION_ID, "name": "Cabin"}]),
+            AsyncMock(
+                return_value=[{"locationId": SECOND_LOCATION_ID, "name": "Cabin"}]
+            ),
         ),
     ):
         result = await hass.config_entries.flow.async_configure(
@@ -657,7 +774,9 @@ async def test_options_flow_manual_step_shows_errors_and_coerces_defaults(hass):
     flow = HomelyOptionsFlow()
     flow.hass = hass
 
-    with patch.object(HomelyOptionsFlow, "config_entry", new_callable=PropertyMock, return_value=entry):
+    with patch.object(
+        HomelyOptionsFlow, "config_entry", new_callable=PropertyMock, return_value=entry
+    ):
         result = await flow.async_step_init(
             {
                 CONF_SCAN_INTERVAL: 5,
@@ -680,7 +799,14 @@ async def test_reconfigure_updates_entry_and_cleans_registries(
     entry.add_to_hass(hass)
 
     mock_entity_registry = SimpleNamespace(async_remove=Mock())
-    mock_device_registry = SimpleNamespace(async_clear_config_entry=Mock())
+    mock_device_registry = SimpleNamespace(async_remove_device=Mock())
+    old_device_entry = SimpleNamespace(
+        id="old-device", identifiers={(DOMAIN, "old-device-id")}
+    )
+    entry.runtime_data = SimpleNamespace(
+        location_id=SECOND_LOCATION_ID,
+        tracked_device_ids={"new-device-id"},
+    )
 
     with (
         patch(
@@ -697,11 +823,20 @@ async def test_reconfigure_updates_entry_and_cleans_registries(
         ),
         patch(
             "custom_components.homely.config_flow.er.async_entries_for_config_entry",
-            return_value=[SimpleNamespace(entity_id="sensor.old_homely_entity")],
+            return_value=[
+                SimpleNamespace(
+                    entity_id="sensor.old_homely_entity",
+                    unique_id="old-device-id_temperature",
+                )
+            ],
         ),
         patch(
             "custom_components.homely.config_flow.dr.async_get",
             return_value=mock_device_registry,
+        ),
+        patch(
+            "custom_components.homely.config_flow.dr.async_entries_for_config_entry",
+            return_value=[old_device_entry],
         ),
         patch.object(
             hass.config_entries,
@@ -736,8 +871,10 @@ async def test_reconfigure_updates_entry_and_cleans_registries(
     assert entry.title == "Cabin"
     mock_unload.assert_awaited_once_with(entry.entry_id)
     mock_setup.assert_awaited_once_with(entry.entry_id)
-    mock_entity_registry.async_remove.assert_called_once_with("sensor.old_homely_entity")
-    mock_device_registry.async_clear_config_entry.assert_called_once_with(entry.entry_id)
+    mock_entity_registry.async_remove.assert_called_once_with(
+        "sensor.old_homely_entity"
+    )
+    mock_device_registry.async_remove_device.assert_called_once_with("old-device")
 
 
 async def test_reconfigure_same_location_updates_title_without_reload(
@@ -856,6 +993,96 @@ async def test_reconfigure_requires_reauth_when_credentials_are_invalid(hass):
     assert result["reason"] == "reauth_required"
 
 
+async def test_reconfigure_aborts_with_fetch_reason(hass):
+    """Reconfigure should propagate non-auth fetch failures."""
+    entry = build_config_entry()
+    entry.add_to_hass(hass)
+
+    with patch(
+        "custom_components.homely.config_flow.fetch_locations_for_entry",
+        AsyncMock(return_value=(None, "cannot_connect")),
+    ):
+        flow = HomelyConfigFlow()
+        flow.hass = hass
+        flow.context = {
+            "source": config_entries.SOURCE_RECONFIGURE,
+            "entry_id": entry.entry_id,
+        }
+
+        result = await flow.async_step_reconfigure()
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "cannot_connect"
+
+
+async def test_reconfigure_aborts_when_account_has_no_locations(hass):
+    """Reconfigure should abort if the account no longer has any locations."""
+    entry = build_config_entry()
+    entry.add_to_hass(hass)
+
+    with patch(
+        "custom_components.homely.config_flow.fetch_locations_for_entry",
+        AsyncMock(return_value=([], None)),
+    ):
+        flow = HomelyConfigFlow()
+        flow.hass = hass
+        flow.context = {
+            "source": config_entries.SOURCE_RECONFIGURE,
+            "entry_id": entry.entry_id,
+        }
+
+        result = await flow.async_step_reconfigure()
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "no_homes"
+
+
+async def test_reconfigure_aborts_when_cached_locations_are_empty(hass):
+    """Reconfigure should fail safely if cached locations disappear unexpectedly."""
+    entry = build_config_entry()
+    entry.add_to_hass(hass)
+
+    flow = HomelyConfigFlow()
+    flow.hass = hass
+    flow.context = {
+        "source": config_entries.SOURCE_RECONFIGURE,
+        "entry_id": entry.entry_id,
+    }
+    flow._reconfigure_locations = []
+
+    result = await flow.async_step_reconfigure(
+        user_input={CONF_LOCATION_ID: LOCATION_ID},
+    )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "unknown"
+
+
+async def test_reconfigure_keeps_form_open_for_invalid_selected_location(
+    hass,
+    location_response,
+):
+    """Reconfigure should flag invalid selections on the location form."""
+    entry = build_config_entry()
+    entry.add_to_hass(hass)
+
+    flow = HomelyConfigFlow()
+    flow.hass = hass
+    flow.context = {
+        "source": config_entries.SOURCE_RECONFIGURE,
+        "entry_id": entry.entry_id,
+    }
+    flow._reconfigure_locations = location_response
+
+    result = await flow.async_step_reconfigure(
+        user_input={CONF_LOCATION_ID: "does-not-exist"},
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "reconfigure"
+    assert result["errors"] == {CONF_LOCATION_ID: "invalid_location"}
+
+
 async def test_reconfigure_aborts_when_unload_fails(
     hass,
     token_response,
@@ -912,6 +1139,8 @@ async def test_reconfigure_rolls_back_when_new_location_setup_fails(
     """Reconfigure should restore the previous location if setup of the new one fails."""
     entry = build_config_entry()
     entry.add_to_hass(hass)
+    mock_entity_registry = SimpleNamespace(async_remove=Mock())
+    mock_device_registry = SimpleNamespace(async_remove_device=Mock())
 
     with (
         patch(
@@ -924,15 +1153,28 @@ async def test_reconfigure_rolls_back_when_new_location_setup_fails(
         ),
         patch(
             "custom_components.homely.config_flow.er.async_get",
-            return_value=SimpleNamespace(async_remove=Mock()),
+            return_value=mock_entity_registry,
         ),
         patch(
             "custom_components.homely.config_flow.er.async_entries_for_config_entry",
-            return_value=[],
+            return_value=[
+                SimpleNamespace(
+                    entity_id="sensor.old_homely_entity",
+                    unique_id="old-device-id_temperature",
+                )
+            ],
         ),
         patch(
             "custom_components.homely.config_flow.dr.async_get",
-            return_value=SimpleNamespace(async_clear_config_entry=Mock()),
+            return_value=mock_device_registry,
+        ),
+        patch(
+            "custom_components.homely.config_flow.dr.async_entries_for_config_entry",
+            return_value=[
+                SimpleNamespace(
+                    id="old-device", identifiers={(DOMAIN, "old-device-id")}
+                )
+            ],
         ),
         patch.object(
             hass.config_entries,
@@ -964,6 +1206,56 @@ async def test_reconfigure_rolls_back_when_new_location_setup_fails(
     assert entry.title == "JF23"
     mock_unload.assert_awaited_once_with(entry.entry_id)
     assert mock_setup.await_count == 2
+    mock_entity_registry.async_remove.assert_not_called()
+    mock_device_registry.async_remove_device.assert_not_called()
+
+
+async def test_reconfigure_entry_location_rejects_missing_location_id(hass):
+    """Direct reconfigure helper should reject invalid location payloads."""
+    entry = build_config_entry()
+    entry.add_to_hass(hass)
+
+    reason = await reconfigure_entry_location(hass, entry, {"name": "Missing id"})
+
+    assert reason == "invalid_location"
+
+
+async def test_reconfigure_logs_when_restore_of_previous_location_fails(
+    hass,
+    caplog,
+):
+    """Reconfigure should log if both the new setup and restore fail."""
+    entry = build_config_entry()
+    entry.add_to_hass(hass)
+    caplog.set_level("ERROR")
+
+    with (
+        patch(
+            "custom_components.homely.config_flow._snapshot_entry_registries",
+            return_value=([], []),
+        ),
+        patch.object(
+            hass.config_entries,
+            "async_unload",
+            AsyncMock(return_value=True),
+        ),
+        patch.object(
+            hass.config_entries,
+            "async_setup",
+            AsyncMock(side_effect=[False, False]),
+        ),
+    ):
+        reason = await reconfigure_entry_location(
+            hass,
+            entry,
+            {"locationId": SECOND_LOCATION_ID, "name": "Cabin"},
+        )
+
+    assert reason == "cannot_reconfigure"
+    assert (
+        "Failed to restore previous Homely configuration after reconfigure failure"
+        in caplog.text
+    )
 
 
 async def test_reconfigure_without_entry_aborts_unknown(hass):

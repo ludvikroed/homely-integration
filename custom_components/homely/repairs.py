@@ -1,9 +1,10 @@
 """Repairs support for Homely."""
+
 from __future__ import annotations
 
-from homeassistant import data_entry_flow
+from typing import Any
+
 from homeassistant.components.repairs import RepairsFlow
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 
@@ -16,15 +17,16 @@ from .config_flow import (
     is_duplicate_location_configured,
     reconfigure_entry_location,
 )
+from .models import HomelyConfigEntry
 
 
 class MissingLocationRepairFlow(RepairsFlow):
     """Repair flow for entries whose configured location is no longer available."""
 
-    def __init__(self, entry: ConfigEntry) -> None:
+    def __init__(self, entry: HomelyConfigEntry) -> None:
         """Initialize the repair flow."""
         self.entry = entry
-        self._locations: list[dict] | None = None
+        self._locations: list[dict[str, Any]] | None = None
 
     async def async_step_init(
         self, user_input: dict[str, str] | None = None
@@ -72,7 +74,9 @@ class MissingLocationRepairFlow(RepairsFlow):
                     )
                     return self.async_create_entry(data={})
 
-                reason = await reconfigure_entry_location(self.hass, self.entry, location)
+                reason = await reconfigure_entry_location(
+                    self.hass, self.entry, location
+                )
                 if reason is None:
                     return self.async_create_entry(data={})
                 return self.async_abort(reason=reason)

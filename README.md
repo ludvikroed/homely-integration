@@ -37,10 +37,13 @@ Download the code, copy the `homely` folder to `/config/custom_components/homely
 After setup, open the integration options to adjust:
 
 - **Polling interval**: Adjust API polling frequency in seconds as a backup for WebSocket updates
+  Default is 180 seconds and the minimum is 30 seconds.
 - **WebSocket toggle**: Enable or disable instant updates
 - **Polling while WebSocket is connected**: Optional. If disabled, API polling pauses while WebSocket is connected and resumes automatically if the WebSocket disconnects
 
 For deeper details and value references, including sensor status values, see [documentation.md](documentation.md).
+
+Ready-to-import automation blueprints for common Homely use cases live in [blueprints/automation/homely](blueprints/automation/homely).
 
 If Homely adds or removes devices on a location, the integration now detects the topology change and reloads the entry automatically so new entities appear without manual cleanup.
 
@@ -76,7 +79,7 @@ The integration supports Home Assistant diagnostics for safer troubleshooting. D
 
 ### System Health
 
-The integration also exposes Home Assistant system health information, including entry count, API availability, WebSocket status, and tracked device count.
+The integration also exposes Home Assistant system health information, including entry count, API availability, WebSocket status, last successful poll age, last websocket event, cache age, and tracked device count.
 
 ---
 
@@ -104,6 +107,14 @@ The integration also exposes Home Assistant system health information, including
 ## Contributing
 
 Contributions are welcome. You can [report bugs or suggest features](https://github.com/ludvikroed/homely-integration/issues), or submit a pull request.
+
+Before opening a PR, run:
+
+- `python -m ruff check custom_components tests`
+- `pytest`
+- `python -m mypy --config-file mypy.ini -p custom_components.homely`
+
+The integration currently points its manifest documentation link to [`documentation.md`](documentation.md) in this repository. The draft for the official Home Assistant integration documentation that can later replace that link lives in [`homely.markdown`](homely.markdown), with companion blueprint examples in [`blueprints/automation/homely`](blueprints/automation/homely).
 
 ⭐ If you find this integration useful, please consider giving it a star on [GitHub](https://github.com/ludvikroed/homely-integration)! ⭐
 

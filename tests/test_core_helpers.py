@@ -1,4 +1,5 @@
 """Tests for helper logic in __init__ and ws_updates."""
+
 from __future__ import annotations
 
 import logging
@@ -12,6 +13,10 @@ from custom_components.homely.__init__ import (
     _set_alarm_state,
     _tracked_api_device_ids,
     async_migrate_entry,
+)
+from custom_components.homely.device_state import (
+    get_current_device,
+    is_device_available,
 )
 from custom_components.homely.models import HomelyRuntimeData
 from custom_components.homely.models import get_entry_runtime_data
@@ -40,7 +45,9 @@ def test_init_helper_functions_and_tracked_ids(location_data):
     assert _get_alarm_state(location_data) is None
     _set_alarm_state(location_data, "ARMED_AWAY")
     assert location_data["alarmState"] == "ARMED_AWAY"
-    assert location_data["features"]["alarm"]["states"]["alarm"]["value"] == "ARMED_AWAY"
+    assert (
+        location_data["features"]["alarm"]["states"]["alarm"]["value"] == "ARMED_AWAY"
+    )
 
     runtime_data = HomelyRuntimeData(
         coordinator=SimpleNamespace(data=location_data),
@@ -105,6 +112,24 @@ def test_models_and_sensor_helper_edge_cases():
 
     assert _json_debug(_Unserializable()).startswith("<")
     assert _get_alarm_state(None) is None
+
+
+def test_device_state_helpers_handle_sparse_payloads(location_data):
+    """Device lookup helpers should tolerate malformed data and keep availability simple."""
+    motion_device = location_data["devices"][0]
+
+    assert get_current_device(None, motion_device["id"]) is None
+    assert get_current_device({"devices": {}}, motion_device["id"]) is None
+    assert (
+        get_current_device({"devices": ["broken", motion_device]}, motion_device["id"])
+        == motion_device
+    )
+    assert get_current_device({"devices": [{"id": "other"}]}, motion_device["id"]) is None
+
+    assert is_device_available(None) is False
+    assert is_device_available({}) is False
+    assert is_device_available({"id": motion_device["id"], "online": None}) is True
+    assert is_device_available({"id": motion_device["id"], "online": False}) is False
 
 
 def test_tracked_device_ids_handle_missing_snapshots():

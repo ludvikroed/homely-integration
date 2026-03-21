@@ -36,7 +36,7 @@
       "cannot_connect": "Could not connect to Homely right now. Check internet connection and try again.",
       "invalid_auth": "Incorrect username or password.",
       "invalid_location": "The selected location is not valid for this account.",
-      "invalid_scan_interval": "Update interval must be 10 seconds or higher.",
+      "invalid_scan_interval": "Update interval must be 30 seconds or higher.",
       "no_homes": "No homes were found on this account.",
       "unknown": "Unexpected error occurred"
     },
@@ -56,14 +56,14 @@
         "title": "Advanced Settings",
         "description": "Configure update behavior for Homely Alarm integration.",
         "data": {
-          "scan_interval": "Scan interval (seconds, minimum 10)",
+          "scan_interval": "Scan interval (seconds, minimum 30)",
           "enable_websocket": "Enable WebSocket for real-time updates",
           "poll_when_websocket": "Polling while WebSocket is connected"
         }
       }
     },
     "error": {
-      "invalid_scan_interval": "Scan interval must be 10 seconds or higher.",
+      "invalid_scan_interval": "Scan interval must be 30 seconds or higher.",
       "no_homes": "No homes were found on this account.",
       "unknown": "Unexpected error occurred"
     }

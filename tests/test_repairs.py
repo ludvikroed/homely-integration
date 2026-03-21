@@ -1,11 +1,15 @@
 """Tests for Homely repairs flows."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
 from homeassistant.data_entry_flow import FlowResultType
 
-from custom_components.homely.repairs import MissingLocationRepairFlow, async_create_fix_flow
+from custom_components.homely.repairs import (
+    MissingLocationRepairFlow,
+    async_create_fix_flow,
+)
 from custom_components.homely.const import CONF_LOCATION_ID
 from tests.common import LOCATION_ID, SECOND_LOCATION_ID, build_config_entry
 

@@ -1,13 +1,25 @@
 """Aggregated battery health sensor for Homely."""
+
+from __future__ import annotations
+
 from typing import Any
 
-from homeassistant.components.binary_sensor import BinarySensorEntity
-from homeassistant.helpers.entity import EntityCategory, DeviceInfo
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+import homeassistant.helpers.entity as entity_helper
+from homeassistant.components.binary_sensor import (
+    BinarySensorDeviceClass,
+    BinarySensorEntity,
+)
+from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.update_coordinator import (
+    CoordinatorEntity,
+    DataUpdateCoordinator,
+)
+
 from .const import DOMAIN
 from .entity_ids import battery_problem_unique_id
 
 AGGREGATE_SENSOR_NAME = "Status of batteries"
+DIAGNOSTIC_ENTITY_CATEGORY = getattr(entity_helper, "EntityCategory").DIAGNOSTIC
 
 
 def _is_true(value: Any) -> bool:
@@ -20,16 +32,23 @@ def _is_true(value: Any) -> bool:
         return value.strip().lower() in {"true", "1", "yes", "on"}
     return False
 
+
 class HomelyAllBatteriesHealthySensor(CoordinatorEntity, BinarySensorEntity):
     """Binary sensor that is on when any battery reports low/defective."""
-    def __init__(self, coordinator, location_name, location_id):
+
+    def __init__(
+        self,
+        coordinator: DataUpdateCoordinator[dict[str, Any]],
+        location_name: str,
+        location_id: str | int,
+    ) -> None:
         super().__init__(coordinator)
         self._attr_has_entity_name = True
         self._attr_name = AGGREGATE_SENSOR_NAME
         self._attr_unique_id = battery_problem_unique_id(location_id)
         self._attr_icon = "mdi:battery-alert"
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC
-        self._attr_device_class = "problem"
+        self._attr_entity_category = DIAGNOSTIC_ENTITY_CATEGORY
+        self._attr_device_class = BinarySensorDeviceClass.PROBLEM
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"location_{location_id}")},
             name=location_name,
@@ -38,10 +57,14 @@ class HomelyAllBatteriesHealthySensor(CoordinatorEntity, BinarySensorEntity):
         )
 
     @property
-    def is_on(self):
+    def is_on(self) -> bool:
         """Return True when any device reports battery issue."""
         data = self.coordinator.data or {}
-        for device in data.get("devices", []):
+        devices = data.get("devices", [])
+        if not isinstance(devices, list):
+            return False
+
+        for device in devices:
             if not isinstance(device, dict):
                 continue
 
@@ -68,11 +91,15 @@ class HomelyAllBatteriesHealthySensor(CoordinatorEntity, BinarySensorEntity):
             if not isinstance(report_states, dict):
                 report_states = {}
             report_low_battery = report_states.get("lowbat", {}).get("value")
-            if _is_true(battery_defect) or _is_true(battery_low) or _is_true(report_low_battery):
+            if (
+                _is_true(battery_defect)
+                or _is_true(battery_low)
+                or _is_true(report_low_battery)
+            ):
                 return True
         return False
 
     @property
-    def extra_state_attributes(self):
+    def extra_state_attributes(self) -> dict[str, str]:
         """Expose human-friendly aggregate status."""
         return {"status": "Defective" if self.is_on else "Healthy"}

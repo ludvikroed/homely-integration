@@ -1,4 +1,5 @@
 """Tests for the Homely API client."""
+
 from __future__ import annotations
 
 import asyncio
@@ -12,10 +13,18 @@ from custom_components.homely import api
 class _FakeResponse:
     """Simple async HTTP response stub."""
 
-    def __init__(self, *, status: int, json_data=None, text_data: str = "") -> None:
+    def __init__(
+        self,
+        *,
+        status: int,
+        json_data=None,
+        text_data: str = "",
+        json_exc: Exception | None = None,
+    ) -> None:
         self.status = status
         self._json_data = json_data
         self._text_data = text_data
+        self._json_exc = json_exc
 
     async def __aenter__(self):
         return self
@@ -24,6 +33,8 @@ class _FakeResponse:
         return False
 
     async def json(self):
+        if self._json_exc is not None:
+            raise self._json_exc
         return self._json_data
 
     async def text(self):
@@ -33,7 +44,9 @@ class _FakeResponse:
 class _FakeSession:
     """Simple aiohttp client stub."""
 
-    def __init__(self, *, post_response=None, get_response=None, post_exc=None, get_exc=None) -> None:
+    def __init__(
+        self, *, post_response=None, get_response=None, post_exc=None, get_exc=None
+    ) -> None:
         self._post_response = post_response
         self._get_response = get_response
         self._post_exc = post_exc
@@ -65,7 +78,9 @@ async def test_fetch_token_with_reason_success(hass):
         )
     )
 
-    with patch("custom_components.homely.api.async_get_clientsession", return_value=session):
+    with patch(
+        "custom_components.homely.api.async_get_clientsession", return_value=session
+    ):
         response, reason = await api.fetch_token_with_reason(hass, "user", "pass")
 
     assert response == {"access_token": "token"}
@@ -76,7 +91,9 @@ async def test_fetch_token_with_reason_invalid_auth(hass):
     """Auth rejections should map to invalid_auth."""
     session = _FakeSession(post_response=_FakeResponse(status=401))
 
-    with patch("custom_components.homely.api.async_get_clientsession", return_value=session):
+    with patch(
+        "custom_components.homely.api.async_get_clientsession", return_value=session
+    ):
         response, reason = await api.fetch_token_with_reason(hass, "user", "pass")
 
     assert response is None
@@ -87,7 +104,9 @@ async def test_fetch_token_with_reason_server_error(hass):
     """Unexpected HTTP statuses should map to cannot_connect."""
     session = _FakeSession(post_response=_FakeResponse(status=500))
 
-    with patch("custom_components.homely.api.async_get_clientsession", return_value=session):
+    with patch(
+        "custom_components.homely.api.async_get_clientsession", return_value=session
+    ):
         response, reason = await api.fetch_token_with_reason(hass, "user", "pass")
 
     assert response is None
@@ -98,7 +117,9 @@ async def test_fetch_token_with_reason_network_error(hass):
     """Network failures should map to cannot_connect."""
     session = _FakeSession(post_exc=aiohttp.ClientError("boom"))
 
-    with patch("custom_components.homely.api.async_get_clientsession", return_value=session):
+    with patch(
+        "custom_components.homely.api.async_get_clientsession", return_value=session
+    ):
         response, reason = await api.fetch_token_with_reason(hass, "user", "pass")
 
     assert response is None
@@ -119,18 +140,35 @@ async def test_fetch_token_wrapper_returns_payload_only(hass):
 async def test_fetch_refresh_token_and_locations(hass):
     """Refresh and locations helpers should return parsed JSON."""
     refresh_session = _FakeSession(
-        post_response=_FakeResponse(status=200, json_data={"access_token": "new-token"})
+        post_response=_FakeResponse(
+            status=200,
+            json_data={
+                "access_token": "new-token",
+                "refresh_token": "new-refresh-token",
+                "expires_in": 1800,
+            },
+        )
     )
     locations_session = _FakeSession(
         get_response=_FakeResponse(status=200, json_data=[{"locationId": "abc"}])
     )
 
-    with patch("custom_components.homely.api.async_get_clientsession", return_value=refresh_session):
+    with patch(
+        "custom_components.homely.api.async_get_clientsession",
+        return_value=refresh_session,
+    ):
         refresh_data = await api.fetch_refresh_token(hass, "refresh")
-    with patch("custom_components.homely.api.async_get_clientsession", return_value=locations_session):
+    with patch(
+        "custom_components.homely.api.async_get_clientsession",
+        return_value=locations_session,
+    ):
         locations = await api.get_location_id(hass, "token")
 
-    assert refresh_data == {"access_token": "new-token"}
+    assert refresh_data == {
+        "access_token": "new-token",
+        "refresh_token": "new-refresh-token",
+        "expires_in": 1800,
+    }
     assert locations == [{"locationId": "abc"}]
 
 
@@ -139,11 +177,121 @@ async def test_fetch_refresh_token_handles_failure_status_and_network_error(hass
     status_session = _FakeSession(post_response=_FakeResponse(status=500))
     network_session = _FakeSession(post_exc=asyncio.TimeoutError())
 
-    with patch("custom_components.homely.api.async_get_clientsession", return_value=status_session):
+    with patch(
+        "custom_components.homely.api.async_get_clientsession",
+        return_value=status_session,
+    ):
         assert await api.fetch_refresh_token(hass, "refresh") is None
 
-    with patch("custom_components.homely.api.async_get_clientsession", return_value=network_session):
+    with patch(
+        "custom_components.homely.api.async_get_clientsession",
+        return_value=network_session,
+    ):
         assert await api.fetch_refresh_token(hass, "refresh") is None
+
+
+async def test_fetch_refresh_token_details_expose_structured_http_failure(hass):
+    """Refresh diagnostics should keep HTTP failure context for logs."""
+    session = _FakeSession(
+        post_response=_FakeResponse(status=503, text_data="temporarily unavailable")
+    )
+
+    with patch(
+        "custom_components.homely.api.async_get_clientsession",
+        return_value=session,
+    ):
+        result = await api.fetch_refresh_token_details(hass, "refresh")
+
+    assert result.response is None
+    assert result.reason == "http_error"
+    assert result.status == 503
+    assert result.body_preview == "temporarily unavailable"
+    assert "status=503" in api.describe_refresh_token_failure(result)
+
+
+async def test_fetch_refresh_token_details_handle_empty_and_invalid_json(hass):
+    """Refresh diagnostics should distinguish empty and malformed success bodies."""
+    empty_session = _FakeSession(
+        post_response=_FakeResponse(status=200, json_data={})
+    )
+    invalid_json_session = _FakeSession(
+        post_response=_FakeResponse(
+            status=200,
+            json_exc=ValueError("bad json"),
+            text_data="not json",
+        )
+    )
+
+    with patch(
+        "custom_components.homely.api.async_get_clientsession",
+        return_value=empty_session,
+    ):
+        empty_result = await api.fetch_refresh_token_details(hass, "refresh")
+
+    with patch(
+        "custom_components.homely.api.async_get_clientsession",
+        return_value=invalid_json_session,
+    ):
+        invalid_result = await api.fetch_refresh_token_details(hass, "refresh")
+
+    assert empty_result.reason == "empty_response"
+    assert empty_result.status == 200
+    assert invalid_result.reason == "invalid_json"
+    assert invalid_result.body_preview == "not json"
+
+
+async def test_fetch_refresh_token_details_validate_required_fields_and_expires(hass):
+    """Refresh diagnostics should reject unusable token payloads."""
+    missing_fields_session = _FakeSession(
+        post_response=_FakeResponse(status=200, json_data={"access_token": "token"})
+    )
+    invalid_expires_session = _FakeSession(
+        post_response=_FakeResponse(
+            status=200,
+            json_data={
+                "access_token": "token",
+                "refresh_token": "refresh",
+                "expires_in": "bad",
+            },
+        )
+    )
+
+    with patch(
+        "custom_components.homely.api.async_get_clientsession",
+        return_value=missing_fields_session,
+    ):
+        missing_result = await api.fetch_refresh_token_details(hass, "refresh")
+
+    with patch(
+        "custom_components.homely.api.async_get_clientsession",
+        return_value=invalid_expires_session,
+    ):
+        invalid_expires_result = await api.fetch_refresh_token_details(hass, "refresh")
+
+    assert missing_result.response is None
+    assert missing_result.reason == "invalid_payload"
+    assert missing_result.detail == "missing access_token or expires_in"
+
+    assert invalid_expires_result.response is None
+    assert invalid_expires_result.reason == "invalid_payload"
+    assert "invalid_expires_in" in (invalid_expires_result.detail or "")
+
+
+async def test_fetch_refresh_token_tracks_last_result_for_current_task(hass):
+    """The compatibility wrapper should retain structured refresh diagnostics."""
+    session = _FakeSession(post_response=_FakeResponse(status=401, text_data="denied"))
+
+    api.clear_last_refresh_token_result()
+    with patch(
+        "custom_components.homely.api.async_get_clientsession",
+        return_value=session,
+    ):
+        assert await api.fetch_refresh_token(hass, "refresh") is None
+
+    result = api.get_last_refresh_token_result()
+    assert result is not None
+    assert result.reason == "invalid_refresh_token"
+    assert result.status == 401
 
 
 async def test_get_location_id_handles_failure_status_and_network_error(hass):
@@ -151,10 +299,16 @@ async def test_get_location_id_handles_failure_status_and_network_error(hass):
     status_session = _FakeSession(get_response=_FakeResponse(status=500))
     network_session = _FakeSession(get_exc=aiohttp.ClientError("boom"))
 
-    with patch("custom_components.homely.api.async_get_clientsession", return_value=status_session):
+    with patch(
+        "custom_components.homely.api.async_get_clientsession",
+        return_value=status_session,
+    ):
         assert await api.get_location_id(hass, "token") is None
 
-    with patch("custom_components.homely.api.async_get_clientsession", return_value=network_session):
+    with patch(
+        "custom_components.homely.api.async_get_clientsession",
+        return_value=network_session,
+    ):
         assert await api.get_location_id(hass, "token") is None
 
 
@@ -165,12 +319,18 @@ async def test_get_data_with_status_handles_http_error_and_network_error(hass):
     )
     timeout_session = _FakeSession(get_exc=asyncio.TimeoutError())
 
-    with patch("custom_components.homely.api.async_get_clientsession", return_value=error_session):
+    with patch(
+        "custom_components.homely.api.async_get_clientsession",
+        return_value=error_session,
+    ):
         data, status = await api.get_data_with_status(hass, "token", "loc-1")
     assert data is None
     assert status == 500
 
-    with patch("custom_components.homely.api.async_get_clientsession", return_value=timeout_session):
+    with patch(
+        "custom_components.homely.api.async_get_clientsession",
+        return_value=timeout_session,
+    ):
         data, status = await api.get_data_with_status(hass, "token", "loc-1")
     assert data is None
     assert status is None
@@ -182,7 +342,10 @@ async def test_get_data_with_status_success(hass):
         get_response=_FakeResponse(status=200, json_data={"name": "JF23"})
     )
 
-    with patch("custom_components.homely.api.async_get_clientsession", return_value=success_session):
+    with patch(
+        "custom_components.homely.api.async_get_clientsession",
+        return_value=success_session,
+    ):
         data, status = await api.get_data_with_status(hass, "token", "loc-1")
 
     assert data == {"name": "JF23"}

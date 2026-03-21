@@ -1,5 +1,8 @@
 """Tests for naming helpers."""
+
 from __future__ import annotations
+
+from unittest.mock import patch
 
 from custom_components.homely import naming
 
@@ -9,6 +12,7 @@ def test_clean_text_and_location_parts():
     assert naming._clean_text("  Hello ") == "Hello"
     assert naming._clean_text("   ") is None
     assert naming._location_parts("Floor 2 - Living room") == ("Floor 2", "Living room")
+    assert naming._location_parts("Garage") == (None, "Garage")
     assert naming._location_parts({"floorName": "Floor 1", "roomName": "Entrance"}) == (
         "Floor 1",
         "Entrance",
@@ -29,12 +33,14 @@ def test_device_area_and_display_name_fallbacks():
 def test_humanize_entity_name_and_object_id():
     """Naming helpers should dedupe labels and create stable object ids."""
     device = {"name": "Front Door", "location": "Floor 1 - Front Door"}
+    unknown_device = {"id": "abc"}
 
     assert naming.humanize_label("battery_low") == "Battery Low"
     assert naming.humanize_label(None) == "Sensor"
     assert naming.build_entity_name(device, "door") == "Front Door"
     assert naming.build_entity_name(device, "battery_low") == "Front Door Battery Low"
     assert naming.build_suggested_object_id(device, "door") == "floor_1_front_door"
+    assert naming.build_suggested_object_id(unknown_device, None) is None
 
 
 def test_slug_helpers_remove_immediate_duplicates():
@@ -45,4 +51,5 @@ def test_slug_helpers_remove_immediate_duplicates():
     naming._extend_tokens(tokens, "Sensor")
 
     assert tokens == ["living", "room", "sensor"]
-
+    with patch("custom_components.homely.naming.slugify", return_value=""):
+        assert naming._slug_tokens("needs-slug") == []

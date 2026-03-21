@@ -1,4 +1,5 @@
 """Tests for entity-specific behavior."""
+
 from __future__ import annotations
 
 from copy import deepcopy
@@ -94,6 +95,7 @@ def test_lock_entity_reads_state_and_extra_attributes(location_data):
     """Lock entity should expose read-only state and metadata from report states."""
     coordinator = MagicMock()
     coordinator.data = location_data
+    coordinator.last_update_success = True
     lock_device = location_data["devices"][2]
     entity = HomelyLock(coordinator, lock_device)
 
@@ -145,10 +147,13 @@ def test_lock_helper_functions_cover_bool_and_device_detection(location_data):
     assert _is_lock_device(report_only_yale) is True
 
 
-async def test_lock_entity_handles_missing_device_and_unsupported_commands(location_data):
+async def test_lock_entity_handles_missing_device_and_unsupported_commands(
+    location_data,
+):
     """Lock entity should degrade safely and reject control commands."""
     coordinator = MagicMock()
     coordinator.data = location_data
+    coordinator.last_update_success = True
     lock_device = deepcopy(location_data["devices"][2])
     entity = HomelyLock(coordinator, lock_device)
 
@@ -189,6 +194,7 @@ async def test_lock_async_setup_entry_and_fallback_fields(hass, location_data):
     fallback_lock["features"]["report"]["states"]["broken"] = {"value": True}
     fallback_lock["features"]["report"]["states"]["Broken"]["value"] = None
     fallback_lock["online"] = None
+    entity.coordinator.last_update_success = True
     entity.coordinator.data = {"devices": [fallback_lock]}
 
     assert entity.available is True
@@ -212,28 +218,40 @@ def test_all_batteries_healthy_sensor_aggregates_battery_problems(location_data)
     assert entity.is_on is False
     assert entity.extra_state_attributes == {"status": "Healthy"}
 
-    coordinator.data["devices"][2]["features"]["report"]["states"]["lowbat"]["value"] = True
+    coordinator.data["devices"][2]["features"]["report"]["states"]["lowbat"][
+        "value"
+    ] = True
     assert entity.is_on is True
     assert entity.extra_state_attributes == {"status": "Defective"}
 
 
-def test_all_batteries_healthy_sensor_handles_regular_low_and_defect_flags(location_data):
+def test_all_batteries_healthy_sensor_handles_regular_low_and_defect_flags(
+    location_data,
+):
     """Aggregate battery sensor should also react to normal battery.low/defect states."""
     coordinator = MagicMock()
     coordinator.data = location_data
     entity = HomelyAllBatteriesHealthySensor(coordinator, "JF23", LOCATION_ID)
 
-    coordinator.data["devices"][0]["features"]["battery"]["states"]["low"]["value"] = True
+    coordinator.data["devices"][0]["features"]["battery"]["states"]["low"]["value"] = (
+        True
+    )
     assert entity.is_on is True
     assert entity.extra_state_attributes == {"status": "Defective"}
 
-    coordinator.data["devices"][0]["features"]["battery"]["states"]["low"]["value"] = False
-    coordinator.data["devices"][0]["features"]["battery"]["states"]["defect"]["value"] = True
+    coordinator.data["devices"][0]["features"]["battery"]["states"]["low"]["value"] = (
+        False
+    )
+    coordinator.data["devices"][0]["features"]["battery"]["states"]["defect"][
+        "value"
+    ] = True
     assert entity.is_on is True
     assert entity.extra_state_attributes == {"status": "Defective"}
 
 
-def test_all_batteries_healthy_sensor_handles_truthy_values_and_sparse_payloads(location_data):
+def test_all_batteries_healthy_sensor_handles_truthy_values_and_sparse_payloads(
+    location_data,
+):
     """Aggregate battery sensor should handle known true-like values and skip bad payloads."""
     coordinator = MagicMock()
     coordinator.data = {
@@ -245,12 +263,42 @@ def test_all_batteries_healthy_sensor_handles_truthy_values_and_sparse_payloads(
     }
     entity = HomelyAllBatteriesHealthySensor(coordinator, "JF23", LOCATION_ID)
 
-    coordinator.data["devices"][2]["features"]["battery"]["states"]["low"]["value"] = "true"
+    coordinator.data["devices"][2]["features"]["battery"]["states"]["low"]["value"] = (
+        "true"
+    )
     assert entity.is_on is True
 
-    coordinator.data["devices"][2]["features"]["battery"]["states"]["low"]["value"] = False
-    coordinator.data["devices"][2]["features"]["battery"]["states"]["defect"]["value"] = 1
+    coordinator.data["devices"][2]["features"]["battery"]["states"]["low"]["value"] = (
+        False
+    )
+    coordinator.data["devices"][2]["features"]["battery"]["states"]["defect"][
+        "value"
+    ] = 1
     assert entity.is_on is True
+
+
+def test_all_batteries_healthy_sensor_handles_malformed_nested_payloads():
+    """Aggregate battery sensor should ignore malformed nested battery/report payloads."""
+    coordinator = MagicMock()
+    coordinator.data = {
+        "devices": [
+            {"features": {"battery": "bad", "report": "bad"}},
+            {
+                "features": {
+                    "battery": {"states": "bad"},
+                    "report": {"states": "bad"},
+                }
+            },
+        ]
+    }
+    entity = HomelyAllBatteriesHealthySensor(coordinator, "JF23", LOCATION_ID)
+
+    assert entity.is_on is False
+    assert entity.extra_state_attributes == {"status": "Healthy"}
+
+    coordinator.data = {"devices": {}}
+    assert entity.is_on is False
+    assert entity.extra_state_attributes == {"status": "Healthy"}
 
 
 def test_is_true_supports_common_truthy_values():
@@ -271,8 +319,12 @@ def test_han_sensor_scales_totals_and_exposes_power(location_data):
     han_device = location_data["devices"][4]
     discovered = discover_device_sensors(han_device)
 
-    consumption = next(sensor for sensor in discovered if sensor["device_suffix"] == "consumption")
-    demand = next(sensor for sensor in discovered if sensor["device_suffix"] == "demand")
+    consumption = next(
+        sensor for sensor in discovered if sensor["device_suffix"] == "consumption"
+    )
+    demand = next(
+        sensor for sensor in discovered if sensor["device_suffix"] == "demand"
+    )
 
     consumption_entity = HomelySensor(coordinator, han_device, consumption)
     demand_entity = HomelySensor(coordinator, han_device, demand)

@@ -1,0 +1,33 @@
+blueprint:
+  name: Homely - Notify when the alarm is triggered
+  description: >-
+    Run one or more actions when a Homely alarm control panel changes to the
+    triggered state.
+  domain: automation
+  source_url: https://github.com/ludvikroed/homely-integration/blob/main/blueprints/automation/homely/notify_when_alarm_is_triggered.yaml
+  input:
+    alarm_entity:
+      name: Homely alarm entity
+      description: The Homely alarm control panel entity to monitor.
+      selector:
+        entity:
+          filter:
+            - integration: homely
+              domain: alarm_control_panel
+    actions_to_run:
+      name: Actions
+      description: The actions to run when the Homely alarm is triggered.
+      default: []
+      selector:
+        action: {}
+
+mode: single
+
+triggers:
+  - trigger: state
+    entity_id: !input alarm_entity
+    to: triggered
+
+conditions: []
+
+actions: !input actions_to_run
