@@ -36,15 +36,34 @@ class ContextBuilder(Protocol):
 
 
 def update_websocket_token(websocket: Any, token: str) -> str:
-    """Update websocket token and request reconnect when supported."""
+    """Update websocket token without nudging healthy connections."""
     try:
-        websocket.update_token(token, reconnect_if_disconnected=True)
+        is_connected = bool(websocket.is_connected())
+    except Exception:
+        is_connected = False
+
+    status = getattr(websocket, "status", None)
+    reconnect_if_disconnected = not is_connected and status not in {
+        "Connected",
+        "Connecting",
+    }
+
+    try:
+        websocket.update_token(
+            token,
+            reconnect_if_disconnected=reconnect_if_disconnected,
+        )
     except TypeError as err:
         if "reconnect_if_disconnected" not in str(err):
             raise
         websocket.update_token(token)
-        return "legacy"
-    return "reconnect_if_disconnected"
+        return (
+            "legacy_no_reconnect"
+            if not reconnect_if_disconnected
+            else "legacy_reconnect"
+        )
+
+    return "no_reconnect" if not reconnect_if_disconnected else "reconnect_if_disconnected"
 
 
 def build_device_topology_change_handler(

@@ -1452,6 +1452,60 @@ async def test_coordinator_update_method_refreshes_token_in_place(
     )
 
 
+async def test_coordinator_update_method_refreshes_connected_websocket_without_reconnect(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Healthy websocket sessions should not be nudged during token refresh."""
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+    runtime_data.expires_at = 0
+    websocket = SimpleNamespace(
+        is_connected=lambda: True,
+        status="Connected",
+        status_reason="ready",
+        update_token=MagicMock(),
+    )
+    runtime_data.websocket = websocket
+
+    with (
+        patch(
+            "custom_components.homely.fetch_refresh_token",
+            AsyncMock(
+                return_value={
+                    "access_token": "connected-access-token",
+                    "refresh_token": "connected-refresh-token",
+                    "expires_in": 1800,
+                }
+            ),
+        ),
+        patch(
+            "custom_components.homely.get_data_with_status",
+            AsyncMock(return_value=(updated_location_data, 200)),
+        ),
+    ):
+        result = await runtime_data.coordinator.update_method()
+
+    assert result["alarmState"] == "ARMED_AWAY"
+    assert runtime_data.access_token == "connected-access-token"
+    assert runtime_data.refresh_token == "connected-refresh-token"
+    websocket.update_token.assert_called_once_with(
+        "connected-access-token",
+        reconnect_if_disconnected=False,
+    )
+
+
 async def test_coordinator_update_method_refreshes_token_with_legacy_websocket_api(
     hass,
     token_response,

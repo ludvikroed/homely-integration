@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import aiohttp
 
 from custom_components.homely.websocket import HomelyWebSocket
+from custom_components.homely.websocket_runtime import update_websocket_token
 
 
 class _FakeAsyncClient:
@@ -185,6 +186,40 @@ def test_websocket_update_token_ignores_empty_values():
 
     assert ws.token == "old-token"
     start_reconnect.assert_not_called()
+
+
+def test_update_websocket_token_does_not_nudge_connected_socket():
+    """Connected sockets should keep their session and only store the new token."""
+    websocket = SimpleNamespace(
+        is_connected=lambda: True,
+        status="Connected",
+        update_token=MagicMock(),
+    )
+
+    result = update_websocket_token(websocket, "new-token")
+
+    assert result == "no_reconnect"
+    websocket.update_token.assert_called_once_with(
+        "new-token",
+        reconnect_if_disconnected=False,
+    )
+
+
+def test_update_websocket_token_requests_reconnect_when_disconnected():
+    """Disconnected sockets should pick up the new token and resume reconnecting."""
+    websocket = SimpleNamespace(
+        is_connected=lambda: False,
+        status="Disconnected",
+        update_token=MagicMock(),
+    )
+
+    result = update_websocket_token(websocket, "new-token")
+
+    assert result == "reconnect_if_disconnected"
+    websocket.update_token.assert_called_once_with(
+        "new-token",
+        reconnect_if_disconnected=True,
+    )
 
 
 async def test_websocket_disconnect_callback_starts_reconnect_loop():

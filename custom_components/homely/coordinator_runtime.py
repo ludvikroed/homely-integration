@@ -324,15 +324,18 @@ def build_async_update_data(
             if ws is not None:
                 try:
                     update_mode = update_websocket_token(ws, access_token)
-                    if update_mode == "reconnect_if_disconnected":
+                    if update_mode in {
+                        "reconnect_if_disconnected",
+                        "legacy_reconnect",
+                    }:
                         logger.debug(
-                            "Updated websocket token and requested reconnect if needed entry_id=%s location_id=%s",
+                            "Updated websocket token and allowed reconnect because websocket was disconnected entry_id=%s location_id=%s",
                             entry_id,
                             location_id,
                         )
                     else:
                         logger.debug(
-                            "Updated websocket token in-place using legacy websocket API entry_id=%s location_id=%s",
+                            "Updated websocket token in-place without reconnect entry_id=%s location_id=%s",
                             entry_id,
                             location_id,
                         )
