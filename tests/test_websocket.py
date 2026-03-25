@@ -222,6 +222,46 @@ def test_update_websocket_token_requests_reconnect_when_disconnected():
     )
 
 
+def test_websocket_reconnect_interval_backoff_schedule():
+    """Reconnect backoff should be quick at first, then slow down."""
+    ws = HomelyWebSocket(
+        entry_id="entry-1",
+        location_id="loc-1",
+        token="old-token",
+        on_data_update=lambda data: None,
+    )
+
+    assert ws._reconnect_interval_for_attempt(1) == 10
+    assert ws._reconnect_interval_for_attempt(3) == 10
+    assert ws._reconnect_interval_for_attempt(4) == 60
+    assert ws._reconnect_interval_for_attempt(8) == 60
+    assert ws._reconnect_interval_for_attempt(9) == 300
+
+
+async def test_websocket_reconnect_loop_uses_progressive_backoff():
+    """Reconnect loop should retry quickly first, then slow down."""
+    ws = HomelyWebSocket(
+        entry_id="entry-1",
+        location_id="loc-1",
+        token="old-token",
+        on_data_update=lambda data: None,
+    )
+    delays = []
+
+    async def _fake_sleep(delay: float) -> None:
+        delays.append(delay)
+        if len(delays) >= 6:
+            ws._is_closing = True
+
+    with (
+        patch.object(ws, "connect", AsyncMock(return_value=False)),
+        patch("custom_components.homely.websocket.asyncio.sleep", side_effect=_fake_sleep),
+    ):
+        await ws._reconnect_loop()
+
+    assert delays == [10, 10, 60, 60, 60, 60]
+
+
 async def test_websocket_disconnect_callback_starts_reconnect_loop():
     """Unexpected disconnects should start reconnect handling."""
     ws = HomelyWebSocket(
