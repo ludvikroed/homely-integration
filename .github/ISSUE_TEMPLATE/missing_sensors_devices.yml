@@ -4,12 +4,29 @@ body:
   - type: markdown
     attributes:
       value: |
-        Please attach diagnostics if you can, and describe what is missing.
+        Please do this:
+
+        1. Update to the latest version of the integration.
+        2. Open Home Assistant.
+        3. Go to **Settings -> Devices & services -> Homely**.
+        4. Download **Diagnostics** for the Homely entry.
+        5. In the field below, include:
+           - whether a whole device is missing, or the device is present but missing sensors/entities
+           - the name of the device
+           - what you expected to see
+           - what you actually see now
+        6. Attach the diagnostics file.
+
+        Note: some devices may work fine in the Homely app but still not be exposed through the Homely API.
 
   - type: textarea
     id: details
     attributes:
-      label: What is missing?
-      placeholder: Describe the missing device or entities. Attach diagnostics here if possible.
+      label: What is missing, and what did you expect to see?
+      placeholder: |
+        Device or sensor/entity: Device / Sensor or entity
+        Device name: Living room thermostat
+        Expected: Battery sensor and temperature sensor
+        Actual: The device is visible, but only one sensor is created
     validations:
       required: true
