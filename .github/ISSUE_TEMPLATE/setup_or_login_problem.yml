@@ -14,16 +14,11 @@ body:
         3. Reproduce the problem once.
         4. Paste the relevant log lines below and fill in the fields.
 
-  - type: dropdown
+  - type: input
     id: problem_type
     attributes:
       label: What kind of problem is this?
-      options:
-        - Login failed
-        - Setup failed
-        - Location selection problem
-        - Reconfigure problem
-        - I am not sure
+      placeholder: Login failed / Setup failed / Location selection problem / Reconfigure problem / I am not sure
     validations:
       required: true
 

@@ -17,27 +17,19 @@ body:
         Use the **Missing device or sensor** form if a device or entity is missing.
         Use the **Setup or login problem** form if you cannot complete setup or sign in.
 
-  - type: dropdown
+  - type: input
     id: issue_area
     attributes:
       label: What kind of bug is this?
-      options:
-        - WebSocket or live updates
-        - API or polling
-        - Entity state or attributes
-        - I am not sure
+      placeholder: WebSocket or live updates / API or polling / Entity state or attributes / I am not sure
     validations:
       required: true
 
-  - type: dropdown
+  - type: input
     id: reproduction
     attributes:
       label: Can you reproduce it?
-      options:
-        - Yes, every time
-        - Sometimes
-        - It happened once
-        - I am not sure
+      placeholder: Yes, every time / Sometimes / It happened once / I am not sure
     validations:
       required: true
 

@@ -1,0 +1,45 @@
+name: Question
+description: Ask a question about setup, behavior, or how something works.
+title: "[Question]: "
+labels:
+  - question
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for general questions.
+
+        If this is a bug, use **Bug report** instead.
+        If this is a setup or login issue, use **Setup or login problem** instead.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: What is your question?
+      placeholder: Ask your question here.
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Extra context
+      placeholder: Add any context that helps explain the question.
+    validations:
+      required: false
+
+  - type: input
+    id: integration_version
+    attributes:
+      label: Homely integration version
+      placeholder: Example: 1.4.2-beta
+    validations:
+      required: false
+
+  - type: input
+    id: home_assistant_version
+    attributes:
+      label: Home Assistant version
+      placeholder: Example: 2026.3.4
+    validations:
+      required: false

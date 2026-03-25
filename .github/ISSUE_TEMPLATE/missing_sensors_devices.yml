@@ -23,13 +23,11 @@ body:
     validations:
       required: true
 
-  - type: dropdown
+  - type: input
     id: missing_type
     attributes:
       label: What is missing?
-      options:
-        - The whole device is missing
-        - The device is there, but some entities or sensors are missing
+      placeholder: The whole device is missing / The device is there, but some entities or sensors are missing
     validations:
       required: true
 
