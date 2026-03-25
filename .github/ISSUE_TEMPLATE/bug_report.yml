@@ -17,7 +17,7 @@ body:
         Use the **Missing device or sensor** form if a device or entity is missing.
         Use the **Setup or login problem** form if you cannot complete setup or sign in.
 
-  - type: input
+  - type: textarea
     id: issue_area
     attributes:
       label: What kind of bug is this?
@@ -25,7 +25,7 @@ body:
     validations:
       required: true
 
-  - type: input
+  - type: textarea
     id: reproduction
     attributes:
       label: Can you reproduce it?
@@ -70,18 +70,12 @@ body:
     validations:
       required: true
 
-  - type: input
-    id: integration_version
+  - type: textarea
+    id: versions
     attributes:
-      label: Homely integration version
-      placeholder: Example: 1.4.2-beta
-    validations:
-      required: true
-
-  - type: input
-    id: home_assistant_version
-    attributes:
-      label: Home Assistant version
-      placeholder: Example: 2026.3.4
+      label: Versions
+      placeholder: |
+        Homely integration version: 1.4.2-beta
+        Home Assistant version: 2026.3.4
     validations:
       required: true

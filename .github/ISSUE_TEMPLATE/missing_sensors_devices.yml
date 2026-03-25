@@ -15,7 +15,7 @@ body:
         3. Download **Diagnostics** for the affected Homely entry.
         4. Fill in the fields below and drag the diagnostics file into the diagnostics box.
 
-  - type: input
+  - type: textarea
     id: device_name
     attributes:
       label: Device name
@@ -23,7 +23,7 @@ body:
     validations:
       required: true
 
-  - type: input
+  - type: textarea
     id: missing_type
     attributes:
       label: What is missing?

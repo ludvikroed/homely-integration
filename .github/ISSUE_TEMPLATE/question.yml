@@ -28,18 +28,12 @@ body:
     validations:
       required: false
 
-  - type: input
-    id: integration_version
+  - type: textarea
+    id: versions
     attributes:
-      label: Homely integration version
-      placeholder: Example: 1.4.2-beta
-    validations:
-      required: false
-
-  - type: input
-    id: home_assistant_version
-    attributes:
-      label: Home Assistant version
-      placeholder: Example: 2026.3.4
+      label: Versions
+      placeholder: |
+        Homely integration version: 1.4.2-beta
+        Home Assistant version: 2026.3.4
     validations:
       required: false

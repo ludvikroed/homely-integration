@@ -14,7 +14,7 @@ body:
         3. Reproduce the problem once.
         4. Paste the relevant log lines below and fill in the fields.
 
-  - type: input
+  - type: textarea
     id: problem_type
     attributes:
       label: What kind of problem is this?
@@ -59,18 +59,12 @@ body:
     validations:
       required: true
 
-  - type: input
-    id: integration_version
+  - type: textarea
+    id: versions
     attributes:
-      label: Homely integration version
-      placeholder: Example: 1.4.2-beta
-    validations:
-      required: true
-
-  - type: input
-    id: home_assistant_version
-    attributes:
-      label: Home Assistant version
-      placeholder: Example: 2026.3.4
+      label: Versions
+      placeholder: |
+        Homely integration version: 1.4.2-beta
+        Home Assistant version: 2026.3.4
     validations:
       required: true
