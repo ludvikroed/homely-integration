@@ -1,0 +1,49 @@
+name: Missing device or sensor
+description: Report a missing Homely device or missing entities for a device.
+title: "[Missing device/sensor]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do exactly this before submitting:
+
+        1. Update to the latest version of the integration.
+        2. In Home Assistant, open **Settings -> Devices & services -> Homely**.
+        3. Download **Diagnostics** for the affected Homely entry.
+        4. Fill in the fields below and drag the diagnostics file into the diagnostics box.
+
+  - type: input
+    id: device_name
+    attributes:
+      label: Device name
+      description: Use the name shown in Homely or Home Assistant.
+      placeholder: Example: Living room thermostat
+    validations:
+      required: true
+
+  - type: dropdown
+    id: missing_type
+    attributes:
+      label: What is missing?
+      options:
+        - The whole device is missing
+        - The device is there, but some entities or sensors are missing
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected_vs_actual
+    attributes:
+      label: What do you see now, and what did you expect?
+      placeholder: Example: The device is visible, but I expected battery and temperature sensors.
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics file
+      description: Drag the downloaded diagnostics JSON file into this box.
+      placeholder: Attach diagnostics here
+    validations:
+      required: true

@@ -1,0 +1,27 @@
+name: Feature request
+description: Suggest a new feature, entity, option, or improvement.
+title: "[Feature]: "
+body:
+  - type: textarea
+    id: request
+    attributes:
+      label: What do you want to add or improve?
+      placeholder: Describe the feature or improvement.
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why would this be useful?
+      placeholder: Describe the use case or problem this would solve.
+    validations:
+      required: true
+
+  - type: textarea
+    id: current_workaround
+    attributes:
+      label: Current workaround
+      placeholder: Describe what you do today instead, if anything.
+    validations:
+      required: false

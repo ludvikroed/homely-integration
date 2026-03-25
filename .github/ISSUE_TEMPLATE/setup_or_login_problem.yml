@@ -1,0 +1,89 @@
+name: Setup or login problem
+description: Report problems during setup, sign-in, location selection, or reconfigure.
+title: "[Setup/Login]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do exactly this before submitting:
+
+        1. Update to the latest version of the integration.
+        2. Enable debug logging for `custom_components.homely`.
+        3. Reproduce the problem once.
+        4. Paste the relevant log lines below and fill in the fields.
+
+  - type: dropdown
+    id: problem_type
+    attributes:
+      label: What kind of problem is this?
+      options:
+        - Login failed
+        - Setup failed
+        - Location selection problem
+        - Reconfigure problem
+        - I am not sure
+    validations:
+      required: true
+
+  - type: input
+    id: error_message
+    attributes:
+      label: Error message shown in Home Assistant
+      description: Optional, if Home Assistant showed one.
+      placeholder: Paste the error text here
+    validations:
+      required: false
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: What did you do?
+      placeholder: |
+        1. Opened Add integration
+        2. Entered username and password
+        3. Selected location
+        4. Saw error ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual_behavior
+    attributes:
+      label: What happened?
+      placeholder: Describe the error or incorrect behavior in one or two sentences.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected_behavior
+    attributes:
+      label: What did you expect to happen?
+      placeholder: Describe what should have happened in one or two sentences.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log lines
+      description: Paste only the relevant Home Assistant log lines here. Remove secrets before submitting.
+      render: shell
+      placeholder: Paste log lines here
+    validations:
+      required: true
+
+  - type: input
+    id: integration_version
+    attributes:
+      label: Homely integration version
+      placeholder: Example: 1.4.2-beta
+    validations:
+      required: true
+
+  - type: input
+    id: home_assistant_version
+    attributes:
+      label: Home Assistant version
+      placeholder: Example: 2026.3.4
+    validations:
+      required: true

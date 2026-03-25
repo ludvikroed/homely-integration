@@ -57,9 +57,9 @@ If Homely adds or removes devices on a location, the integration now detects the
 - WebSocket may take 10-30 seconds to connect
 - Enable debugging (shown below) and check HA logs
 
-If you can't resolve your problem, please [open an issue](https://github.com/ludvikroed/homely-integration/issues).
+If you can't resolve your problem, please [open a GitHub issue](https://github.com/ludvikroed/homely-integration/issues/new/choose) and choose the matching form.
 
-If a device is missing, or a device is present but missing sensors, follow [Missing Sensors or Devices](missing_sensors_devices.md).
+If a device is missing, or a device is present but missing sensors, use the [Missing device or sensor issue form](https://github.com/ludvikroed/homely-integration/issues/new?template=missing_sensors_devices.yml).
 
 ### Enable Debug Logging
 
@@ -113,8 +113,6 @@ Before opening a PR, run:
 - `python -m ruff check custom_components tests`
 - `pytest`
 - `python -m mypy --config-file mypy.ini -p custom_components.homely`
-
-The integration currently points its manifest documentation link to [`documentation.md`](documentation.md) in this repository. The draft for the official Home Assistant integration documentation that can later replace that link lives in [`homely.markdown`](homely.markdown), with companion blueprint examples in [`blueprints/automation/homely`](blueprints/automation/homely).
 
 ⭐ If you find this integration useful, please consider giving it a star on [GitHub](https://github.com/ludvikroed/homely-integration)! ⭐
 

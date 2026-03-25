@@ -6,7 +6,7 @@ This file contains practical details for users who want more than quick setup.
 
 Some devices that are fully supported in the Homely app may still be missing in Home Assistant if Homely does not expose them through the API. In other cases, the device may be available through the API, but the integration may not map all available states yet.
 
-If a device is missing, or a device only shows partial data, follow [missing_sensors_devices.md](missing_sensors_devices.md).
+If a device is missing, or a device only shows partial data, use the [Missing device or sensor issue form](https://github.com/ludvikroed/homely-integration/issues/new?template=missing_sensors_devices.yml).
 
 When Homely adds or removes devices on a location, the integration detects the topology change and reloads the config entry automatically so the entity list stays in sync.
 

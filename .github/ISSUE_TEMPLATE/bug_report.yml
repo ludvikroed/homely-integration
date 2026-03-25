@@ -1,0 +1,103 @@
+name: Bug report
+description: Report a bug with WebSocket, API/polling, or entity state updates.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do exactly this before submitting:
+
+        1. Update to the latest version of the integration.
+        2. Enable debug logging for `custom_components.homely`.
+        3. Reproduce the problem once.
+        4. Paste the relevant log lines below and fill in the fields.
+
+        Use the **Missing device or sensor** form if a device or entity is missing.
+        Use the **Setup or login problem** form if you cannot complete setup or sign in.
+
+  - type: dropdown
+    id: issue_area
+    attributes:
+      label: What kind of bug is this?
+      options:
+        - WebSocket or live updates
+        - API or polling
+        - Entity state or attributes
+        - I am not sure
+    validations:
+      required: true
+
+  - type: input
+    id: affected_item
+    attributes:
+      label: Affected device or entity
+      description: Optional, but helpful if the bug only affects one thing.
+      placeholder: Example: climate.living_room or Yale Doorman
+    validations:
+      required: false
+
+  - type: dropdown
+    id: reproduction
+    attributes:
+      label: Can you reproduce it?
+      options:
+        - Yes, every time
+        - Sometimes
+        - It happened once
+        - I am not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps_to_reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open ...
+        2. Wait ...
+        3. Change ...
+        4. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual_behavior
+    attributes:
+      label: What happened?
+      placeholder: Describe the actual behavior in one or two sentences.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected_behavior
+    attributes:
+      label: What did you expect to happen?
+      placeholder: Describe the expected behavior in one or two sentences.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log lines
+      description: Paste only the relevant Home Assistant log lines here. Remove secrets before submitting.
+      render: shell
+      placeholder: Paste log lines here
+    validations:
+      required: true
+
+  - type: input
+    id: integration_version
+    attributes:
+      label: Homely integration version
+      placeholder: Example: 1.4.2-beta
+    validations:
+      required: true
+
+  - type: input
+    id: home_assistant_version
+    attributes:
+      label: Home Assistant version
+      placeholder: Example: 2026.3.4
+    validations:
+      required: true
