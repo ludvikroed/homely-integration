@@ -129,20 +129,6 @@ The integration exposes diagnostics data for support and debugging.
 - device ids, serial numbers, and location identifiers are redacted
 - websocket status, cache age, last successful poll age, and last websocket event are included in sanitized form
 
-## System health
-
-The integration exposes Home Assistant system health information for each loaded Homely entry, including:
-
-- config entry state
-- scan interval and WebSocket-related options
-- API availability
-- WebSocket status and last reason
-- whether the WebSocket is currently connected
-- age of the last successful poll
-- age and type of the last websocket event
-- cache age for the latest data the integration is serving
-- tracked device count
-
 ## Documentation status
 
 - `manifest.json` currently points to this repository's `documentation.md`, because the official Home Assistant docs page is not live yet.

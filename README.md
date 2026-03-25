@@ -43,8 +43,6 @@ After setup, open the integration options to adjust:
 
 For deeper details and value references, including sensor status values, see [documentation.md](documentation.md).
 
-Ready-to-import automation blueprints for common Homely use cases live in [blueprints/automation/homely](blueprints/automation/homely).
-
 If Homely adds or removes devices on a location, the integration now detects the topology change and reloads the entry automatically so new entities appear without manual cleanup.
 
 ---
@@ -76,10 +74,6 @@ Then check the logs under **Settings** → **System** → **Logs**.
 ### Diagnostics
 
 The integration supports Home Assistant diagnostics for safer troubleshooting. Diagnostics redact credentials, tokens, serial numbers, and other sensitive identifiers before export.
-
-### System Health
-
-The integration also exposes Home Assistant system health information, including entry count, API availability, WebSocket status, last successful poll age, last websocket event, cache age, and tracked device count.
 
 ---
 
@@ -118,10 +112,8 @@ Before opening a PR, run:
 
 ## About
 
-**License**: MIT License - see [LICENSE](LICENSE)
-
 **Created by**: [Ludvik](https://github.com/ludvikroed) | Inspired by [Homely MQTT Add-on](https://github.com/haugeSander/Homely-HA-Addon)
 
 **Disclaimer**: Unofficial project, not affiliated with Homely. Relies on Homely's cloud API which may change.
 
----
+**License**: MIT License - see [LICENSE](LICENSE)

@@ -156,7 +156,7 @@ def cache_age_seconds(runtime_data: HomelyRuntimeData) -> int | None:
 
 
 def runtime_observability_snapshot(runtime_data: HomelyRuntimeData) -> dict[str, Any]:
-    """Return structured runtime observability fields for diagnostics and system health."""
+    """Return structured runtime observability fields for diagnostics."""
     return {
         "api_available": runtime_data.api_available,
         "ws_status": runtime_data.ws_status,
