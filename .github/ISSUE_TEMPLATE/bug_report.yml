@@ -29,15 +29,6 @@ body:
     validations:
       required: true
 
-  - type: input
-    id: affected_item
-    attributes:
-      label: Affected device or entity
-      description: Optional, but helpful if the bug only affects one thing.
-      placeholder: Example: climate.living_room or Yale Doorman
-    validations:
-      required: false
-
   - type: dropdown
     id: reproduction
     attributes:
@@ -82,7 +73,6 @@ body:
     id: logs
     attributes:
       label: Relevant log lines
-      description: Paste only the relevant Home Assistant log lines here. Remove secrets before submitting.
       render: shell
       placeholder: Paste log lines here
     validations:

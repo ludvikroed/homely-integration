@@ -19,7 +19,6 @@ body:
     id: device_name
     attributes:
       label: Device name
-      description: Use the name shown in Homely or Home Assistant.
       placeholder: Example: Living room thermostat
     validations:
       required: true
@@ -46,7 +45,6 @@ body:
     id: diagnostics
     attributes:
       label: Diagnostics file
-      description: Drag the downloaded diagnostics JSON file into this box.
       placeholder: Attach diagnostics here
     validations:
       required: true

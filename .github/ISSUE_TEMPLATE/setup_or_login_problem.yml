@@ -27,15 +27,6 @@ body:
     validations:
       required: true
 
-  - type: input
-    id: error_message
-    attributes:
-      label: Error message shown in Home Assistant
-      description: Optional, if Home Assistant showed one.
-      placeholder: Paste the error text here
-    validations:
-      required: false
-
   - type: textarea
     id: steps
     attributes:
@@ -68,7 +59,6 @@ body:
     id: logs
     attributes:
       label: Relevant log lines
-      description: Paste only the relevant Home Assistant log lines here. Remove secrets before submitting.
       render: shell
       placeholder: Paste log lines here
     validations:

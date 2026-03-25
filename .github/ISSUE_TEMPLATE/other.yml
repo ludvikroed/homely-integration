@@ -7,26 +7,12 @@ body:
   - type: markdown
     attributes:
       value: |
-        Use this form only if none of the other issue forms fit your case.
-
-        Do not use this form for:
-        - missing devices or sensors
-        - setup or login problems
-        - normal bug reports
-        - feature requests
+        Use this form if none of the other issue forms fit.
 
   - type: textarea
     id: summary
     attributes:
       label: What is this about?
       placeholder: Describe the issue or request.
-    validations:
-      required: true
-
-  - type: textarea
-    id: why_other
-    attributes:
-      label: Why does none of the other forms fit?
-      placeholder: Tell me why this should be filed as Other.
     validations:
       required: true
