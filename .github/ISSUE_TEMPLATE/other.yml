@@ -1,6 +1,8 @@
 name: Other
 description: Use this only if none of the other issue forms fit.
 title: "[Other]: "
+labels:
+  - other
 body:
   - type: markdown
     attributes:

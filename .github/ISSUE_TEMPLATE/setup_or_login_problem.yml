@@ -1,6 +1,8 @@
 name: Setup or login problem
 description: Report problems during setup, sign-in, location selection, or reconfigure.
 title: "[Setup/Login]: "
+labels:
+  - setup-login
 body:
   - type: markdown
     attributes:

@@ -1,6 +1,9 @@
 name: Missing device or sensor
 description: Report a missing Homely device or missing entities for a device.
 title: "[Missing device/sensor]: "
+labels:
+  - bug
+  - missing-device-or-sensor
 body:
   - type: markdown
     attributes:

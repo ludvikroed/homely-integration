@@ -1,6 +1,8 @@
 name: Bug report
 description: Report a bug with WebSocket, API/polling, or entity state updates.
 title: "[Bug]: "
+labels:
+  - bug
 body:
   - type: markdown
     attributes:
