@@ -7,7 +7,7 @@ from typing import Any
 import homeassistant.helpers.entity as entity_helper
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
@@ -193,6 +193,7 @@ class HomelyWebSocketStatusSensor(CoordinatorEntity, SensorEntity):
             name=location_name,
             manufacturer="Homely",
             model="Location",
+            entry_type=DeviceEntryType.SERVICE,
         )
         self._status_listener: Any = None
 
@@ -241,10 +242,22 @@ class HomelyWebSocketStatusSensor(CoordinatorEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, str] | None:
         """Expose last websocket status reason for debugging."""
+        attributes: dict[str, str] = {}
         try:
             reason = self._runtime_data.ws_status_reason
             if reason:
-                return {"reason": reason}
+                attributes["reason"] = reason
+            last_disconnect_reason = getattr(
+                self._runtime_data,
+                "last_disconnect_reason",
+                None,
+            )
+            if (
+                isinstance(last_disconnect_reason, str)
+                and last_disconnect_reason
+                and last_disconnect_reason != reason
+            ):
+                attributes["last_disconnect_reason"] = last_disconnect_reason
         except (AttributeError, ValueError):
             return None
-        return None
+        return attributes or None

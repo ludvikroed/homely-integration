@@ -171,6 +171,7 @@ def test_websocket_status_sensor_uses_runtime_data(hass, location_data):
         last_data=location_data,
         ws_status="Connected",
         ws_status_reason="event received",
+        last_disconnect_reason="network error: boom",
     )
     config_entry.runtime_data = runtime_data
 
@@ -178,7 +179,10 @@ def test_websocket_status_sensor_uses_runtime_data(hass, location_data):
         runtime_data.coordinator, hass, config_entry, LOCATION_ID
     )
     assert entity.native_value == "Connected"
-    assert entity.extra_state_attributes == {"reason": "event received"}
+    assert entity.extra_state_attributes == {
+        "reason": "event received",
+        "last_disconnect_reason": "network error: boom",
+    }
     assert entity.entity_registry_enabled_default is False
     assert "Connected" in entity.options
 
@@ -189,7 +193,9 @@ def test_websocket_status_sensor_uses_runtime_data(hass, location_data):
     runtime_data.websocket = None
     assert entity.native_value == "Not initialized"
     runtime_data.ws_status_reason = ""
-    assert entity.extra_state_attributes is None
+    assert entity.extra_state_attributes == {
+        "last_disconnect_reason": "network error: boom"
+    }
 
 
 def test_websocket_status_sensor_reports_disabled_when_websocket_is_off(

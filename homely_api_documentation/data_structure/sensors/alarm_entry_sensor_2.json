@@ -1,0 +1,56 @@
+{
+  "id": "DEVICE_ID_ENTRY_1",
+  "name": "Example Entry Sensor 1",
+  "serialNumber": "SERIAL_ENTRY_1",
+  "location": "Example Room 3",
+  "online": true,
+  "modelId": "MODEL_ID_ENTRY",
+  "modelName": "Alarm Entry Sensor 2",
+  "features": {
+    "alarm": {
+      "states": {
+        "alarm": {
+          "value": false,
+          "lastUpdated": "2026-01-01T12:00:00Z"
+        },
+        "tamper": {
+          "value": false,
+          "lastUpdated": "2026-01-01T12:00:00Z"
+        }
+      }
+    },
+    "temperature": {
+      "states": {
+        "temperature": {
+          "value": 19.3,
+          "lastUpdated": "2026-01-01T12:00:00Z"
+        }
+      }
+    },
+    "battery": {
+      "states": {
+        "low": {
+          "value": false,
+          "lastUpdated": "2026-01-01T12:00:00Z"
+        },
+        "defect": {},
+        "voltage": {
+          "value": 2.9,
+          "lastUpdated": "2026-01-01T12:00:00Z"
+        }
+      }
+    },
+    "diagnostic": {
+      "states": {
+        "networklinkstrength": {
+          "value": 84,
+          "lastUpdated": "2026-01-01T12:00:00Z"
+        },
+        "networklinkaddress": {
+          "value": "NETWORK_LINK_ADDRESS_2",
+          "lastUpdated": "2026-01-01T12:00:00Z"
+        }
+      }
+    }
+  }
+}

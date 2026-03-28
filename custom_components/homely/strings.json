@@ -11,7 +11,7 @@
       },
       "select_location": {
         "title": "Choose location",
-        "description": "Select which Homely location to add.",
+        "description": "Select which Homely home to add. Choose \"Add all homes\" to add every available home.",
         "data": {
           "location_id": "Location"
         }

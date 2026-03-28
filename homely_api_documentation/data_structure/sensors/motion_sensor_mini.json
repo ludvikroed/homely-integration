@@ -1,0 +1,59 @@
+{
+  "id": "OFFICIAL_DEVICE_ID_MOTION_SENSOR_MINI",
+  "name": "Motion Sensor Mini",
+  "serialNumber": "OFFICIAL_SERIAL_MOTION_SENSOR_MINI",
+  "location": "Example Room",
+  "online": false,
+  "modelId": "OFFICIAL_MODEL_ID_MOTION_SENSOR_MINI",
+  "modelName": "Motion Sensor Mini",
+  "features": {
+    "alarm": {
+      "states": {
+        "alarm": {
+          "value": true,
+          "lastUpdated": "2022-03-07T10:17:06.109Z"
+        },
+        "tamper": {
+          "value": true,
+          "lastUpdated": "2022-03-07T10:17:12.031Z"
+        }
+      }
+    },
+    "temperature": {
+      "states": {
+        "temperature": {
+          "value": 20.3,
+          "lastUpdated": "2022-03-07T10:16:23.730Z"
+        }
+      }
+    },
+    "battery": {
+      "states": {
+        "low": {
+          "value": false,
+          "lastUpdated": "2021-10-22T12:54:34.415Z"
+        },
+        "defect": {
+          "value": false,
+          "lastUpdated": "2021-10-22T12:54:34.444Z"
+        },
+        "voltage": {
+          "value": 2.9,
+          "lastUpdated": "2022-03-07T03:23:20.184Z"
+        }
+      }
+    },
+    "diagnostic": {
+      "states": {
+        "networklinkstrength": {
+          "value": 87,
+          "lastUpdated": "2022-03-07T10:17:13.992Z"
+        },
+        "networklinkaddress": {
+          "value": "OFFICIAL_NETWORK_LINK_ADDRESS_1",
+          "lastUpdated": "2022-02-21T12:01:35.472Z"
+        }
+      }
+    }
+  }
+}

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
 from typing import Any
 
 import voluptuous as vol
@@ -12,11 +11,11 @@ from homeassistant import config_entries
 from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers import device_registry as dr, entity_registry as er
 
 from homely.client import HomelyClient
 
 from .const import (
+    CONF_PENDING_IMPORT_LOCATIONS,
     CONF_ENABLE_WEBSOCKET,
     CONF_HOME_ID,
     CONF_LOCATION_ID,
@@ -30,10 +29,10 @@ from .const import (
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
 )
-from .entity_ids import battery_problem_unique_id
 from .models import HomelyConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
+LOCATION_SELECTION_ALL = "__all_locations__"
 
 
 def _redact(data: dict[str, Any]) -> dict[str, Any]:
@@ -132,6 +131,15 @@ def _find_location_by_id(
     return None
 
 
+def _entry_options() -> dict[str, Any]:
+    """Return default options for newly created entries."""
+    return {
+        CONF_SCAN_INTERVAL: DEFAULT_SCAN_INTERVAL,
+        CONF_ENABLE_WEBSOCKET: DEFAULT_ENABLE_WEBSOCKET,
+        CONF_POLL_WHEN_WEBSOCKET: DEFAULT_POLL_WHEN_WEBSOCKET,
+    }
+
+
 def _coerce_scan_interval(value: Any, default: int = DEFAULT_SCAN_INTERVAL) -> int:
     """Return a valid scan interval with safe fallback."""
     try:
@@ -193,120 +201,6 @@ async def _fetch_locations_for_credentials(
     return locations, access_token, None
 
 
-async def fetch_locations_for_entry(
-    hass: HomeAssistant,
-    entry: HomelyConfigEntry,
-) -> tuple[list[dict[str, Any]] | None, str | None]:
-    """Fetch locations for an existing config entry."""
-    username = str(entry.data.get(CONF_USERNAME, ""))
-    password = str(entry.data.get(CONF_PASSWORD, ""))
-    locations, _access_token, reason = await _fetch_locations_for_credentials(
-        hass,
-        username,
-        password,
-    )
-    return locations, reason
-
-
-def _snapshot_entry_registries(
-    hass: HomeAssistant,
-    entry: HomelyConfigEntry,
-) -> tuple[list[er.RegistryEntry], list[dr.DeviceEntry]]:
-    """Capture current entity/device registry entries for later cleanup."""
-    entity_registry = er.async_get(hass)
-    device_registry = dr.async_get(hass)
-    return (
-        list(er.async_entries_for_config_entry(entity_registry, entry.entry_id)),
-        list(dr.async_entries_for_config_entry(device_registry, entry.entry_id)),
-    )
-
-
-def _entity_unique_id_matches_current_entry(
-    unique_id: str | None,
-    location_id: str | None,
-    active_device_ids: Iterable[str],
-) -> bool:
-    """Return whether an entity unique id belongs to the current location."""
-    if not unique_id:
-        return False
-
-    if location_id is not None and unique_id in {
-        f"location_{location_id}_alarm_panel",
-        f"location_{location_id}_websocket_status",
-        battery_problem_unique_id(location_id),
-    }:
-        return True
-
-    return any(unique_id.startswith(f"{device_id}_") for device_id in active_device_ids)
-
-
-def _device_entry_matches_current_entry(
-    device_entry: dr.DeviceEntry,
-    location_id: str | None,
-    active_device_ids: set[str],
-) -> bool:
-    """Return whether a device registry entry belongs to the current location."""
-    identifiers: Iterable[tuple[str, str]] = device_entry.identifiers
-    for identifier_domain, identifier in identifiers:
-        if identifier_domain != DOMAIN:
-            continue
-
-        identifier_str = str(identifier)
-        if location_id is not None and identifier_str == f"location_{location_id}":
-            return True
-        if identifier_str in active_device_ids:
-            return True
-
-    return False
-
-
-def cleanup_stale_entry_registries(
-    hass: HomeAssistant,
-    entry: HomelyConfigEntry,
-    previous_entities: list[er.RegistryEntry],
-    previous_devices: list[dr.DeviceEntry],
-) -> None:
-    """Remove stale registry objects after a successful reconfigure.
-
-    We only clean up registry entries that no longer belong to the current
-    location. This avoids deleting the old registry state before the new setup
-    has been proven to work.
-    """
-    entity_registry = er.async_get(hass)
-    device_registry = dr.async_get(hass)
-
-    runtime_data = getattr(entry, "runtime_data", None)
-    current_location_id = _normalize_location_id(
-        getattr(runtime_data, "location_id", None)
-    )
-    active_device_ids = {
-        str(device_id)
-        for device_id in getattr(runtime_data, "tracked_device_ids", set())
-    }
-
-    for entity_entry in previous_entities:
-        if current_location_id is None or not _entity_unique_id_matches_current_entry(
-            getattr(entity_entry, "unique_id", None),
-            current_location_id,
-            active_device_ids,
-        ):
-            try:
-                entity_registry.async_remove(entity_entry.entity_id)
-            except KeyError:
-                continue
-
-    for device_entry in previous_devices:
-        if current_location_id is None or not _device_entry_matches_current_entry(
-            device_entry,
-            current_location_id,
-            active_device_ids,
-        ):
-            try:
-                device_registry.async_remove_device(device_entry.id)
-            except KeyError:
-                continue
-
-
 def is_duplicate_location_configured(
     hass: HomeAssistant,
     location_id: str | None,
@@ -328,56 +222,6 @@ def is_duplicate_location_configured(
             return True
 
     return False
-
-
-async def reconfigure_entry_location(
-    hass: HomeAssistant,
-    entry: HomelyConfigEntry,
-    location: dict[str, Any],
-) -> str | None:
-    """Switch an entry to a different location safely."""
-    normalized_location_id = _normalize_location_id(location.get("locationId"))
-    if normalized_location_id is None:
-        return "invalid_location"
-
-    previous_entities, previous_devices = _snapshot_entry_registries(hass, entry)
-
-    unload_ok = await hass.config_entries.async_unload(entry.entry_id)
-    if not unload_ok:
-        return "cannot_reconfigure"
-
-    previous_data = dict(entry.data)
-    previous_title = entry.title
-    previous_unique_id = entry.unique_id
-    updated_data = dict(entry.data)
-    updated_data[CONF_LOCATION_ID] = normalized_location_id
-    hass.config_entries.async_update_entry(
-        entry,
-        title=_location_name(location),
-        data=updated_data,
-        unique_id=normalized_location_id,
-    )
-
-    setup_ok = await hass.config_entries.async_setup(entry.entry_id)
-    if not setup_ok:
-        hass.config_entries.async_update_entry(
-            entry,
-            title=previous_title,
-            data=previous_data,
-            unique_id=previous_unique_id,
-        )
-        restore_ok = await hass.config_entries.async_setup(entry.entry_id)
-        if not restore_ok:
-            _LOGGER.error(
-                "Failed to restore previous Homely configuration after reconfigure failure"
-            )
-        return "cannot_reconfigure"
-
-    cleanup_stale_entry_registries(hass, entry, previous_entities, previous_devices)
-
-    return None
-
-
 class HomelyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Homely Alarm."""
 
@@ -387,7 +231,6 @@ class HomelyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     _pending_password: str | None = None
     _pending_locations: list[dict[str, Any]] | None = None
     _reauth_entry: config_entries.ConfigEntry | None = None
-    _reconfigure_locations: list[dict[str, Any]] | None = None
 
     @staticmethod
     def async_get_options_flow(
@@ -419,15 +262,26 @@ class HomelyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }
         )
 
-    @staticmethod
-    def _build_location_schema(locations: list[dict[str, Any]]) -> vol.Schema:
+    def _build_location_schema(
+        self,
+        locations: list[dict[str, Any]],
+    ) -> vol.Schema:
         """Build schema for selecting a location."""
         from homeassistant.helpers import selector
 
-        options = [
+        options: list[selector.SelectOptionDict] = []
+        if len(locations) > 1:
+            options.append(
+                selector.SelectOptionDict(
+                    value=LOCATION_SELECTION_ALL,
+                    label="Add all homes",
+                )
+            )
+
+        options.extend(
             selector.SelectOptionDict(value=value, label=label)
             for value, label in _location_options(locations)
-        ]
+        )
         default_value = options[0]["value"] if options else None
         return vol.Schema(
             {
@@ -439,7 +293,7 @@ class HomelyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         options=options,
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
-                ),
+                )
             }
         )
 
@@ -448,10 +302,6 @@ class HomelyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._pending_username = None
         self._pending_password = None
         self._pending_locations = None
-
-    def _clear_pending_reconfigure_selection(self) -> None:
-        """Reset transient state for reconfigure flow."""
-        self._reconfigure_locations = None
 
     def _is_duplicate_location(
         self,
@@ -466,12 +316,27 @@ class HomelyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ignore_entry_id=ignore_entry_id,
         )
 
+    def _available_locations(
+        self,
+        locations: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Return locations that can still be added."""
+        return [
+            location
+            for location in locations
+            if _normalize_location_id(location.get("locationId")) is not None
+            and not self._is_duplicate_location(
+                _normalize_location_id(location.get("locationId"))
+            )
+        ]
+
     async def _create_entry_for_location(
         self,
         *,
         username: str,
         password: str,
         location: dict[str, Any],
+        pending_import_locations: list[dict[str, str]] | None = None,
     ) -> ConfigFlowResult:
         """Create a config entry for the selected location."""
         normalized_location_id = _normalize_location_id(location.get("locationId"))
@@ -486,18 +351,47 @@ class HomelyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         self._clear_pending_user_selection()
 
+        entry_data = {
+            CONF_USERNAME: username,
+            CONF_PASSWORD: password,
+            CONF_LOCATION_ID: normalized_location_id,
+        }
+        if pending_import_locations:
+            entry_data[CONF_PENDING_IMPORT_LOCATIONS] = pending_import_locations
+
         return self.async_create_entry(
             title=_location_name(location),
-            data={
-                CONF_USERNAME: username,
-                CONF_PASSWORD: password,
-                CONF_LOCATION_ID: normalized_location_id,
-            },
-            options={
-                CONF_SCAN_INTERVAL: DEFAULT_SCAN_INTERVAL,
-                CONF_ENABLE_WEBSOCKET: DEFAULT_ENABLE_WEBSOCKET,
-                CONF_POLL_WHEN_WEBSOCKET: DEFAULT_POLL_WHEN_WEBSOCKET,
-            },
+            data=entry_data,
+            options=_entry_options(),
+        )
+
+    async def _create_entries_for_all_locations(
+        self,
+        *,
+        username: str,
+        password: str,
+        locations: list[dict[str, Any]],
+    ) -> ConfigFlowResult:
+        """Create entries for all currently unconfigured locations."""
+        unconfigured_locations = self._available_locations(locations)
+        if not unconfigured_locations:
+            self._clear_pending_user_selection()
+            return self.async_abort(reason="already_configured")
+
+        primary_location, *remaining_locations = unconfigured_locations
+        pending_import_locations = [
+            {
+                CONF_LOCATION_ID: str(location["locationId"]),
+                "title": _location_name(location),
+            }
+            for location in remaining_locations
+            if location.get("locationId") is not None
+        ]
+        return await self._create_entry_for_location(
+            username=username,
+            password=password,
+            location=primary_location,
+            pending_import_locations=pending_import_locations,
         )
 
     async def async_step_user(
@@ -531,9 +425,13 @@ class HomelyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     location=locations[0],
                 )
 
+            available_locations = self._available_locations(locations)
+            if not available_locations:
+                return self.async_abort(reason="already_configured")
+
             self._pending_username = username
             self._pending_password = password
-            self._pending_locations = locations
+            self._pending_locations = available_locations
             return await self.async_step_select_location()
 
         return self.async_show_form(
@@ -556,9 +454,15 @@ class HomelyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return self.async_abort(reason="unknown")
 
         if user_input is not None:
-            selected_location_id = _normalize_location_id(
-                user_input.get(CONF_LOCATION_ID)
-            )
+            selected_location_id = user_input.get(CONF_LOCATION_ID)
+            if selected_location_id == LOCATION_SELECTION_ALL:
+                return await self._create_entries_for_all_locations(
+                    username=username,
+                    password=password,
+                    locations=locations,
+                )
+
+            selected_location_id = _normalize_location_id(selected_location_id)
             location = _find_location_by_id(locations, selected_location_id)
             if location is None:
                 errors[CONF_LOCATION_ID] = "invalid_location"
@@ -573,6 +477,29 @@ class HomelyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="select_location",
             data_schema=self._build_location_schema(locations),
             errors=errors,
+        )
+
+    async def async_step_import(
+        self,
+        import_data: dict[str, Any],
+    ) -> ConfigFlowResult:
+        """Create additional entries scheduled internally by the user flow."""
+        location_id = _normalize_location_id(import_data.get(CONF_LOCATION_ID))
+        username = str(import_data.get(CONF_USERNAME, ""))
+        password = str(import_data.get(CONF_PASSWORD, ""))
+        if location_id is None:
+            return self.async_abort(reason="invalid_location")
+        if not username or not password:
+            return self.async_abort(reason="invalid_auth")
+
+        title = str(import_data.get("title") or "").strip() or f"Homely {location_id[:8]}"
+        return await self._create_entry_for_location(
+            username=username,
+            password=password,
+            location={
+                "locationId": location_id,
+                "name": title,
+            },
         )
 
     async def async_step_reauth(
@@ -651,78 +578,6 @@ class HomelyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ),
             errors=errors,
         )
-
-    async def async_step_reconfigure(
-        self,
-        user_input: dict[str, Any] | None = None,
-    ) -> ConfigFlowResult:
-        """Handle switching this entry to another location on the same account."""
-        if self.source == config_entries.SOURCE_RECONFIGURE:
-            entry: config_entries.ConfigEntry[Any] | None = (
-                self._get_reconfigure_entry()
-            )
-        else:
-            entry_id = self.context.get("entry_id")
-            entry = (
-                self.hass.config_entries.async_get_entry(entry_id) if entry_id else None
-            )
-
-        if entry is None:
-            return self.async_abort(reason="unknown")
-
-        errors: dict[str, str] = {}
-
-        if user_input is None or self._reconfigure_locations is None:
-            locations, reason = await fetch_locations_for_entry(self.hass, entry)
-            if reason == "invalid_auth":
-                return self.async_abort(reason="reauth_required")
-            if reason:
-                return self.async_abort(reason=reason)
-            if not locations:
-                return self.async_abort(reason="no_homes")
-            self._reconfigure_locations = locations
-
-        locations = self._reconfigure_locations
-        if not locations:
-            return self.async_abort(reason="unknown")
-
-        if user_input is not None:
-            selected_location_id = _normalize_location_id(
-                user_input.get(CONF_LOCATION_ID)
-            )
-            location = _find_location_by_id(locations, selected_location_id)
-            if location is None:
-                errors[CONF_LOCATION_ID] = "invalid_location"
-            elif self._is_duplicate_location(
-                selected_location_id,
-                ignore_entry_id=entry.entry_id,
-            ):
-                self._clear_pending_reconfigure_selection()
-                return self.async_abort(reason="already_configured")
-            else:
-                current_location_id = _normalize_location_id(
-                    entry.data.get(CONF_LOCATION_ID)
-                )
-                if selected_location_id == current_location_id:
-                    self.hass.config_entries.async_update_entry(
-                        entry,
-                        title=_location_name(location),
-                    )
-                    self._clear_pending_reconfigure_selection()
-                    return self.async_abort(reason="reconfigure_successful")
-
-                reason = await reconfigure_entry_location(self.hass, entry, location)
-                self._clear_pending_reconfigure_selection()
-                if reason is None:
-                    return self.async_abort(reason="reconfigure_successful")
-                return self.async_abort(reason=reason)
-
-        return self.async_show_form(
-            step_id="reconfigure",
-            data_schema=self._build_location_schema(locations),
-            errors=errors,
-        )
-
 
 class HomelyOptionsFlow(config_entries.OptionsFlow):
     """Handle options flow for Homely Alarm."""

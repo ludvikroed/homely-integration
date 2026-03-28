@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, PropertyMock, patch
+from unittest.mock import AsyncMock, PropertyMock, patch
 
 import pytest
 
@@ -17,10 +17,9 @@ from homely import HomelyClient
 from custom_components.homely.config_flow import (
     HomelyConfigFlow,
     HomelyOptionsFlow,
+    LOCATION_SELECTION_ALL,
     _coerce_scan_interval,
-    _device_entry_matches_current_entry,
     _entry_home_id,
-    _entity_unique_id_matches_current_entry,
     _fetch_locations_for_credentials,
     _find_location_by_id,
     _get_client,
@@ -29,16 +28,15 @@ from custom_components.homely.config_flow import (
     _location_options,
     _normalize_location_id,
     _redact,
-    cleanup_stale_entry_registries,
     fetch_token_with_reason,
     get_data,
     get_location_id,
-    reconfigure_entry_location,
 )
 from custom_components.homely.const import (
     CONF_ENABLE_WEBSOCKET,
     CONF_HOME_ID,
     CONF_LOCATION_ID,
+    CONF_PENDING_IMPORT_LOCATIONS,
     CONF_PASSWORD,
     CONF_POLL_WHEN_WEBSOCKET,
     CONF_SCAN_INTERVAL,
@@ -283,7 +281,7 @@ async def test_user_flow_multiple_locations_requires_selection(
     token_response,
     location_response,
 ):
-    """Accounts with multiple locations should show a location picker."""
+    """Accounts with multiple locations should show one location dropdown."""
     with (
         patch(
             "custom_components.homely.config_flow.fetch_token_with_reason",
@@ -347,6 +345,163 @@ async def test_select_location_step_creates_entry(
     assert result["data"][CONF_LOCATION_ID] == SECOND_LOCATION_ID
 
 
+async def test_select_location_step_can_add_all_locations(
+    hass,
+    token_response,
+    location_response,
+):
+    """Choosing add-all from the dropdown should queue the remaining homes."""
+    with (
+        patch(
+            "custom_components.homely.config_flow.fetch_token_with_reason",
+            AsyncMock(return_value=(token_response, None)),
+        ),
+        patch(
+            "custom_components.homely.config_flow.get_location_id",
+            AsyncMock(return_value=location_response),
+        ),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": SOURCE_USER},
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={
+                CONF_USERNAME: USERNAME,
+                CONF_PASSWORD: PASSWORD,
+            },
+        )
+        assert result["step_id"] == "select_location"
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_LOCATION_ID: LOCATION_SELECTION_ALL},
+        )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == "JF23"
+    assert result["data"][CONF_LOCATION_ID] == LOCATION_ID
+    assert result["data"][CONF_PENDING_IMPORT_LOCATIONS] == [
+        {
+            CONF_LOCATION_ID: SECOND_LOCATION_ID,
+            "title": "Cabin",
+        }
+    ]
+
+
+async def test_select_location_step_add_all_skips_already_configured_locations(
+    hass,
+    token_response,
+    location_response,
+):
+    """The location picker should only expose homes that are not configured."""
+    existing_entry = build_config_entry()
+    existing_entry.add_to_hass(hass)
+
+    with (
+        patch(
+            "custom_components.homely.config_flow.fetch_token_with_reason",
+            AsyncMock(return_value=(token_response, None)),
+        ),
+        patch(
+            "custom_components.homely.config_flow.get_location_id",
+            AsyncMock(return_value=location_response),
+        ),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": SOURCE_USER},
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={
+                CONF_USERNAME: USERNAME,
+                CONF_PASSWORD: PASSWORD,
+            },
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_LOCATION_ID: SECOND_LOCATION_ID},
+        )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == "Cabin"
+    assert result["data"][CONF_LOCATION_ID] == SECOND_LOCATION_ID
+    assert CONF_PENDING_IMPORT_LOCATIONS not in result["data"]
+
+
+async def test_select_location_step_add_all_aborts_when_everything_is_configured(
+    hass,
+    token_response,
+    location_response,
+):
+    """Setup should abort immediately if every available location already exists."""
+    build_config_entry().add_to_hass(hass)
+    build_config_entry(
+        data_overrides={CONF_LOCATION_ID: SECOND_LOCATION_ID},
+        unique_id=SECOND_LOCATION_ID,
+    ).add_to_hass(hass)
+
+    with (
+        patch(
+            "custom_components.homely.config_flow.fetch_token_with_reason",
+            AsyncMock(return_value=(token_response, None)),
+        ),
+        patch(
+            "custom_components.homely.config_flow.get_location_id",
+            AsyncMock(return_value=location_response),
+        ),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": SOURCE_USER},
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={
+                CONF_USERNAME: USERNAME,
+                CONF_PASSWORD: PASSWORD,
+            },
+        )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+
+
+async def test_select_location_step_accepts_single_remaining_home_after_filtering(
+    hass,
+    token_response,
+    location_response,
+):
+    """A multi-home account can still add the only remaining unconfigured home."""
+    build_config_entry().add_to_hass(hass)
+
+    with (
+        patch(
+            "custom_components.homely.config_flow.fetch_token_with_reason",
+            AsyncMock(return_value=(token_response, None)),
+        ),
+        patch(
+            "custom_components.homely.config_flow.get_location_id",
+            AsyncMock(return_value=location_response),
+        ),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": SOURCE_USER},
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={
+                CONF_USERNAME: USERNAME,
+                CONF_PASSWORD: PASSWORD,
+            },
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "select_location"
+
+
 async def test_select_location_step_rejects_invalid_location(
     hass,
     token_response,
@@ -394,6 +549,30 @@ async def test_create_entry_for_location_rejects_missing_location_id(hass):
     assert result["reason"] == "invalid_location"
 
 
+async def test_import_step_creates_entry_for_additional_location(hass):
+    """Internal import step should create additional location entries."""
+    flow = HomelyConfigFlow()
+    flow.hass = hass
+    flow.context = {"source": config_entries.SOURCE_IMPORT}
+
+    result = await flow.async_step_import(
+        {
+            CONF_USERNAME: USERNAME,
+            CONF_PASSWORD: PASSWORD,
+            CONF_LOCATION_ID: SECOND_LOCATION_ID,
+            "title": "Cabin",
+        }
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == "Cabin"
+    assert result["data"] == {
+        CONF_USERNAME: USERNAME,
+        CONF_PASSWORD: PASSWORD,
+        CONF_LOCATION_ID: SECOND_LOCATION_ID,
+    }
+
+
 async def test_duplicate_location_helper_honors_ignore_entry_and_unique_id(hass):
     """Duplicate detection should respect ignored entries and unique ids."""
     entry = build_config_entry(unique_id=LOCATION_ID)
@@ -429,100 +608,6 @@ async def test_duplicate_location_helper_detects_unique_id_match_without_data_ma
     flow.hass = hass
 
     assert flow._is_duplicate_location(SECOND_LOCATION_ID) is True
-
-
-def test_registry_match_helpers_cover_location_and_missing_values():
-    """Registry helper predicates should recognize location and device records."""
-    assert (
-        _entity_unique_id_matches_current_entry(
-            None,
-            LOCATION_ID,
-            {"device-1"},
-        )
-        is False
-    )
-    assert (
-        _entity_unique_id_matches_current_entry(
-            f"location_{LOCATION_ID}_alarm_panel",
-            LOCATION_ID,
-            {"device-1"},
-        )
-        is True
-    )
-    assert (
-        _entity_unique_id_matches_current_entry(
-            "device-1_temperature",
-            LOCATION_ID,
-            {"device-1"},
-        )
-        is True
-    )
-
-    assert (
-        _device_entry_matches_current_entry(
-            SimpleNamespace(
-                identifiers={
-                    ("other_domain", "ignored"),
-                    (DOMAIN, f"location_{LOCATION_ID}"),
-                },
-            ),
-            LOCATION_ID,
-            {"device-1"},
-        )
-        is True
-    )
-    assert (
-        _device_entry_matches_current_entry(
-            SimpleNamespace(identifiers={(DOMAIN, "device-1")}),
-            LOCATION_ID,
-            {"device-1"},
-        )
-        is True
-    )
-    assert (
-        _device_entry_matches_current_entry(
-            SimpleNamespace(identifiers={(DOMAIN, "device-2")}),
-            LOCATION_ID,
-            {"device-1"},
-        )
-        is False
-    )
-
-
-def test_cleanup_stale_entry_registries_ignores_missing_registry_entries(hass):
-    """Cleanup should swallow missing entity/device registry entries."""
-    entry = build_config_entry()
-    entry.runtime_data = SimpleNamespace(
-        location_id=LOCATION_ID,
-        tracked_device_ids={"device-1"},
-    )
-    entity_registry = SimpleNamespace(async_remove=Mock(side_effect=KeyError))
-    device_registry = SimpleNamespace(async_remove_device=Mock(side_effect=KeyError))
-
-    with (
-        patch(
-            "custom_components.homely.config_flow.er.async_get",
-            return_value=entity_registry,
-        ),
-        patch(
-            "custom_components.homely.config_flow.dr.async_get",
-            return_value=device_registry,
-        ),
-    ):
-        cleanup_stale_entry_registries(
-            hass,
-            entry,
-            [
-                SimpleNamespace(
-                    entity_id="sensor.stale",
-                    unique_id="device-2_temperature",
-                )
-            ],
-            [SimpleNamespace(id="stale-device", identifiers={(DOMAIN, "device-2")})],
-        )
-
-    entity_registry.async_remove.assert_called_once_with("sensor.stale")
-    device_registry.async_remove_device.assert_called_once_with("stale-device")
 
 
 async def test_user_flow_rejects_duplicate_location(
@@ -789,482 +874,6 @@ async def test_options_flow_manual_step_shows_errors_and_coerces_defaults(hass):
     assert result["errors"] == {CONF_SCAN_INTERVAL: "invalid_scan_interval"}
 
 
-async def test_reconfigure_updates_entry_and_cleans_registries(
-    hass,
-    token_response,
-    location_response,
-):
-    """Reconfigure should switch location safely and clear stale registry items."""
-    entry = build_config_entry()
-    entry.add_to_hass(hass)
-
-    mock_entity_registry = SimpleNamespace(async_remove=Mock())
-    mock_device_registry = SimpleNamespace(async_remove_device=Mock())
-    old_device_entry = SimpleNamespace(
-        id="old-device", identifiers={(DOMAIN, "old-device-id")}
-    )
-    entry.runtime_data = SimpleNamespace(
-        location_id=SECOND_LOCATION_ID,
-        tracked_device_ids={"new-device-id"},
-    )
-
-    with (
-        patch(
-            "custom_components.homely.config_flow.fetch_token_with_reason",
-            AsyncMock(return_value=(token_response, None)),
-        ),
-        patch(
-            "custom_components.homely.config_flow.get_location_id",
-            AsyncMock(return_value=location_response),
-        ),
-        patch(
-            "custom_components.homely.config_flow.er.async_get",
-            return_value=mock_entity_registry,
-        ),
-        patch(
-            "custom_components.homely.config_flow.er.async_entries_for_config_entry",
-            return_value=[
-                SimpleNamespace(
-                    entity_id="sensor.old_homely_entity",
-                    unique_id="old-device-id_temperature",
-                )
-            ],
-        ),
-        patch(
-            "custom_components.homely.config_flow.dr.async_get",
-            return_value=mock_device_registry,
-        ),
-        patch(
-            "custom_components.homely.config_flow.dr.async_entries_for_config_entry",
-            return_value=[old_device_entry],
-        ),
-        patch.object(
-            hass.config_entries,
-            "async_unload",
-            AsyncMock(return_value=True),
-        ) as mock_unload,
-        patch.object(
-            hass.config_entries,
-            "async_setup",
-            AsyncMock(return_value=True),
-        ) as mock_setup,
-    ):
-        flow = HomelyConfigFlow()
-        flow.hass = hass
-        flow.context = {
-            "source": config_entries.SOURCE_RECONFIGURE,
-            "entry_id": entry.entry_id,
-        }
-
-        result = await flow.async_step_reconfigure()
-        assert result["type"] is FlowResultType.FORM
-        assert result["step_id"] == "reconfigure"
-
-        result = await flow.async_step_reconfigure(
-            user_input={CONF_LOCATION_ID: SECOND_LOCATION_ID},
-        )
-
-    assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "reconfigure_successful"
-    assert entry.data[CONF_LOCATION_ID] == SECOND_LOCATION_ID
-    assert entry.unique_id == SECOND_LOCATION_ID
-    assert entry.title == "Cabin"
-    mock_unload.assert_awaited_once_with(entry.entry_id)
-    mock_setup.assert_awaited_once_with(entry.entry_id)
-    mock_entity_registry.async_remove.assert_called_once_with(
-        "sensor.old_homely_entity"
-    )
-    mock_device_registry.async_remove_device.assert_called_once_with("old-device")
-
-
-async def test_reconfigure_same_location_updates_title_without_reload(
-    hass,
-    token_response,
-):
-    """Reconfigure should update title in place when the same location is selected."""
-    entry = build_config_entry()
-    entry.add_to_hass(hass)
-
-    locations = [
-        {"locationId": LOCATION_ID, "name": "Renamed Home"},
-        {"locationId": SECOND_LOCATION_ID, "name": "Cabin"},
-    ]
-
-    with (
-        patch(
-            "custom_components.homely.config_flow.fetch_token_with_reason",
-            AsyncMock(return_value=(token_response, None)),
-        ),
-        patch(
-            "custom_components.homely.config_flow.get_location_id",
-            AsyncMock(return_value=locations),
-        ),
-        patch.object(
-            hass.config_entries,
-            "async_unload",
-            AsyncMock(return_value=True),
-        ) as mock_unload,
-        patch.object(
-            hass.config_entries,
-            "async_setup",
-            AsyncMock(return_value=True),
-        ) as mock_setup,
-    ):
-        flow = HomelyConfigFlow()
-        flow.hass = hass
-        flow.context = {
-            "source": config_entries.SOURCE_RECONFIGURE,
-            "entry_id": entry.entry_id,
-        }
-
-        result = await flow.async_step_reconfigure()
-        result = await flow.async_step_reconfigure(
-            user_input={CONF_LOCATION_ID: LOCATION_ID},
-        )
-
-    assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "reconfigure_successful"
-    assert entry.data[CONF_LOCATION_ID] == LOCATION_ID
-    assert entry.unique_id == LOCATION_ID
-    assert entry.title == "Renamed Home"
-    mock_unload.assert_not_awaited()
-    mock_setup.assert_not_awaited()
-
-
-async def test_reconfigure_rejects_duplicate_selected_location(
-    hass,
-    token_response,
-    location_response,
-):
-    """Reconfigure should not let two entries point at the same location."""
-    entry = build_config_entry()
-    entry.add_to_hass(hass)
-    second_entry = build_config_entry(
-        data_overrides={CONF_LOCATION_ID: SECOND_LOCATION_ID},
-        unique_id=SECOND_LOCATION_ID,
-    )
-    second_entry.add_to_hass(hass)
-
-    with (
-        patch(
-            "custom_components.homely.config_flow.fetch_token_with_reason",
-            AsyncMock(return_value=(token_response, None)),
-        ),
-        patch(
-            "custom_components.homely.config_flow.get_location_id",
-            AsyncMock(return_value=location_response),
-        ),
-    ):
-        flow = HomelyConfigFlow()
-        flow.hass = hass
-        flow.context = {
-            "source": config_entries.SOURCE_RECONFIGURE,
-            "entry_id": entry.entry_id,
-        }
-
-        result = await flow.async_step_reconfigure()
-        result = await flow.async_step_reconfigure(
-            user_input={CONF_LOCATION_ID: SECOND_LOCATION_ID},
-        )
-
-    assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "already_configured"
-
-
-async def test_reconfigure_requires_reauth_when_credentials_are_invalid(hass):
-    """Reconfigure should stop and direct users to reauth on invalid auth."""
-    entry = build_config_entry()
-    entry.add_to_hass(hass)
-
-    with patch(
-        "custom_components.homely.config_flow.fetch_token_with_reason",
-        AsyncMock(return_value=(None, "invalid_auth")),
-    ):
-        flow = HomelyConfigFlow()
-        flow.hass = hass
-        flow.context = {
-            "source": config_entries.SOURCE_RECONFIGURE,
-            "entry_id": entry.entry_id,
-        }
-
-        result = await flow.async_step_reconfigure()
-
-    assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "reauth_required"
-
-
-async def test_reconfigure_aborts_with_fetch_reason(hass):
-    """Reconfigure should propagate non-auth fetch failures."""
-    entry = build_config_entry()
-    entry.add_to_hass(hass)
-
-    with patch(
-        "custom_components.homely.config_flow.fetch_locations_for_entry",
-        AsyncMock(return_value=(None, "cannot_connect")),
-    ):
-        flow = HomelyConfigFlow()
-        flow.hass = hass
-        flow.context = {
-            "source": config_entries.SOURCE_RECONFIGURE,
-            "entry_id": entry.entry_id,
-        }
-
-        result = await flow.async_step_reconfigure()
-
-    assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "cannot_connect"
-
-
-async def test_reconfigure_aborts_when_account_has_no_locations(hass):
-    """Reconfigure should abort if the account no longer has any locations."""
-    entry = build_config_entry()
-    entry.add_to_hass(hass)
-
-    with patch(
-        "custom_components.homely.config_flow.fetch_locations_for_entry",
-        AsyncMock(return_value=([], None)),
-    ):
-        flow = HomelyConfigFlow()
-        flow.hass = hass
-        flow.context = {
-            "source": config_entries.SOURCE_RECONFIGURE,
-            "entry_id": entry.entry_id,
-        }
-
-        result = await flow.async_step_reconfigure()
-
-    assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "no_homes"
-
-
-async def test_reconfigure_aborts_when_cached_locations_are_empty(hass):
-    """Reconfigure should fail safely if cached locations disappear unexpectedly."""
-    entry = build_config_entry()
-    entry.add_to_hass(hass)
-
-    flow = HomelyConfigFlow()
-    flow.hass = hass
-    flow.context = {
-        "source": config_entries.SOURCE_RECONFIGURE,
-        "entry_id": entry.entry_id,
-    }
-    flow._reconfigure_locations = []
-
-    result = await flow.async_step_reconfigure(
-        user_input={CONF_LOCATION_ID: LOCATION_ID},
-    )
-
-    assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "unknown"
-
-
-async def test_reconfigure_keeps_form_open_for_invalid_selected_location(
-    hass,
-    location_response,
-):
-    """Reconfigure should flag invalid selections on the location form."""
-    entry = build_config_entry()
-    entry.add_to_hass(hass)
-
-    flow = HomelyConfigFlow()
-    flow.hass = hass
-    flow.context = {
-        "source": config_entries.SOURCE_RECONFIGURE,
-        "entry_id": entry.entry_id,
-    }
-    flow._reconfigure_locations = location_response
-
-    result = await flow.async_step_reconfigure(
-        user_input={CONF_LOCATION_ID: "does-not-exist"},
-    )
-
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "reconfigure"
-    assert result["errors"] == {CONF_LOCATION_ID: "invalid_location"}
-
-
-async def test_reconfigure_aborts_when_unload_fails(
-    hass,
-    token_response,
-    location_response,
-):
-    """Reconfigure should abort cleanly if Home Assistant cannot unload the entry."""
-    entry = build_config_entry()
-    entry.add_to_hass(hass)
-
-    with (
-        patch(
-            "custom_components.homely.config_flow.fetch_token_with_reason",
-            AsyncMock(return_value=(token_response, None)),
-        ),
-        patch(
-            "custom_components.homely.config_flow.get_location_id",
-            AsyncMock(return_value=location_response),
-        ),
-        patch.object(
-            hass.config_entries,
-            "async_unload",
-            AsyncMock(return_value=False),
-        ) as mock_unload,
-        patch.object(
-            hass.config_entries,
-            "async_setup",
-            AsyncMock(return_value=True),
-        ) as mock_setup,
-    ):
-        flow = HomelyConfigFlow()
-        flow.hass = hass
-        flow.context = {
-            "source": config_entries.SOURCE_RECONFIGURE,
-            "entry_id": entry.entry_id,
-        }
-
-        result = await flow.async_step_reconfigure()
-        result = await flow.async_step_reconfigure(
-            user_input={CONF_LOCATION_ID: SECOND_LOCATION_ID},
-        )
-
-    assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "cannot_reconfigure"
-    assert entry.data[CONF_LOCATION_ID] == LOCATION_ID
-    mock_unload.assert_awaited_once_with(entry.entry_id)
-    mock_setup.assert_not_awaited()
-
-
-async def test_reconfigure_rolls_back_when_new_location_setup_fails(
-    hass,
-    token_response,
-    location_response,
-):
-    """Reconfigure should restore the previous location if setup of the new one fails."""
-    entry = build_config_entry()
-    entry.add_to_hass(hass)
-    mock_entity_registry = SimpleNamespace(async_remove=Mock())
-    mock_device_registry = SimpleNamespace(async_remove_device=Mock())
-
-    with (
-        patch(
-            "custom_components.homely.config_flow.fetch_token_with_reason",
-            AsyncMock(return_value=(token_response, None)),
-        ),
-        patch(
-            "custom_components.homely.config_flow.get_location_id",
-            AsyncMock(return_value=location_response),
-        ),
-        patch(
-            "custom_components.homely.config_flow.er.async_get",
-            return_value=mock_entity_registry,
-        ),
-        patch(
-            "custom_components.homely.config_flow.er.async_entries_for_config_entry",
-            return_value=[
-                SimpleNamespace(
-                    entity_id="sensor.old_homely_entity",
-                    unique_id="old-device-id_temperature",
-                )
-            ],
-        ),
-        patch(
-            "custom_components.homely.config_flow.dr.async_get",
-            return_value=mock_device_registry,
-        ),
-        patch(
-            "custom_components.homely.config_flow.dr.async_entries_for_config_entry",
-            return_value=[
-                SimpleNamespace(
-                    id="old-device", identifiers={(DOMAIN, "old-device-id")}
-                )
-            ],
-        ),
-        patch.object(
-            hass.config_entries,
-            "async_unload",
-            AsyncMock(return_value=True),
-        ) as mock_unload,
-        patch.object(
-            hass.config_entries,
-            "async_setup",
-            AsyncMock(side_effect=[False, True]),
-        ) as mock_setup,
-    ):
-        flow = HomelyConfigFlow()
-        flow.hass = hass
-        flow.context = {
-            "source": config_entries.SOURCE_RECONFIGURE,
-            "entry_id": entry.entry_id,
-        }
-
-        result = await flow.async_step_reconfigure()
-        result = await flow.async_step_reconfigure(
-            user_input={CONF_LOCATION_ID: SECOND_LOCATION_ID},
-        )
-
-    assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "cannot_reconfigure"
-    assert entry.data[CONF_LOCATION_ID] == LOCATION_ID
-    assert entry.unique_id == LOCATION_ID
-    assert entry.title == "JF23"
-    mock_unload.assert_awaited_once_with(entry.entry_id)
-    assert mock_setup.await_count == 2
-    mock_entity_registry.async_remove.assert_not_called()
-    mock_device_registry.async_remove_device.assert_not_called()
-
-
-async def test_reconfigure_entry_location_rejects_missing_location_id(hass):
-    """Direct reconfigure helper should reject invalid location payloads."""
-    entry = build_config_entry()
-    entry.add_to_hass(hass)
-
-    reason = await reconfigure_entry_location(hass, entry, {"name": "Missing id"})
-
-    assert reason == "invalid_location"
-
-
-async def test_reconfigure_logs_when_restore_of_previous_location_fails(
-    hass,
-    caplog,
-):
-    """Reconfigure should log if both the new setup and restore fail."""
-    entry = build_config_entry()
-    entry.add_to_hass(hass)
-    caplog.set_level("ERROR")
-
-    with (
-        patch(
-            "custom_components.homely.config_flow._snapshot_entry_registries",
-            return_value=([], []),
-        ),
-        patch.object(
-            hass.config_entries,
-            "async_unload",
-            AsyncMock(return_value=True),
-        ),
-        patch.object(
-            hass.config_entries,
-            "async_setup",
-            AsyncMock(side_effect=[False, False]),
-        ),
-    ):
-        reason = await reconfigure_entry_location(
-            hass,
-            entry,
-            {"locationId": SECOND_LOCATION_ID, "name": "Cabin"},
-        )
-
-    assert reason == "cannot_reconfigure"
-    assert (
-        "Failed to restore previous Homely configuration after reconfigure failure"
-        in caplog.text
-    )
-
-
-async def test_reconfigure_without_entry_aborts_unknown(hass):
-    """Missing entries should abort reconfigure cleanly."""
-    flow = HomelyConfigFlow()
-    flow.hass = hass
-    flow.context = {"entry_id": "missing-entry"}
-
-    result = await flow.async_step_reconfigure()
-
-    assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "unknown"
+def test_config_flow_does_not_expose_reconfigure_step():
+    """Location changes should not be supported through reconfigure."""
+    assert not hasattr(HomelyConfigFlow, "async_step_reconfigure")

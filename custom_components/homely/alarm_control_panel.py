@@ -10,7 +10,7 @@ from homeassistant.components.alarm_control_panel.const import (
     AlarmControlPanelState,
 )
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
@@ -77,6 +77,7 @@ class HomelyAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
             name=location_name,
             manufacturer="Homely",
             model="Location",
+            entry_type=DeviceEntryType.SERVICE,
         )
 
     @property

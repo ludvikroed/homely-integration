@@ -11,7 +11,7 @@
       },
       "select_location": {
         "title": "Velg hjem",
-        "description": "Velg hvilket hjem i Homely som skal legges til.",
+        "description": "Velg hvilket hjem i Homely som skal legges til. Velg \"Add all homes\" for å legge til alle tilgjengelige hjem.",
         "data": {
           "location_id": "Hjem"
         }

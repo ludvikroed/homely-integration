@@ -7,6 +7,7 @@ CONF_USERNAME = "username"
 CONF_PASSWORD = "password"
 CONF_HOME_ID = "home_id"
 CONF_LOCATION_ID = "location_id"
+CONF_PENDING_IMPORT_LOCATIONS = "pending_import_locations"
 
 # Options
 CONF_SCAN_INTERVAL = "scan_interval"

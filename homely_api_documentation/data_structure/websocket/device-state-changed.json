@@ -1,0 +1,20 @@
+{
+  "type": "device-state-changed",
+  "data": {
+    "deviceId": "DEVICE_ID_ENTRY_1",
+    "changes": [
+      {
+        "feature": "alarm",
+        "stateName": "alarm",
+        "value": true,
+        "lastUpdated": "2026-01-01T12:00:00Z"
+      },
+      {
+        "feature": "temperature",
+        "stateName": "temperature",
+        "value": 20.4,
+        "lastUpdated": "2026-01-01T12:00:00Z"
+      }
+    ]
+  }
+}

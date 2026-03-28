@@ -1,0 +1,81 @@
+{
+  "id": "DEVICE_ID_LOCK_1",
+  "name": "Example Yale Lock 1",
+  "serialNumber": "SERIAL_LOCK_1",
+  "location": "Example Room 3",
+  "online": true,
+  "modelId": "MODEL_ID_LOCK",
+  "modelName": "Yale Doorman V2N",
+  "features": {
+    "lock": {
+      "states": {
+        "state": {
+          "value": true,
+          "lastUpdated": "2026-01-01T12:00:00Z"
+        },
+        "autorelocktime": {
+          "value": 0,
+          "lastUpdated": "2026-01-01T12:00:00Z"
+        },
+        "soundvolume": {
+          "value": 1,
+          "lastUpdated": "2026-01-01T12:00:00Z"
+        },
+        "language": {
+          "value": "en",
+          "lastUpdated": "2026-01-01T12:00:00Z"
+        }
+      }
+    },
+    "report": {
+      "states": {
+        "event": {
+          "value": "DOORLOCK_LOCKED_BY_KEY",
+          "lastUpdated": "2026-01-01T12:00:00Z"
+        },
+        "added": {
+          "value": "Added Pin: X",
+          "lastUpdated": "2026-01-01T12:00:00Z"
+        },
+        "deleted": {},
+        "unknowncard": {},
+        "errorcode": {
+          "value": "Success",
+          "lastUpdated": "2026-01-01T12:00:00Z"
+        },
+        "locked": {
+          "value": true,
+          "lastUpdated": "2026-01-01T12:00:00Z"
+        },
+        "Broken": {
+          "value": false,
+          "lastUpdated": "2026-01-01T12:00:00Z"
+        },
+        "doorclosed": {
+          "value": true,
+          "lastUpdated": "2026-01-01T12:00:00Z"
+        },
+        "autolock": {
+          "value": false,
+          "lastUpdated": "2026-01-01T12:00:00Z"
+        },
+        "lowbat": {
+          "value": false,
+          "lastUpdated": "2026-01-01T12:00:00Z"
+        },
+        "securesensor": {
+          "value": false,
+          "lastUpdated": "2026-01-01T12:00:00Z"
+        },
+        "lockmodel": {
+          "value": "Doorman V2x",
+          "lastUpdated": "2026-01-01T12:00:00Z"
+        },
+        "partofalarm": {
+          "value": false,
+          "lastUpdated": "2026-01-01T12:00:00Z"
+        }
+      }
+    }
+  }
+}

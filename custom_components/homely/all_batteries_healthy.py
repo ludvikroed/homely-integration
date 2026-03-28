@@ -9,7 +9,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
 )
-from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
     DataUpdateCoordinator,
@@ -54,6 +54,7 @@ class HomelyAllBatteriesHealthySensor(CoordinatorEntity, BinarySensorEntity):
             name=location_name,
             manufacturer="Homely",
             model="Location",
+            entry_type=DeviceEntryType.SERVICE,
         )
 
     @property

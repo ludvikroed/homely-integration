@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 from homeassistant.components.alarm_control_panel.const import AlarmControlPanelState
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.device_registry import DeviceEntryType
 
 from custom_components.homely.alarm_control_panel import (
     PARALLEL_UPDATES as ALARM_PARALLEL_UPDATES,
@@ -25,7 +26,7 @@ from custom_components.homely.lock import (
     _is_lock_device,
 )
 from custom_components.homely.models import HomelyRuntimeData
-from custom_components.homely.sensor import HomelySensor
+from custom_components.homely.sensor import HomelySensor, HomelyWebSocketStatusSensor
 from custom_components.homely.sensors.discover import discover_device_sensors
 from tests.common import LOCATION_ID, build_config_entry
 
@@ -63,6 +64,31 @@ def test_alarm_panel_uses_nested_fallback_and_handles_unknown_state(location_dat
     assert entity.alarm_state is None
 
     assert entity.alarm_state is None
+
+
+def test_location_level_entities_use_service_device_type(hass, location_data):
+    """Virtual location entities should be registered as service devices."""
+    coordinator = MagicMock()
+    coordinator.data = location_data
+    config_entry = build_config_entry()
+    config_entry.runtime_data = HomelyRuntimeData(
+        coordinator=coordinator,
+        access_token="access",
+        refresh_token="refresh",
+        expires_at=0,
+        location_id=LOCATION_ID,
+        last_data=location_data,
+    )
+
+    alarm_entity = HomelyAlarmPanel(coordinator, LOCATION_ID)
+    battery_entity = HomelyAllBatteriesHealthySensor(coordinator, "JF23", LOCATION_ID)
+    websocket_entity = HomelyWebSocketStatusSensor(
+        coordinator, hass, config_entry, LOCATION_ID
+    )
+
+    assert alarm_entity.device_info["entry_type"] is DeviceEntryType.SERVICE
+    assert battery_entity.device_info["entry_type"] is DeviceEntryType.SERVICE
+    assert websocket_entity.device_info["entry_type"] is DeviceEntryType.SERVICE
 
 
 def test_alarm_and_lock_platforms_declare_parallel_updates():

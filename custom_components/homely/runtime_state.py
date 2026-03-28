@@ -77,6 +77,12 @@ def update_runtime_websocket_state(runtime_data: HomelyRuntimeData) -> None:
     snapshot = websocket_state_snapshot(runtime_data)
     runtime_data.ws_status = snapshot.status
     runtime_data.ws_status_reason = snapshot.reason
+    if (
+        snapshot.status == "Disconnected"
+        and snapshot.reason
+        and snapshot.reason != "manual disconnect"
+    ):
+        runtime_data.last_disconnect_reason = snapshot.reason
 
 
 def cached_data_grace_seconds(scan_interval: int) -> int:
@@ -161,6 +167,7 @@ def runtime_observability_snapshot(runtime_data: HomelyRuntimeData) -> dict[str,
         "api_available": runtime_data.api_available,
         "ws_status": runtime_data.ws_status,
         "ws_status_reason": runtime_data.ws_status_reason,
+        "last_disconnect_reason": runtime_data.last_disconnect_reason,
         "websocket_connected": websocket_is_connected(runtime_data),
         "tracked_devices": len(runtime_data.tracked_device_ids),
         "last_successful_poll_age_seconds": monotonic_age_seconds(

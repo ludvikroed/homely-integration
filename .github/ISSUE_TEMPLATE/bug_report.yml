@@ -18,12 +18,24 @@ body:
 
         Use the **Missing device or sensor** form if a device or entity is missing.
         Use the **Setup or login problem** form if you cannot complete setup or sign in.
+        If a device or sensor exists in Home Assistant but does not work correctly, use this bug form.
 
   - type: textarea
     id: issue_area
     attributes:
       label: What kind of bug is this?
-      placeholder: WebSocket or live updates / API or polling / Entity state or attributes / I am not sure
+      placeholder: WebSocket or live updates / API or polling / Entity state or attributes / Device or sensor not working / I am not sure
+    validations:
+      required: false
+
+  - type: textarea
+    id: affected_device
+    attributes:
+      label: Which device or sensor is affected?
+      placeholder: |
+        Device name: Living room motion sensor
+        Entity id: binary_sensor.living_room_motion
+        Device model: Frient Motion Sensor
     validations:
       required: false
 
@@ -51,7 +63,9 @@ body:
     id: actual_behavior
     attributes:
       label: What happened?
-      placeholder: Describe the actual behavior in one or two sentences, even if it only happened once.
+      placeholder: |
+        Describe the actual behavior in one or two sentences, even if it only happened once.
+        Example: The sensor is created, but it never updates from off to on.
     validations:
       required: false
 
@@ -59,7 +73,9 @@ body:
     id: expected_behavior
     attributes:
       label: What did you expect to happen?
-      placeholder: Describe the expected behavior in one or two sentences.
+      placeholder: |
+        Describe the expected behavior in one or two sentences.
+        Example: The sensor should change state when motion is detected.
     validations:
       required: false
 

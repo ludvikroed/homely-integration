@@ -26,6 +26,7 @@ class HomelyRuntimeData:
     websocket: HomelyWebSocket | None = None
     ws_status: str = "Not initialized"
     ws_status_reason: str | None = None
+    last_disconnect_reason: str | None = None
     ws_status_listeners: list[Callable[[], None]] = field(default_factory=list)
     ws_disconnect_refresh_monotonic: float = 0.0
     last_successful_poll_monotonic: float = field(default_factory=monotonic)

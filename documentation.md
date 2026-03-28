@@ -4,49 +4,50 @@ This file contains practical details for users who want more than quick setup.
 
 ## API coverage and missing devices
 
-Some devices that are fully supported in the Homely app may still be missing in Home Assistant if Homely does not expose them through the API. In other cases, the device may be available through the API, but the integration may not map all available states yet.
+The integration aims to support all devices and sensors exposed by the Homely API.
+
+Not every device shown in the Homely app is exposed through the API. If Homely does not expose a device or sensor, the integration cannot add it in Home Assistant. Some vendor-specific devices, such as the Namron Smart Plug 16A, are known examples.
+
+The Homely API is read-only for now. Many users have contacted Homely by email to ask whether write access is planned, but the replies have varied. Based on those replies, it currently seems that Homely does not have plans to add write access.
 
 If a device is missing, or a device only shows partial data, use the [Missing device or sensor issue form](https://github.com/ludvikroed/homely-integration/issues/new?template=missing_sensors_devices.yml).
 
-When Homely adds or removes devices on a location, the integration detects the topology change and reloads the config entry automatically so the entity list stays in sync.
+When Homely adds or removes devices on a home, the integration reloads the config entry automatically. New devices can then appear automatically. Devices that disappear from the API are not deleted automatically.
+
+## Supported device types
+
+All Frient devices should be supported. Most locks and other devices shown in the Homely app should also be available. Some vendor-specific devices, such as the Namron Smart Plug 16A, are currently not exposed through the API and therefore cannot be supported. The goal is to support all devices and sensors available through the Homely API, but sadly not every device shown in the Homely app is necessarily available through that API.
+If a device is missing, or a device is present but missing sensors, please use the Missing device or sensor issue form.
+The Homely API is read-only for now. Many users have contacted Homely by email to ask whether direct device control is planned, but the responses have varied. Based on those replies, it currently seems that Homely does not have plans to add direct device control.
+
+| Device type | Typical entities |
+| --- | --- |
+| Home | Alarm status, WebSocket status, Battery status, Online |
+| Frient motion sensors | Motion, Temperature, Battery low, Online |
+| Frient door/window sensors | Contact, Temperature, Battery low, Online |
+| Frient smoke detectors | Fire, Tamper, Temperature, Battery low, Online |
+| Frient flood alarms | Flood, Temperature, Battery low, Online |
+| Frient HAN meters | Consumption, Production, Demand, Metering Check, Online |
+| Most locks | Lock, Door, Low battery, Jammed, Online |
 
 ## Location selection
 
 The config flow now selects locations by the actual Homely location name returned by the API.
 
 - If your account has only one location, it is selected automatically during setup.
-- If your account has multiple locations, Home Assistant shows a location picker.
-- Add the integration multiple times, once per location, if you want more than one location in Home Assistant.
+- If your account has multiple locations, Home Assistant shows one location dropdown.
+- The dropdown includes an `Add all homes` option together with the available individual locations.
+- If you choose `Add all homes`, the integration creates the first entry during setup and then adds the remaining available locations automatically.
+- `Add all homes` creates one config entry per available location.
+- Locations that are already configured are skipped automatically.
 - The integration prevents adding the same location twice.
-- Use **Reconfigure** if you want to switch an existing entry to a different location on the same account. The integration clears the old entry registry bindings before reloading, so stale entities from the previous location are not kept.
+- If you want to use a different location later, remove the existing entry and add the integration again for the desired location.
 
 Advanced runtime settings such as polling interval and WebSocket behavior live in the integration **Options** flow, not in the initial login step.
 
-## Battery status values
+## Key states and values
 
-### Per-device battery sensors
-
-Battery values come from each device's battery feature.
-
-- `battery_low`: boolean (`true`/`false`)
-- `battery_defect`: boolean (`true`/`false`)
-- `battery_voltage`: numeric value (voltage), if provided by API
-
-`true` on `battery_low` or `battery_defect` means that device has a battery issue.
-
-### Aggregate battery sensor
-
-The integration creates a location-level binary sensor named `Status of batteries`.
-
-- Home Assistant state `on` = at least one device reports low/defective battery
-- Home Assistant state `off` = no low/defective battery detected
-- Extra attribute `status = "Defective"` when state is `on`
-- Extra attribute `status = "Healthy"` when state is `off`
-- Some lock devices, such as Yale Doorman, report battery state through `features.report.states.lowbat`
-
-## Alarm state values
-
-The alarm entity reflects the current alarm status reported by the API. Alarm control commands are not currently sent through this integration.
+### Alarm states
 
 Possible alarm states shown in Home Assistant:
 
@@ -57,52 +58,11 @@ Possible alarm states shown in Home Assistant:
 - `arming`
 - `triggered`
 
-## Lock support (Yale Doorman and similar)
+### Battery status
 
-Lock devices that expose `features.lock.states.state.value` are created as Home Assistant lock entities.
+`Status of batteries` is `on` when at least one device reports a low or defective battery. It is `off` when no battery problem is detected.
 
-- `locked` when value is `true`
-- `unlocked` when value is `false`
-
-The lock entity is currently read-only (no lock/unlock command is sent to Homely).
-
-When available, the lock entity may also expose extra attributes such as:
-
-- `door_closed`
-- `low_battery`
-- `part_of_alarm`
-- `lock_model`
-- `error_code`
-
-Practical lock-related binary sensors are also exposed when present in API data:
-
-- `Door` (`device_class: door`) from `features.report.states.doorclosed` (mapped so `on = open`)
-- `Low Battery` (`device_class: battery`) from `features.report.states.lowbat`
-- `Jammed` (`device_class: problem`) from `features.report.states.Broken/broken`
-
-Additional lock/config sensors may be exposed when available:
-
-- `Error Code`
-
-## Flood alarm support
-
-Flood alarms are exposed from `features.alarm.states.flood` and can also provide:
-
-- temperature
-- battery status
-- diagnostic link sensors
-
-## HAN meter support
-
-HAN devices such as `EMI Norwegian HAN` expose:
-
-- `Consumption` from `summationdelivered`, converted from Wh to kWh
-- `Production` from `summationreceived`, converted from Wh to kWh
-- `Demand` from `demand`, shown in W
-- `Metering Check`
-- diagnostic link sensors
-
-## WebSocket status sensor values
+### WebSocket status
 
 The WebSocket status sensor can show:
 
@@ -111,7 +71,7 @@ The WebSocket status sensor can show:
 - `Connected`
 - `Disconnected`
 
-When available, the `reason` attribute contains the latest disconnect/connect reason.
+When available, `reason` shows the current websocket reason and `last_disconnect_reason` keeps the latest disconnect reason after reconnect.
 
 ## Reauthentication
 
@@ -121,20 +81,6 @@ If Homely rejects stored credentials, Home Assistant can start a reauthenticatio
 - Enter updated Homely credentials
 - The config entry reloads with the new credentials
 
-## Diagnostics
-
-The integration exposes diagnostics data for support and debugging.
-
-- credentials and tokens are redacted
-- device ids, serial numbers, and location identifiers are redacted
-- websocket status, cache age, last successful poll age, and last websocket event are included in sanitized form
-
-## Documentation status
-
-- `manifest.json` currently points to this repository's `documentation.md`, because the official Home Assistant docs page is not live yet.
-- The submission-ready Home Assistant documentation draft lives in [`homely.markdown`](homely.markdown).
-- Importable automation blueprints that match the draft examples live in [`blueprints/automation/homely`](blueprints/automation/homely).
-
 ## Remove stale devices
 
 If Homely stops reporting a device, you can remove it manually in Home Assistant:
@@ -142,27 +88,13 @@ If Homely stops reporting a device, you can remove it manually in Home Assistant
 2. Open the stale device.
 3. Click **Delete device**.
 
-The integration only allows deleting device-level Homely devices that are no longer present in the latest API data. Location-level Homely devices are protected and cannot be deleted.
+The integration only allows deleting Homely devices that are no longer present in the latest API data. The home device itself is protected and cannot be deleted.
 
 ## Polling and WebSocket behavior
 
-- WebSocket applies supported updates directly to cached data for fast state updates.
-- Reconnect attempts run continuously every 5 minutes when disconnected.
-
-Behavior depends on your options:
-
 - `Enable WebSocket = on` and `Polling while WebSocket is connected = on`:
-  Polling continues at configured interval, and WebSocket gives extra real-time updates.
+  Polling continues at the configured interval, and WebSocket provides live updates.
 - `Enable WebSocket = on` and `Polling while WebSocket is connected = off`:
-  Polling pauses while WebSocket is connected. If WebSocket disconnects, the integration requests an immediate refresh and then continues normal polling until WebSocket reconnects at configured interval.
+  Polling pauses while WebSocket is connected. If WebSocket disconnects, the integration requests an immediate refresh and then continues polling until WebSocket reconnects.
 - `Enable WebSocket = off`:
   Polling-only mode.
-
-### Should polling stay on when WebSocket is on?
-
-- Keep polling `on` if you want periodic full refresh in addition to live events.
-  This can be useful if some device data changes are not always pushed as WebSocket events, or if you prefer extra safety against missed events.
-- Set polling `off` if you want lower API traffic and mostly real-time updates from WebSocket only.
-  This is typically fine when WebSocket events cover your use case well.
-
-Practical tradeoff: `on` = more robust consistency, `off` = less API load.

@@ -20,7 +20,9 @@ from custom_components.homely import (
     _device_id_snapshot,
     _missing_location_issue_id,
     _log_startup_device_payloads,
+    _pending_import_locations,
     _redact_for_debug_logging,
+    _schedule_pending_location_imports,
     async_reload_entry,
     async_migrate_entry,
     async_remove_config_entry_device,
@@ -31,12 +33,15 @@ from custom_components.homely.const import (
     CONF_ENABLE_WEBSOCKET,
     CONF_HOME_ID,
     CONF_LOCATION_ID,
+    CONF_PASSWORD,
+    CONF_PENDING_IMPORT_LOCATIONS,
     CONF_POLL_WHEN_WEBSOCKET,
     CONF_SCAN_INTERVAL,
+    CONF_USERNAME,
     DOMAIN,
 )
 from custom_components.homely.models import HomelyRuntimeData
-from tests.common import LOCATION_ID, build_config_entry
+from tests.common import LOCATION_ID, SECOND_LOCATION_ID, build_config_entry
 
 
 class _FakeHomelyWebSocket:
@@ -215,6 +220,102 @@ async def test_async_setup_entry_loads_runtime_data(
     assert runtime_data.coordinator.data["alarmState"] == "ARMED_AWAY"
 
 
+def test_pending_import_locations_ignores_invalid_items():
+    """Pending import metadata should be sanitized before use."""
+    entry = build_config_entry(
+        data_overrides={
+            CONF_PENDING_IMPORT_LOCATIONS: [
+                {
+                    CONF_LOCATION_ID: SECOND_LOCATION_ID,
+                    "title": "Cabin",
+                },
+                {"title": "Missing id"},
+                "bad-item",
+            ]
+        }
+    )
+
+    assert _pending_import_locations(entry) == [
+        {
+            CONF_LOCATION_ID: SECOND_LOCATION_ID,
+            "title": "Cabin",
+        }
+    ]
+
+
+async def test_schedule_pending_location_imports_starts_import_flows_and_clears_data(
+    hass,
+):
+    """Setup helper should queue missing locations and remove internal metadata."""
+    entry = build_config_entry(
+        data_overrides={
+            CONF_PENDING_IMPORT_LOCATIONS: [
+                {
+                    CONF_LOCATION_ID: SECOND_LOCATION_ID,
+                    "title": "Cabin",
+                }
+            ]
+        }
+    )
+    entry.add_to_hass(hass)
+
+    async_init = AsyncMock(return_value={"type": "create_entry"})
+    create_task = MagicMock(side_effect=lambda coro: coro.close())
+
+    with (
+        patch.object(hass.config_entries.flow, "async_init", async_init),
+        patch.object(hass, "async_create_task", create_task),
+    ):
+        _schedule_pending_location_imports(hass, entry)
+
+    async_init.assert_called_once_with(
+        DOMAIN,
+        context={"source": "import"},
+        data={
+            CONF_USERNAME: entry.data[CONF_USERNAME],
+            CONF_PASSWORD: entry.data[CONF_PASSWORD],
+            CONF_LOCATION_ID: SECOND_LOCATION_ID,
+            "title": "Cabin",
+        },
+    )
+    create_task.assert_called_once()
+    assert CONF_PENDING_IMPORT_LOCATIONS not in entry.data
+
+
+async def test_schedule_pending_location_imports_skips_locations_already_added(
+    hass,
+):
+    """Setup helper should not queue duplicates when another entry exists."""
+    entry = build_config_entry(
+        data_overrides={
+            CONF_PENDING_IMPORT_LOCATIONS: [
+                {
+                    CONF_LOCATION_ID: SECOND_LOCATION_ID,
+                    "title": "Cabin",
+                }
+            ]
+        }
+    )
+    entry.add_to_hass(hass)
+    build_config_entry(
+        data_overrides={CONF_LOCATION_ID: SECOND_LOCATION_ID},
+        unique_id=SECOND_LOCATION_ID,
+    ).add_to_hass(hass)
+
+    async_init = AsyncMock()
+    create_task = MagicMock(side_effect=lambda coro: coro.close())
+
+    with (
+        patch.object(hass.config_entries.flow, "async_init", async_init),
+        patch.object(hass, "async_create_task", create_task),
+    ):
+        _schedule_pending_location_imports(hass, entry)
+
+    async_init.assert_not_called()
+    create_task.assert_not_called()
+    assert CONF_PENDING_IMPORT_LOCATIONS not in entry.data
+
+
 async def test_async_setup_entry_invalid_auth_raises(hass):
     """Invalid credentials during setup should trigger reauthentication."""
     config_entry = build_config_entry()
@@ -380,7 +481,7 @@ async def test_async_setup_entry_invalid_home_mapping_raises_not_ready(
         _missing_location_issue_id(config_entry.entry_id),
     )
     assert issue is not None
-    assert issue.is_fixable is True
+    assert issue.is_fixable is False
 
 
 async def test_async_setup_entry_missing_configured_location_creates_repair_issue(
@@ -412,6 +513,7 @@ async def test_async_setup_entry_missing_configured_location_creates_repair_issu
         _missing_location_issue_id(config_entry.entry_id),
     )
     assert issue is not None
+    assert issue.is_fixable is False
     assert issue.translation_key == "configured_location_missing"
 
 
@@ -429,7 +531,7 @@ async def test_async_setup_entry_clears_missing_location_repair_issue_on_success
         DOMAIN,
         _missing_location_issue_id(config_entry.entry_id),
         data={"entry_id": config_entry.entry_id},
-        is_fixable=True,
+        is_fixable=False,
         is_persistent=True,
         severity=ir.IssueSeverity.ERROR,
         translation_key="configured_location_missing",
@@ -1854,9 +1956,18 @@ async def test_async_setup_entry_websocket_callbacks_update_runtime_and_listener
 
     assert runtime_data.ws_status == "Disconnected"
     assert runtime_data.ws_status_reason == "network error: boom"
+    assert runtime_data.last_disconnect_reason == "network error: boom"
     listener.assert_called_once()
     runtime_data.coordinator.async_update_listeners.assert_called()
     runtime_data.coordinator.async_request_refresh.assert_awaited_once()
+
+    with patch.object(hass.loop, "call_soon_threadsafe", side_effect=lambda cb: cb()):
+        ws.status_update_callback("Connected", "event received")
+    await hass.async_block_till_done()
+
+    assert runtime_data.ws_status == "Connected"
+    assert runtime_data.ws_status_reason == "event received"
+    assert runtime_data.last_disconnect_reason == "network error: boom"
 
     runtime_data.last_data_activity_monotonic = 0
 

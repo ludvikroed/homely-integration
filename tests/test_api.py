@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import aiohttp
@@ -292,6 +293,66 @@ async def test_fetch_refresh_token_tracks_last_result_for_current_task(hass):
     assert result is not None
     assert result.reason == "invalid_refresh_token"
     assert result.status == 401
+
+
+def test_refresh_helper_formatting_and_reason_mapping():
+    """Helper utilities should normalize previews and failure descriptions."""
+    assert api._body_preview("\n hello\nworld \n") == "hello world"
+    assert api._body_preview("   ") is None
+    assert api._payload_preview({"a": 1}).startswith("{'a': 1}")
+    assert api._refresh_token_failure_reason(401) == "invalid_refresh_token"
+    assert api._refresh_token_failure_reason(500) == "http_error"
+    assert api.describe_refresh_token_failure(None) == "reason=unknown"
+    assert api.describe_refresh_token_failure(
+        api.RefreshTokenResult(response={"access_token": "token"}, status=200)
+    ) == "reason=success"
+
+
+async def test_fetch_refresh_token_details_supports_sdk_payload_validation(hass):
+    """SDK-native refresh helpers should still validate payload structure."""
+    client = SimpleNamespace(
+        fetch_refresh_token_details=AsyncMock(
+            side_effect=[
+                SimpleNamespace(raw=["bad"], status=200),
+                SimpleNamespace(raw={"access_token": "token"}, status=200),
+                SimpleNamespace(
+                    raw={"access_token": "token", "expires_in": "bad"},
+                    status=200,
+                ),
+                SimpleNamespace(
+                    raw={
+                        "access_token": "token",
+                        "refresh_token": "refresh",
+                        "expires_in": 1800,
+                    },
+                    status=200,
+                ),
+            ]
+        )
+    )
+
+    with patch("custom_components.homely.api._client", return_value=client):
+        invalid_type = await api.fetch_refresh_token_details(hass, "refresh")
+        missing_fields = await api.fetch_refresh_token_details(hass, "refresh")
+        invalid_expires = await api.fetch_refresh_token_details(hass, "refresh")
+        success = await api.fetch_refresh_token_details(hass, "refresh")
+
+    assert invalid_type.reason == "invalid_payload"
+    assert invalid_type.detail == "unexpected payload type=list"
+    assert invalid_type.body_preview == "['bad']"
+
+    assert missing_fields.reason == "invalid_payload"
+    assert missing_fields.detail == "missing access_token or expires_in"
+
+    assert invalid_expires.reason == "invalid_payload"
+    assert "invalid_expires_in" in (invalid_expires.detail or "")
+
+    assert success.response == {
+        "access_token": "token",
+        "refresh_token": "refresh",
+        "expires_in": 1800,
+    }
+    assert success.status == 200
 
 
 async def test_get_location_id_handles_failure_status_and_network_error(hass):

@@ -328,6 +328,12 @@ async def async_init_websocket(
                 previous_status = runtime.ws_status
                 runtime.ws_status = status
                 runtime.ws_status_reason = reason
+                if (
+                    status == "Disconnected"
+                    and reason
+                    and reason != "manual disconnect"
+                ):
+                    runtime.last_disconnect_reason = reason
 
                 for listener in list(runtime.ws_status_listeners):
                     try:

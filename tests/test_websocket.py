@@ -222,6 +222,51 @@ def test_update_websocket_token_requests_reconnect_when_disconnected():
     )
 
 
+def test_update_websocket_token_supports_legacy_clients_without_reconnect_kwarg():
+    """Legacy websocket clients should still accept token refreshes."""
+
+    class _LegacyWebSocket:
+        def __init__(self, connected: bool, status: str) -> None:
+            self._connected = connected
+            self.status = status
+            self.tokens: list[str] = []
+
+        def is_connected(self) -> bool:
+            return self._connected
+
+        def update_token(self, token: str, reconnect_if_disconnected=None) -> None:
+            if reconnect_if_disconnected is not None:
+                raise TypeError("unexpected keyword argument 'reconnect_if_disconnected'")
+            self.tokens.append(token)
+
+    disconnected = _LegacyWebSocket(False, "Disconnected")
+    connected = _LegacyWebSocket(True, "Connected")
+
+    disconnected_result = update_websocket_token(disconnected, "new-token")
+    connected_result = update_websocket_token(connected, "fresh-token")
+
+    assert disconnected_result == "legacy_reconnect"
+    assert disconnected.tokens == ["new-token"]
+    assert connected_result == "legacy_no_reconnect"
+    assert connected.tokens == ["fresh-token"]
+
+
+def test_update_websocket_token_reraises_unrelated_type_errors():
+    """Unexpected TypeError values should not be swallowed as legacy behavior."""
+    websocket = SimpleNamespace(
+        is_connected=lambda: False,
+        status="Disconnected",
+        update_token=MagicMock(side_effect=TypeError("boom")),
+    )
+
+    try:
+        update_websocket_token(websocket, "new-token")
+    except TypeError as err:
+        assert str(err) == "boom"
+    else:
+        raise AssertionError("Expected TypeError to be re-raised")
+
+
 def test_websocket_reconnect_interval_backoff_schedule():
     """Reconnect backoff should be quick at first, then slow down."""
     ws = HomelyWebSocket(

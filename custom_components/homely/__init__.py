@@ -4,17 +4,17 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import timedelta
 from typing import Any
 
+from homeassistant import config_entries
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.device_registry import DeviceEntry
-
-from datetime import timedelta
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from .api import (
     clear_last_refresh_token_result,
     fetch_refresh_token,
@@ -29,8 +29,11 @@ from .const import (
     CONF_ENABLE_WEBSOCKET,
     CONF_HOME_ID,
     CONF_LOCATION_ID,
+    CONF_PASSWORD,
+    CONF_PENDING_IMPORT_LOCATIONS,
     CONF_POLL_WHEN_WEBSOCKET,
     CONF_SCAN_INTERVAL,
+    CONF_USERNAME,
     DEFAULT_ENABLE_WEBSOCKET,
     DEFAULT_HOME_ID,
     DEFAULT_POLL_WHEN_WEBSOCKET,
@@ -105,13 +108,13 @@ def _create_missing_location_issue(
     entry: ConfigEntry,
     location_identifier: str,
 ) -> None:
-    """Create a fixable repair issue when the configured location is unavailable."""
+    """Create a repair issue when the configured location is unavailable."""
     ir.async_create_issue(
         hass,
         DOMAIN,
         _missing_location_issue_id(entry.entry_id),
         data={"entry_id": entry.entry_id},
-        is_fixable=True,
+        is_fixable=False,
         is_persistent=True,
         severity=ir.IssueSeverity.ERROR,
         translation_key="configured_location_missing",
@@ -155,6 +158,90 @@ def _set_alarm_state(data: dict[str, Any], alarm_state: Any) -> None:
     alarm_state_dict["value"] = alarm_state
 
 
+def _pending_import_locations(
+    entry: ConfigEntry,
+) -> list[dict[str, str]]:
+    """Return sanitized pending multi-location imports from entry data."""
+    pending_imports = entry.data.get(CONF_PENDING_IMPORT_LOCATIONS, [])
+    if not isinstance(pending_imports, list):
+        return []
+
+    sanitized: list[dict[str, str]] = []
+    for item in pending_imports:
+        if not isinstance(item, dict):
+            continue
+
+        location_id = item.get(CONF_LOCATION_ID)
+        if location_id is None:
+            continue
+
+        sanitized.append(
+            {
+                CONF_LOCATION_ID: str(location_id),
+                "title": str(item.get("title") or "").strip(),
+            }
+        )
+
+    return sanitized
+
+
+def _clear_pending_import_locations(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+) -> None:
+    """Remove internal pending-import metadata after scheduling."""
+    if CONF_PENDING_IMPORT_LOCATIONS not in entry.data:
+        return
+
+    updated_data = dict(entry.data)
+    updated_data.pop(CONF_PENDING_IMPORT_LOCATIONS, None)
+    hass.config_entries.async_update_entry(entry, data=updated_data)
+
+
+def _schedule_pending_location_imports(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+) -> None:
+    """Schedule config flows for additional unconfigured locations."""
+    pending_imports = _pending_import_locations(entry)
+    if not pending_imports:
+        return
+
+    username = entry.data.get(CONF_USERNAME)
+    password = entry.data.get(CONF_PASSWORD)
+    if not username or not password:
+        _clear_pending_import_locations(hass, entry)
+        return
+
+    existing_location_ids = {
+        str(existing_entry.data.get(CONF_LOCATION_ID))
+        for existing_entry in hass.config_entries.async_entries(DOMAIN)
+        if existing_entry.entry_id != entry.entry_id
+        and existing_entry.data.get(CONF_LOCATION_ID) is not None
+    }
+
+    for pending in pending_imports:
+        location_id = pending[CONF_LOCATION_ID]
+        if location_id in existing_location_ids:
+            continue
+
+        hass.async_create_task(
+            hass.config_entries.flow.async_init(
+                DOMAIN,
+                context={"source": config_entries.SOURCE_IMPORT},
+                data={
+                    CONF_USERNAME: username,
+                    CONF_PASSWORD: password,
+                    CONF_LOCATION_ID: location_id,
+                    "title": pending["title"],
+                },
+            )
+        )
+        existing_location_ids.add(location_id)
+
+    _clear_pending_import_locations(hass, entry)
+
+
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Migrate old config entries to newer structure."""
     if entry.version > 2:
@@ -191,8 +278,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> bo
     """Set up Homely Alarm from a config entry."""
     entry_id = entry.entry_id
     _LOGGER.debug("Setting up Homely Alarm entry entry_id=%s", entry_id)
-    username = entry.data.get("username")
-    password = entry.data.get("password")
+    username = entry.data.get(CONF_USERNAME)
+    password = entry.data.get(CONF_PASSWORD)
     if not username or not password:
         raise ConfigEntryAuthFailed("Homely credentials are missing")
 
@@ -450,6 +537,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> bo
 
     await coordinator.async_config_entry_first_refresh()
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    _schedule_pending_location_imports(hass, entry)
 
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
 
