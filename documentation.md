@@ -1,6 +1,6 @@
 # Homely Integration Documentation
 
-This file contains practical details for users who want more than quick setup.
+This file contains practical details for users who want more information about this integration. 
 
 ## API coverage and missing devices
 
@@ -98,3 +98,27 @@ The integration only allows deleting Homely devices that are no longer present i
   Polling pauses while WebSocket is connected. If WebSocket disconnects, the integration requests an immediate refresh and then continues polling until WebSocket reconnects.
 - `Enable WebSocket = off`:
   Polling-only mode.
+
+## Contributing
+
+Contributions are very welcome, and I really appreciate everyone who takes the time to help improve this integration.
+
+### Reporting issues
+
+If something does not work as expected, please open a GitHub issue and choose the matching form:
+
+- [Bug report form](https://github.com/ludvikroed/homely-integration/issues/new?template=bug_report.yml)
+- [Missing device or sensor issue form](https://github.com/ludvikroed/homely-integration/issues/new?template=missing_sensors_devices.yml)
+- [All issue forms](https://github.com/ludvikroed/homely-integration/issues/new/choose)
+
+##### Ideas and contributions
+
+If you have an idea, a feature request, or something that should be improved, please open a GitHub issue.
+
+##### Pull requests
+
+Before opening a pull request, run:
+
+- `python -m ruff check custom_components tests`
+- `pytest`
+- `python -m mypy --config-file mypy.ini -p custom_components.homely`

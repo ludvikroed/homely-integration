@@ -29,8 +29,6 @@ from .const import (
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
 )
-from .models import HomelyConfigEntry
-
 _LOGGER = logging.getLogger(__name__)
 LOCATION_SELECTION_ALL = "__all_locations__"
 
@@ -351,7 +349,7 @@ class HomelyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         self._clear_pending_user_selection()
 
-        entry_data = {
+        entry_data: dict[str, Any] = {
             CONF_USERNAME: username,
             CONF_PASSWORD: password,
             CONF_LOCATION_ID: normalized_location_id,
