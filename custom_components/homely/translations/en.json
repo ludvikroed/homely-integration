@@ -141,6 +141,9 @@
       "temperature": {
         "name": "Temperature"
       },
+      "motion_sensitivity": {
+        "name": "Motion sensitivity"
+      },
       "sound_volume": {
         "name": "Sound volume",
         "state": {
@@ -189,6 +192,12 @@
           "disconnected": "Disconnected",
           "unknown": "Unknown"
         }
+      },
+      "last_successful_poll": {
+        "name": "Last successful poll"
+      },
+      "last_websocket_message": {
+        "name": "Last WebSocket message"
       }
     }
   }

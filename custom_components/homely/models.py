@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from time import monotonic
 from typing import Any, cast
 
@@ -31,7 +32,9 @@ class HomelyRuntimeData:
     ws_disconnect_refresh_monotonic: float = 0.0
     last_successful_poll_monotonic: float = field(default_factory=monotonic)
     last_data_activity_monotonic: float = field(default_factory=monotonic)
+    last_successful_poll_at: datetime | None = None
     last_websocket_event_monotonic: float | None = None
+    last_websocket_event_at: datetime | None = None
     last_websocket_event_type: str | None = None
     api_available: bool = True
     tracked_device_ids: set[str] = field(default_factory=set)

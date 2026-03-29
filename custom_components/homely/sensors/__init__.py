@@ -78,6 +78,15 @@ SENSORS: list[dict[str, Any]] = [
         ),
     },
     {
+        "path": "features.alarm.states.sensitivitylevel.value",
+        "format": "number",
+        "type": "sensor",
+        "name": "motion_sensitivity",
+        "translation_key": "motion_sensitivity",
+        "device_suffix": "sensitivitylevel",
+        "icon": "mdi:tune-vertical",
+    },
+    {
         "path": "features.alarm.states.fire.value",
         "format": "boolean",
         "type": "binary_sensor",

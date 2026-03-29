@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from time import monotonic
 from typing import Any
 
+from homeassistant.util import dt as dt_util
+
 from .models import HomelyConfigEntry, HomelyRuntimeData
 
 
@@ -139,6 +141,7 @@ def record_successful_poll(runtime_data: HomelyRuntimeData, at: float | None = N
     timestamp = monotonic() if at is None else at
     runtime_data.last_successful_poll_monotonic = timestamp
     runtime_data.last_data_activity_monotonic = timestamp
+    runtime_data.last_successful_poll_at = dt_util.utcnow()
 
 
 def record_websocket_event(
@@ -151,6 +154,7 @@ def record_websocket_event(
     """Record the most recent websocket event and optional data activity."""
     timestamp = monotonic() if at is None else at
     runtime_data.last_websocket_event_monotonic = timestamp
+    runtime_data.last_websocket_event_at = dt_util.utcnow()
     runtime_data.last_websocket_event_type = event_type
     if update_data_activity:
         runtime_data.last_data_activity_monotonic = timestamp

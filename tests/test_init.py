@@ -6,6 +6,7 @@ import logging
 import time
 from contextlib import ExitStack
 from copy import deepcopy
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -218,6 +219,7 @@ async def test_async_setup_entry_loads_runtime_data(
     assert runtime_data.location_id == LOCATION_ID
     assert runtime_data.last_data["name"] == "JF23"
     assert runtime_data.coordinator.data["alarmState"] == "ARMED_AWAY"
+    assert runtime_data.last_successful_poll_at is not None
 
 
 def test_pending_import_locations_ignores_invalid_items():
@@ -818,6 +820,99 @@ async def test_coordinator_update_method_forced_refresh_bypasses_websocket_skip(
     get_data_with_status.assert_awaited_once()
 
 
+async def test_async_setup_entry_registers_periodic_refresh_when_websocket_polling_is_disabled(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """A 6-hour fallback refresh should be registered for websocket-backed entries."""
+    tracked_intervals: list[timedelta] = []
+
+    def _capture_interval(_hass, _action, interval):
+        tracked_intervals.append(interval)
+        return lambda: None
+
+    config_entry = build_config_entry(
+        options={
+            CONF_ENABLE_WEBSOCKET: True,
+            CONF_POLL_WHEN_WEBSOCKET: False,
+        }
+    )
+
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+        extra_patches=(
+            patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),
+            patch(
+                "custom_components.homely.websocket_runtime.async_track_time_interval",
+                side_effect=_capture_interval,
+            ),
+        ),
+    )
+
+    assert tracked_intervals == [timedelta(hours=6)]
+
+
+async def test_async_setup_entry_periodic_websocket_refresh_forces_api_poll(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Periodic websocket-backed refreshes should force an API poll once."""
+    periodic_callbacks = []
+
+    def _capture_interval(_hass, action, _interval):
+        periodic_callbacks.append(action)
+        return lambda: None
+
+    _FakeHomelyWebSocket.reset()
+    config_entry = build_config_entry(
+        options={
+            CONF_ENABLE_WEBSOCKET: True,
+            CONF_POLL_WHEN_WEBSOCKET: False,
+        }
+    )
+
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+        extra_patches=(
+            patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),
+            patch(
+                "custom_components.homely.websocket_runtime.async_track_time_interval",
+                side_effect=_capture_interval,
+            ),
+        ),
+    )
+
+    runtime_data = config_entry.runtime_data
+    assert len(periodic_callbacks) == 1
+    assert runtime_data.websocket is _FakeHomelyWebSocket.instances[0]
+
+    with patch(
+        "custom_components.homely.get_data_with_status",
+        AsyncMock(return_value=(updated_location_data, 200)),
+    ) as get_data_with_status:
+        periodic_callbacks[0](None)
+        await hass.async_block_till_done()
+
+    get_data_with_status.assert_awaited_once()
+    assert runtime_data.force_api_refresh_once is False
+
+
 async def test_coordinator_update_method_uses_cached_data_on_transient_error(
     hass,
     token_response,
@@ -1154,11 +1249,17 @@ async def test_coordinator_update_method_refreshes_via_full_login_and_updates_we
             AsyncMock(return_value=(updated_location_data, 200)),
         ),
     ):
+        previous_poll_at = runtime_data.last_successful_poll_at
         result = await runtime_data.coordinator.update_method()
 
     assert result["alarmState"] == "ARMED_AWAY"
     assert runtime_data.access_token == "new-access-token"
     assert runtime_data.refresh_token == "new-refresh-token"
+    assert runtime_data.last_successful_poll_at is not None
+    assert (
+        previous_poll_at is None
+        or runtime_data.last_successful_poll_at >= previous_poll_at
+    )
     websocket.update_token.assert_called_once_with(
         "new-access-token",
         reconnect_if_disconnected=True,
@@ -2012,6 +2113,8 @@ async def test_async_setup_entry_websocket_callbacks_update_runtime_and_listener
     assert runtime_data.last_disconnect_reason == "network error: boom"
 
     runtime_data.last_data_activity_monotonic = 0
+    runtime_data.last_websocket_event_at = None
+    runtime_data.last_websocket_event_type = None
 
     ws.on_data_update(
         {
@@ -2021,6 +2124,8 @@ async def test_async_setup_entry_websocket_callbacks_update_runtime_and_listener
     )
     assert runtime_data.last_data["alarmState"] == "ARMED_AWAY"
     assert runtime_data.last_data_activity_monotonic > 0
+    assert runtime_data.last_websocket_event_at is not None
+    assert runtime_data.last_websocket_event_type == "alarm-state-changed"
 
     ws.on_data_update(
         {
@@ -2041,6 +2146,7 @@ async def test_async_setup_entry_websocket_callbacks_update_runtime_and_listener
         ]
         is True
     )
+    assert runtime_data.last_websocket_event_type == "device-state-changed"
 
     runtime_data.coordinator.async_request_refresh.reset_mock()
     ws.on_data_update(
@@ -2060,8 +2166,14 @@ async def test_async_setup_entry_websocket_callbacks_update_runtime_and_listener
     assert runtime_data.force_api_refresh_once is True
     runtime_data.coordinator.async_request_refresh.assert_awaited_once()
 
+    previous_listener_calls = runtime_data.coordinator.async_update_listeners.call_count
     ws.on_data_update({"type": "disconnect"})
     ws.on_data_update({"type": "unsupported-event"})
+    assert runtime_data.last_websocket_event_type == "unsupported-event"
+    assert (
+        runtime_data.coordinator.async_update_listeners.call_count
+        == previous_listener_calls + 1
+    )
 
 
 async def test_async_setup_entry_websocket_handles_connect_failure_and_internet_event(
@@ -2272,7 +2384,9 @@ async def test_async_setup_entry_websocket_callback_handles_no_direct_device_cha
     ):
         ws.on_data_update({"type": "device-state-changed"})
 
-    runtime_data.coordinator.async_update_listeners.assert_not_called()
+    runtime_data.coordinator.async_update_listeners.assert_called_once()
+    assert runtime_data.last_websocket_event_type == "device-state-changed"
+    assert runtime_data.last_websocket_event_at is not None
 
 
 async def test_async_setup_entry_ignores_stale_websocket_callbacks_after_runtime_replacement(

@@ -53,6 +53,7 @@ from .runtime_state import (
     cached_data_grace_seconds,
     current_runtime_data,
     device_id_snapshot,
+    record_successful_poll,
     tracked_api_device_ids,
 )
 from .websocket import HomelyWebSocket
@@ -60,6 +61,7 @@ from .websocket_runtime import (
     async_init_websocket,
     build_device_topology_change_handler,
     register_internet_available_listener,
+    register_websocket_connected_poll_fallback,
 )
 from .ws_updates import apply_websocket_event_to_data
 
@@ -482,6 +484,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> bo
         last_data=data,
         tracked_device_ids=_device_id_snapshot(data),
     )
+    record_successful_poll(runtime_data)
     entry.runtime_data = runtime_data
 
     if enable_websocket:
@@ -528,6 +531,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> bo
                 entry_id,
                 location_id,
             )
+        if not poll_when_websocket:
+            try:
+                periodic_poll_unsub = register_websocket_connected_poll_fallback(
+                    hass=hass,
+                    entry=entry,
+                    location_id=location_id,
+                    logger=_LOGGER,
+                    runtime_data_getter=_runtime_data,
+                    coordinator=coordinator,
+                    ctx=_ctx,
+                )
+                if periodic_poll_unsub is None:
+                    raise RuntimeError("listener registration unavailable")
+                entry.async_on_unload(periodic_poll_unsub)
+            except Exception:
+                _LOGGER.debug(
+                    "Could not register periodic websocket-backed API refresh entry_id=%s location_id=%s",
+                    entry_id,
+                    location_id,
+                )
     else:
         _LOGGER.debug(
             "WebSocket disabled in options entry_id=%s location_id=%s; using polling only",

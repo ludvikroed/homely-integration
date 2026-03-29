@@ -30,7 +30,6 @@ PARALLEL_UPDATES = 0
 SensorConfig = dict[str, Any]
 FallbackDataGetter = Callable[[], dict[str, Any] | None]
 DIAGNOSTIC_ENTITY_CATEGORY = getattr(entity_helper, "EntityCategory").DIAGNOSTIC
-CONFIG_ENTITY_CATEGORY = getattr(entity_helper, "EntityCategory").CONFIG
 WEBSOCKET_STATUS_OPTIONS = [
     "disabled",
     "not_initialized",
@@ -66,6 +65,33 @@ async def async_setup_entry(
 
     entities: list[SensorEntity] = []
     entities.append(HomelyWebSocketStatusSensor(coordinator, hass, entry, location_id))
+    entities.append(
+        HomelyRuntimeTimestampSensor(
+            coordinator,
+            entry,
+            location_id,
+            translation_key="last_successful_poll",
+            unique_suffix="last_successful_poll",
+            icon="mdi:clock-check-outline",
+            value_getter=lambda runtime_data: runtime_data.last_successful_poll_at,
+        )
+    )
+    entities.append(
+        HomelyRuntimeTimestampSensor(
+            coordinator,
+            entry,
+            location_id,
+            translation_key="last_websocket_message",
+            unique_suffix="last_websocket_message",
+            icon="mdi:message-outline",
+            value_getter=lambda runtime_data: runtime_data.last_websocket_event_at,
+            extra_attributes_getter=lambda runtime_data: (
+                {"event_type": runtime_data.last_websocket_event_type}
+                if runtime_data.last_websocket_event_type
+                else None
+            ),
+        )
+    )
 
     devices = data.get("devices", [])
     if not isinstance(devices, list):
@@ -156,8 +182,6 @@ class HomelySensor(CoordinatorEntity, SensorEntity):
             category = sensor_config["entity_category"]
             if category == "diagnostic":
                 self._attr_entity_category = DIAGNOSTIC_ENTITY_CATEGORY
-            elif category == "config":
-                self._attr_entity_category = CONFIG_ENTITY_CATEGORY
 
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, self._device_id)},
@@ -343,3 +367,59 @@ class HomelyWebSocketStatusSensor(CoordinatorEntity, SensorEntity):
         except (AttributeError, ValueError):
             return None
         return attributes or None
+
+
+class HomelyRuntimeTimestampSensor(CoordinatorEntity, SensorEntity):
+    """Timestamp sensor backed by runtime metadata for a location."""
+
+    def __init__(
+        self,
+        coordinator: DataUpdateCoordinator[dict[str, Any]],
+        entry: HomelyConfigEntry,
+        location_id: str,
+        *,
+        translation_key: str,
+        unique_suffix: str,
+        icon: str,
+        value_getter: Callable[[Any], Any],
+        extra_attributes_getter: Callable[[Any], dict[str, Any] | None] | None = None,
+    ) -> None:
+        super().__init__(coordinator)
+        self._attr_has_entity_name = True
+        self._runtime_data = get_entry_runtime_data(entry)
+        self._value_getter = value_getter
+        self._extra_attributes_getter = extra_attributes_getter
+        self._attr_translation_key = translation_key
+        self._attr_unique_id = f"location_{location_id}_{unique_suffix}"
+        self._attr_icon = icon
+        self._attr_entity_category = DIAGNOSTIC_ENTITY_CATEGORY
+        self._attr_device_class = SensorDeviceClass.TIMESTAMP
+        location_name = str(
+            (self._runtime_data.last_data or {}).get("name", "Location")
+        )
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"location_{location_id}")},
+            name=location_name,
+            manufacturer="Homely",
+            model="Homely",
+            entry_type=DeviceEntryType.SERVICE,
+        )
+
+    @property
+    def native_value(self) -> Any:
+        """Return the current timestamp value."""
+        try:
+            value = self._value_getter(self._runtime_data)
+        except (AttributeError, ValueError):
+            return None
+        return value
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Expose optional runtime metadata."""
+        if self._extra_attributes_getter is None:
+            return None
+        try:
+            return self._extra_attributes_getter(self._runtime_data)
+        except (AttributeError, ValueError):
+            return None

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from custom_components.homely.models import HomelyRuntimeData
 from custom_components.homely.sensor import (
@@ -38,6 +40,23 @@ def test_sensor_entity_reads_transformed_values(location_data):
     entity = HomelySensor(coordinator, han_device, consumption)
 
     assert entity.native_value == 769.67
+
+
+def test_motion_sensitivity_sensor_exposes_config_value(location_data):
+    """Motion sensors should expose the configured sensitivity level."""
+    coordinator = MagicMock()
+    coordinator.data = location_data
+    coordinator.last_update_success = True
+
+    motion_device = location_data["devices"][0]
+    discovered = discover_device_sensors(motion_device)
+    sensitivity = next(
+        sensor for sensor in discovered if sensor["device_suffix"] == "sensitivitylevel"
+    )
+    entity = HomelySensor(coordinator, motion_device, sensitivity)
+
+    assert entity.native_value == 1
+    assert entity.entity_category is None
 
 
 def test_lock_info_sensors_expose_language_and_sound(location_data):
@@ -185,8 +204,8 @@ def test_sensor_entity_becomes_unavailable_when_device_is_offline(location_data)
     assert entity.available is False
 
 
-def test_sensor_entity_supports_config_category(location_data):
-    """Config-category sensors should map to the proper HA entity category."""
+def test_sensor_entity_ignores_config_category(location_data):
+    """Plain sensors should not expose config entity category."""
     coordinator = MagicMock()
     coordinator.data = location_data
     coordinator.last_update_success = True
@@ -199,7 +218,7 @@ def test_sensor_entity_supports_config_category(location_data):
     }
 
     entity = HomelySensor(coordinator, motion_device, sensor_config)
-    assert entity.entity_category is not None
+    assert entity.entity_category is None
 
 
 def test_websocket_status_sensor_uses_runtime_data(hass, location_data):
@@ -267,6 +286,40 @@ def test_websocket_status_sensor_reports_disabled_when_websocket_is_off(
     assert "disabled" in entity.options
 
 
+async def test_runtime_timestamp_sensors_use_runtime_data(hass, location_data):
+    """Runtime timestamp sensors should expose the latest poll and websocket times."""
+    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: True})
+    last_poll_at = dt_util.utcnow()
+    last_ws_at = last_poll_at + timedelta(seconds=5)
+    runtime_data = HomelyRuntimeData(
+        coordinator=SimpleNamespace(data=location_data),
+        access_token="access",
+        refresh_token="refresh",
+        expires_at=0,
+        location_id=LOCATION_ID,
+        last_data=location_data,
+        last_successful_poll_at=last_poll_at,
+        last_websocket_event_at=last_ws_at,
+        last_websocket_event_type="device-state-changed",
+    )
+    config_entry.runtime_data = runtime_data
+    collected = []
+
+    await async_setup_entry(hass, config_entry, collected.extend)
+
+    by_unique_id = {entity.unique_id: entity for entity in collected}
+    assert (
+        by_unique_id[f"location_{LOCATION_ID}_last_successful_poll"].native_value
+        == last_poll_at
+    )
+    websocket_message = by_unique_id[f"location_{LOCATION_ID}_last_websocket_message"]
+    assert websocket_message.native_value == last_ws_at
+    assert websocket_message.icon == "mdi:message-outline"
+    assert websocket_message.extra_state_attributes == {
+        "event_type": "device-state-changed"
+    }
+
+
 async def test_sensor_async_setup_entry_creates_ws_status_and_device_sensors(
     hass, location_data
 ):
@@ -286,6 +339,9 @@ async def test_sensor_async_setup_entry_creates_ws_status_and_device_sensors(
 
     unique_ids = {entity.unique_id for entity in collected}
     assert f"location_{LOCATION_ID}_websocket_status" in unique_ids
+    assert f"location_{LOCATION_ID}_last_successful_poll" in unique_ids
+    assert f"location_{LOCATION_ID}_last_websocket_message" in unique_ids
+    assert "70b9db72-5c00-4316-9ffa-ac7bf60fcb47_sensitivitylevel" in unique_ids
     assert "70b9db72-5c00-4316-9ffa-ac7bf60fcb47_temperature" in unique_ids
     assert "6c120e85-e8d5-49ac-abc0-baa29f9243b7_soundvolume" in unique_ids
     assert "6c120e85-e8d5-49ac-abc0-baa29f9243b7_language" in unique_ids
@@ -310,7 +366,9 @@ async def test_sensor_async_setup_entry_handles_sparse_device_lists(
     await async_setup_entry(hass, config_entry, collected.extend)
 
     assert [entity.unique_id for entity in collected] == [
-        f"location_{LOCATION_ID}_websocket_status"
+        f"location_{LOCATION_ID}_websocket_status",
+        f"location_{LOCATION_ID}_last_successful_poll",
+        f"location_{LOCATION_ID}_last_websocket_message",
     ]
 
     config_entry.runtime_data = HomelyRuntimeData(
@@ -329,6 +387,9 @@ async def test_sensor_async_setup_entry_handles_sparse_device_lists(
 
     unique_ids = {entity.unique_id for entity in collected}
     assert f"location_{LOCATION_ID}_websocket_status" in unique_ids
+    assert f"location_{LOCATION_ID}_last_successful_poll" in unique_ids
+    assert f"location_{LOCATION_ID}_last_websocket_message" in unique_ids
+    assert "70b9db72-5c00-4316-9ffa-ac7bf60fcb47_sensitivitylevel" in unique_ids
     assert "70b9db72-5c00-4316-9ffa-ac7bf60fcb47_temperature" in unique_ids
 
 

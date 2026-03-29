@@ -1,5 +1,7 @@
 # Homely Integration Documentation
 
+Looking for installation, setup, and the short overview? See [README.md](README.md).
+
 This file contains practical details for users who want more information about this integration than just the README file
 
 ## API coverage and missing devices
@@ -95,7 +97,7 @@ The integration only allows deleting Homely devices that are no longer present i
 - `Enable WebSocket = on` and `Polling while WebSocket is connected = on`:
   Polling continues at the configured interval, and WebSocket provides live updates.
 - `Enable WebSocket = on` and `Polling while WebSocket is connected = off`:
-  Polling pauses while WebSocket is connected. If WebSocket disconnects, the integration requests an immediate refresh and then continues polling until WebSocket reconnects.
+  Polling pauses while WebSocket is connected, but the integration still does a safety poll every 6 hours. If WebSocket disconnects, the integration requests an immediate refresh and then continues polling until WebSocket reconnects.
 - `Enable WebSocket = off`:
   Polling-only mode.
 

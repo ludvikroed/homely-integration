@@ -69,6 +69,7 @@ def test_discover_device_sensors_resolves_motion_lock_flood_and_han_paths(
     discovered_suffixes = {sensor["device_suffix"] for sensor in motion_discovered}
     assert {
         "alarm",
+        "sensitivitylevel",
         "tamper",
         "temperature",
         "battery_low",
@@ -80,6 +81,13 @@ def test_discover_device_sensors_resolves_motion_lock_flood_and_han_paths(
     )
     assert alarm_sensor["resolved_name"] == "motion"
     assert alarm_sensor["resolved_device_class"] == "motion"
+    assert motion_discovered[
+        next(
+            index
+            for index, sensor in enumerate(motion_discovered)
+            if sensor["device_suffix"] == "sensitivitylevel"
+        )
+    ]["value"] == 1
 
     lock_discovered = discover_device_sensors(lock_device)
     lock_suffixes = {sensor["device_suffix"] for sensor in lock_discovered}

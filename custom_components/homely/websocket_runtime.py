@@ -5,9 +5,11 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
+from datetime import timedelta
 from typing import Any, Protocol
 
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .models import HomelyConfigEntry, HomelyRuntimeData
@@ -15,6 +17,7 @@ from .runtime_state import (
     device_id_snapshot,
     record_websocket_event,
     update_runtime_websocket_state,
+    websocket_is_connected,
 )
 
 type RuntimeDataGetter = Callable[[], HomelyRuntimeData | None]
@@ -22,6 +25,8 @@ type IdentifierFormatter = Callable[[Any], str | None]
 type JsonDebugFormatter = Callable[[Any], str]
 type RedactionHelper = Callable[[Any], Any]
 type WebSocketApplyCallable = Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]
+
+WEBSOCKET_CONNECTED_FALLBACK_POLL_INTERVAL = timedelta(hours=6)
 
 
 class ContextBuilder(Protocol):
@@ -230,6 +235,8 @@ def build_websocket_data_handler(
                         update_data_activity=True,
                     )
                     coordinator.async_update_listeners()
+                else:
+                    coordinator.async_update_listeners()
                 return
 
             if event_type == "device-state-changed":
@@ -273,6 +280,7 @@ def build_websocket_data_handler(
                             str(device_id) if device_id is not None else None,
                         ),
                     )
+                    coordinator.async_update_listeners()
                 return
 
             logger.debug(
@@ -280,6 +288,8 @@ def build_websocket_data_handler(
                 ctx(entry.entry_id, location_id),
                 event_type,
             )
+            if isinstance(event_type, str):
+                coordinator.async_update_listeners()
 
         except Exception as err:
             logger.error(
@@ -507,6 +517,70 @@ def register_internet_available_listener(
     except Exception:
         logger.debug(
             "Could not register internet_available listener entry_id=%s location_id=%s",
+            entry.entry_id,
+            location_id,
+        )
+        return None
+
+
+def register_websocket_connected_poll_fallback(
+    *,
+    hass: HomeAssistant,
+    entry: HomelyConfigEntry,
+    location_id: str | int,
+    logger: logging.Logger,
+    runtime_data_getter: RuntimeDataGetter,
+    coordinator: DataUpdateCoordinator[dict[str, Any]],
+    ctx: ContextBuilder,
+) -> Any | None:
+    """Force an occasional API poll while websocket suppresses normal polling."""
+
+    async def _async_request_refresh(
+        expected_runtime: HomelyRuntimeData,
+    ) -> None:
+        """Request a one-off refresh if this runtime is still current."""
+        if runtime_data_getter() is not expected_runtime:
+            return
+
+        try:
+            await coordinator.async_request_refresh()
+        except Exception as err:
+            logger.debug(
+                "Failed to request periodic websocket-backed API refresh %s: %s",
+                ctx(entry.entry_id, location_id),
+                err,
+            )
+
+    def _periodic_refresh(_: Any) -> None:
+        """Request a forced refresh when websocket-backed polling is suppressed."""
+        runtime_data = runtime_data_getter()
+        if runtime_data is None:
+            return
+
+        if not websocket_is_connected(runtime_data):
+            logger.debug(
+                "Skipping periodic websocket-backed API refresh because websocket is not connected %s",
+                ctx(entry.entry_id, location_id),
+            )
+            return
+
+        runtime_data.force_api_refresh_once = True
+        logger.debug(
+            "Requesting periodic websocket-backed API refresh %s interval_s=%s",
+            ctx(entry.entry_id, location_id),
+            int(WEBSOCKET_CONNECTED_FALLBACK_POLL_INTERVAL.total_seconds()),
+        )
+        hass.async_create_task(_async_request_refresh(runtime_data))
+
+    try:
+        return async_track_time_interval(
+            hass,
+            _periodic_refresh,
+            WEBSOCKET_CONNECTED_FALLBACK_POLL_INTERVAL,
+        )
+    except Exception:
+        logger.debug(
+            "Could not register periodic websocket-backed API refresh entry_id=%s location_id=%s",
             entry.entry_id,
             location_id,
         )

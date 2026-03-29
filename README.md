@@ -8,6 +8,8 @@
   <a href="LICENSE"><img src="https://img.shields.io/github/license/ludvikroed/homely-integration?style=for-the-badge" alt="License"></a>
 </p>
 
+Looking for practical details, troubleshooting, and behavior notes? See [documentation.md](documentation.md).
+
 A Home Assistant integration that connects your Homely alarm system to Home Assistant using the Homely API, providing read-only, real-time monitoring of your alarm and supported devices.
 
 ## Installation & Setup
@@ -41,7 +43,7 @@ After setup, open the integration options to adjust:
 - **Polling interval**: Adjust API polling frequency in seconds as a backup for WebSocket updates
   Default is 180 seconds and the minimum is 30 seconds.
 - **WebSocket toggle**: Enable or disable instant updates
-- **Polling while WebSocket is connected**: Optional. If disabled, API polling pauses while WebSocket is connected and resumes automatically if the WebSocket disconnects
+- **Polling while WebSocket is connected**: Optional. If disabled, API polling pauses while WebSocket is connected, does a safety poll every 6 hours, and resumes automatically if the WebSocket disconnects
 
 For deeper details and value references, including sensor status values, see [documentation.md](documentation.md).
 

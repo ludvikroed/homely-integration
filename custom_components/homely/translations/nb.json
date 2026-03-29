@@ -141,6 +141,9 @@
       "temperature": {
         "name": "Temperatur"
       },
+      "motion_sensitivity": {
+        "name": "Bevegelsessensitivitet"
+      },
       "sound_volume": {
         "name": "Lydnivå",
         "state": {
@@ -189,6 +192,12 @@
           "disconnected": "Frakoblet",
           "unknown": "Ukjent"
         }
+      },
+      "last_successful_poll": {
+        "name": "Siste vellykkede polling"
+      },
+      "last_websocket_message": {
+        "name": "Siste WebSocket-melding"
       }
     }
   }
