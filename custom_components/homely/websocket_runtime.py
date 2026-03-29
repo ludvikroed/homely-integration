@@ -146,6 +146,7 @@ def build_device_topology_change_handler(
 
 def build_websocket_data_handler(
     *,
+    hass: HomeAssistant,
     entry: HomelyConfigEntry,
     location_id: str | int,
     logger: logging.Logger,
@@ -158,6 +159,18 @@ def build_websocket_data_handler(
     redact_for_debug_logging: RedactionHelper,
 ) -> Callable[[dict[str, Any]], None]:
     """Build the websocket data callback for a config entry runtime."""
+
+    def _requires_followup_refresh(applied_changes: list[dict[str, Any]]) -> bool:
+        """Return whether applied websocket changes should trigger a full API refresh."""
+        for change in applied_changes:
+            feature = change.get("feature")
+            state_name = change.get("state_name")
+            if feature == "lock" and state_name in {
+                "soundvolume",
+                "language",
+            }:
+                return True
+        return False
 
     def on_websocket_data(event_data: dict[str, Any]) -> None:
         """Handle websocket data updates and update local cache directly."""
@@ -243,6 +256,13 @@ def build_websocket_data_handler(
                             change.get("value"),
                             change.get("old_value"),
                         )
+                    if _requires_followup_refresh(applied_changes):
+                        runtime_data.force_api_refresh_once = True
+                        hass.async_create_task(coordinator.async_request_refresh())
+                        logger.debug(
+                            "Requested immediate API refresh after partial lock websocket update %s",
+                            ctx(entry.entry_id, location_id),
+                        )
                     coordinator.async_update_listeners()
                 else:
                     logger.debug(
@@ -304,6 +324,7 @@ async def async_init_websocket(
             return websocket_holder.get("websocket")
 
         on_websocket_data = build_websocket_data_handler(
+            hass=hass,
             entry=entry,
             location_id=location_id,
             logger=logger,

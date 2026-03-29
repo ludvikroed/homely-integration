@@ -127,6 +127,9 @@
       "jammed": {
         "name": "Jammed"
       },
+      "any_battery_problem": {
+        "name": "Battery problem"
+      },
       "metering_check": {
         "name": "Metering check"
       },
@@ -137,6 +140,23 @@
     "sensor": {
       "temperature": {
         "name": "Temperature"
+      },
+      "sound_volume": {
+        "name": "Sound volume",
+        "state": {
+          "muted": "Muted",
+          "low": "Low",
+          "high": "High"
+        }
+      },
+      "language": {
+        "name": "Language",
+        "state": {
+          "no": "Norwegian",
+          "en": "English",
+          "sv": "Swedish",
+          "da": "Danish"
+        }
       },
       "battery_voltage": {
         "name": "Battery voltage"
@@ -160,7 +180,15 @@
         "name": "Demand"
       },
       "websocket_status": {
-        "name": "WebSocket status"
+        "name": "WebSocket status",
+        "state": {
+          "disabled": "Disabled",
+          "not_initialized": "Not initialized",
+          "connecting": "Connecting",
+          "connected": "Connected",
+          "disconnected": "Disconnected",
+          "unknown": "Unknown"
+        }
       }
     }
   }

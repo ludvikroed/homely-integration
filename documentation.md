@@ -1,6 +1,6 @@
 # Homely Integration Documentation
 
-This file contains practical details for users who want more information about this integration. 
+This file contains practical details for users who want more information about this integration than just the README file
 
 ## API coverage and missing devices
 

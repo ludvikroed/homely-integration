@@ -86,9 +86,19 @@ def test_discover_device_sensors_resolves_motion_lock_flood_and_han_paths(
     jammed_sensor = next(
         sensor for sensor in lock_discovered if sensor["device_suffix"] == "jammed"
     )
+    sound_volume_sensor = next(
+        sensor for sensor in lock_discovered if sensor["device_suffix"] == "soundvolume"
+    )
+    language_sensor = next(
+        sensor for sensor in lock_discovered if sensor["device_suffix"] == "language"
+    )
     assert jammed_sensor["path"] == "features.report.states.Broken.value"
+    assert sound_volume_sensor["value"] == "low"
+    assert language_sensor["value"] == "en"
     assert {
         "error_code",
+        "language",
+        "soundvolume",
     } <= lock_suffixes
 
     flood_discovered = discover_device_sensors(flood_device)

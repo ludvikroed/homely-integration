@@ -86,6 +86,8 @@ def build_async_update_data(
         refresh_token = runtime_data.refresh_token
         expires_at = runtime_data.expires_at
         poll_started_at = time.monotonic()
+        force_api_refresh_once = runtime_data.force_api_refresh_once
+        runtime_data.force_api_refresh_once = False
 
         def _mark_api_unavailable(message: str) -> None:
             if runtime_data.api_available:
@@ -348,7 +350,12 @@ def build_async_update_data(
                     )
 
         ws_connected = websocket_is_connected(runtime_data)
-        if enable_websocket and ws_connected and not poll_when_websocket:
+        if (
+            enable_websocket
+            and ws_connected
+            and not poll_when_websocket
+            and not force_api_refresh_once
+        ):
             update_runtime_websocket_state(runtime_data)
             logger.debug(
                 "Polling skipped API request because websocket is connected "
@@ -357,6 +364,13 @@ def build_async_update_data(
                 location_id,
             )
             return runtime_data.last_data
+        if force_api_refresh_once:
+            logger.debug(
+                "Bypassing websocket polling skip due to forced API refresh "
+                "entry_id=%s location_id=%s",
+                entry_id,
+                location_id,
+            )
 
         try:
             updated, status_code = await get_data_with_status(

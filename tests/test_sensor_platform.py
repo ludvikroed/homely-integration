@@ -40,6 +40,49 @@ def test_sensor_entity_reads_transformed_values(location_data):
     assert entity.native_value == 769.67
 
 
+def test_lock_info_sensors_expose_language_and_sound(location_data):
+    """Yale lock info sensors should expose readable configuration values."""
+    coordinator = MagicMock()
+    coordinator.data = location_data
+    coordinator.last_update_success = True
+
+    lock_device = location_data["devices"][2]
+    discovered = discover_device_sensors(lock_device)
+    by_suffix = {sensor["device_suffix"]: sensor for sensor in discovered}
+
+    sound_volume_entity = HomelySensor(
+        coordinator, lock_device, by_suffix["soundvolume"]
+    )
+    language_entity = HomelySensor(coordinator, lock_device, by_suffix["language"])
+
+    assert sound_volume_entity.native_value == "low"
+    assert language_entity.native_value == "en"
+    assert sound_volume_entity.options == ["muted", "low", "high"]
+    assert language_entity.options == ["no", "en", "sv", "da"]
+    assert sound_volume_entity.entity_category is None
+    assert language_entity.entity_category is None
+
+    coordinator.data["devices"][2]["features"]["lock"]["states"]["soundvolume"][
+        "value"
+    ] = 2
+    coordinator.data["devices"][2]["features"]["lock"]["states"]["language"][
+        "value"
+    ] = "sv"
+    assert sound_volume_entity.native_value == "high"
+    assert language_entity.native_value == "sv"
+
+    coordinator.data["devices"][2]["features"]["lock"]["states"]["soundvolume"][
+        "value"
+    ] = 9
+    coordinator.data["devices"][2]["features"]["lock"]["states"]["language"][
+        "value"
+    ] = "fi"
+    assert sound_volume_entity.native_value == "9"
+    assert language_entity.native_value == "fi"
+    assert "9" in sound_volume_entity.options
+    assert "fi" in language_entity.options
+
+
 def test_sensor_entity_returns_raw_value_without_transform(location_data):
     """Sensors without transforms should return the raw state value."""
     coordinator = MagicMock()
@@ -178,20 +221,20 @@ def test_websocket_status_sensor_uses_runtime_data(hass, location_data):
     entity = HomelyWebSocketStatusSensor(
         runtime_data.coordinator, hass, config_entry, LOCATION_ID
     )
-    assert entity.native_value == "Connected"
+    assert entity.native_value == "connected"
     assert entity.extra_state_attributes == {
         "reason": "event received",
         "last_disconnect_reason": "network error: boom",
     }
     assert entity.entity_registry_enabled_default is False
-    assert "Connected" in entity.options
+    assert "connected" in entity.options
 
     runtime_data.ws_status = ""
     runtime_data.websocket = SimpleNamespace(is_connected=lambda: False)
-    assert entity.native_value == "Disconnected"
+    assert entity.native_value == "disconnected"
 
     runtime_data.websocket = None
-    assert entity.native_value == "Not initialized"
+    assert entity.native_value == "not_initialized"
     runtime_data.ws_status_reason = ""
     assert entity.extra_state_attributes == {
         "last_disconnect_reason": "network error: boom"
@@ -220,8 +263,8 @@ def test_websocket_status_sensor_reports_disabled_when_websocket_is_off(
         runtime_data.coordinator, hass, config_entry, LOCATION_ID
     )
 
-    assert entity.native_value == "Disabled"
-    assert "Disabled" in entity.options
+    assert entity.native_value == "disabled"
+    assert "disabled" in entity.options
 
 
 async def test_sensor_async_setup_entry_creates_ws_status_and_device_sensors(
@@ -244,6 +287,8 @@ async def test_sensor_async_setup_entry_creates_ws_status_and_device_sensors(
     unique_ids = {entity.unique_id for entity in collected}
     assert f"location_{LOCATION_ID}_websocket_status" in unique_ids
     assert "70b9db72-5c00-4316-9ffa-ac7bf60fcb47_temperature" in unique_ids
+    assert "6c120e85-e8d5-49ac-abc0-baa29f9243b7_soundvolume" in unique_ids
+    assert "6c120e85-e8d5-49ac-abc0-baa29f9243b7_language" in unique_ids
     assert "1d6d0206-bfcc-4c8b-83f1-c23d7270fe9f_consumption" in unique_ids
 
 
@@ -404,5 +449,5 @@ def test_websocket_status_sensor_handles_unknown_runtime_state(hass, location_da
     )
 
     entity._runtime_data = SimpleNamespace()
-    assert entity.native_value == "Unknown"
+    assert entity.native_value == "unknown"
     assert entity.extra_state_attributes is None

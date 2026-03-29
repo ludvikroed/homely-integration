@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import homeassistant.helpers.entity as entity_helper
@@ -27,8 +28,26 @@ from .sensors.discover import discover_device_sensors, _get_value_by_path
 
 PARALLEL_UPDATES = 0
 SensorConfig = dict[str, Any]
+FallbackDataGetter = Callable[[], dict[str, Any] | None]
 DIAGNOSTIC_ENTITY_CATEGORY = getattr(entity_helper, "EntityCategory").DIAGNOSTIC
 CONFIG_ENTITY_CATEGORY = getattr(entity_helper, "EntityCategory").CONFIG
+WEBSOCKET_STATUS_OPTIONS = [
+    "disabled",
+    "not_initialized",
+    "connecting",
+    "connected",
+    "disconnected",
+    "unknown",
+]
+
+
+def _normalize_websocket_status(value: Any) -> str:
+    """Convert internal websocket status labels to stable enum states."""
+    if not isinstance(value, str):
+        return "unknown"
+
+    normalized = value.strip().lower().replace(" ", "_")
+    return normalized if normalized in WEBSOCKET_STATUS_OPTIONS else "unknown"
 
 
 async def async_setup_entry(
@@ -41,6 +60,9 @@ async def async_setup_entry(
     coordinator = runtime_data.coordinator
     data = coordinator.data or runtime_data.last_data or {}
     location_id = runtime_data.location_id
+
+    def _fallback_data_getter() -> dict[str, Any] | None:
+        return runtime_data.last_data
 
     entities: list[SensorEntity] = []
     entities.append(HomelyWebSocketStatusSensor(coordinator, hass, entry, location_id))
@@ -56,7 +78,14 @@ async def async_setup_entry(
 
         for sensor_config in discovered:
             if sensor_config["type"] == "sensor":
-                entities.append(HomelySensor(coordinator, device, sensor_config))
+                entities.append(
+                    HomelySensor(
+                        coordinator,
+                        device,
+                        sensor_config,
+                        fallback_data_getter=_fallback_data_getter,
+                    )
+                )
 
     async_add_entities(entities)
 
@@ -69,13 +98,26 @@ class HomelySensor(CoordinatorEntity, SensorEntity):
         coordinator: DataUpdateCoordinator[dict[str, Any]],
         device: dict[str, Any],
         sensor_config: SensorConfig,
+        fallback_data_getter: FallbackDataGetter | None = None,
     ) -> None:
         super().__init__(coordinator)
         self._attr_has_entity_name = True
         self._device_id = str(device.get("id"))
         self._path = str(sensor_config["path"])
         self._transform_value = sensor_config.get("transform_value")
+        self._transform_device_value = sensor_config.get("transform_device_value")
+        self._unit = sensor_config.get("unit")
+        self._resolve_unit_from_device_value = sensor_config.get(
+            "resolve_unit_from_device_value"
+        )
+        configured_options = sensor_config.get("options")
+        self._options = (
+            [str(option) for option in configured_options]
+            if isinstance(configured_options, list)
+            else None
+        )
         self._device_name = get_device_display_name(device)
+        self._fallback_data_getter = fallback_data_getter
 
         sensor_name = sensor_config.get(
             "resolved_name", sensor_config.get("name", "sensor")
@@ -95,11 +137,14 @@ class HomelySensor(CoordinatorEntity, SensorEntity):
             sensor_config.get("enabled_default", True)
         )
 
-        if sensor_config.get("device_class"):
-            self._attr_device_class = sensor_config["device_class"]
+        device_class = sensor_config.get("resolved_device_class")
+        if device_class is None:
+            device_class = sensor_config.get("device_class")
+        if device_class:
+            self._attr_device_class = device_class
 
-        if sensor_config.get("unit"):
-            self._attr_native_unit_of_measurement = sensor_config["unit"]
+        if self._unit and not callable(self._resolve_unit_from_device_value):
+            self._attr_native_unit_of_measurement = self._unit
 
         if sensor_config.get("state_class"):
             self._attr_state_class = sensor_config["state_class"]
@@ -125,12 +170,32 @@ class HomelySensor(CoordinatorEntity, SensorEntity):
 
     def _get_current_device(self) -> dict[str, Any] | None:
         """Return latest device payload from coordinator cache."""
-        return get_current_device(self.coordinator.data, self._device_id)
+        current_device = get_current_device(self.coordinator.data, self._device_id)
+        if current_device is not None or self._fallback_data_getter is None:
+            return current_device
+        return get_current_device(self._fallback_data_getter(), self._device_id)
 
     @property
     def available(self) -> bool:
         """Return whether the backing Homely device is available."""
         return super().available and is_device_available(self._get_current_device())
+
+    @property
+    def native_unit_of_measurement(self) -> str | None:
+        """Return the current unit of measurement."""
+        if not callable(self._resolve_unit_from_device_value):
+            return self._unit
+
+        device = self._get_current_device()
+        if not device:
+            return None
+
+        value = _get_value_by_path(device, self._path)
+        try:
+            resolved_unit = self._resolve_unit_from_device_value(device, value)
+        except (TypeError, ValueError):
+            return self._unit
+        return resolved_unit if isinstance(resolved_unit, str) else None
 
     @property
     def native_value(self) -> Any:
@@ -140,12 +205,36 @@ class HomelySensor(CoordinatorEntity, SensorEntity):
             return None
 
         value = _get_value_by_path(device, self._path)
+        return self._transform_runtime_value(device, value)
+
+    def _transform_runtime_value(self, device: dict[str, Any], value: Any) -> Any:
+        """Apply configured transforms to a runtime value."""
+        if callable(self._transform_device_value):
+            try:
+                return self._transform_device_value(device, value)
+            except (TypeError, ValueError):
+                return value
         if callable(self._transform_value):
             try:
                 return self._transform_value(value)
             except (TypeError, ValueError):
                 return value
         return value
+
+    @property
+    def options(self) -> list[str] | None:
+        """Return enum options, including the current state if needed."""
+        if self._options is None:
+            return None
+
+        options = list(self._options)
+        if self.device_class != SensorDeviceClass.ENUM:
+            return options
+
+        value = self.native_value
+        if isinstance(value, str) and value not in options:
+            options.append(value)
+        return options
 
 
 class HomelyWebSocketStatusSensor(CoordinatorEntity, SensorEntity):
@@ -179,20 +268,13 @@ class HomelyWebSocketStatusSensor(CoordinatorEntity, SensorEntity):
         self._attr_entity_category = DIAGNOSTIC_ENTITY_CATEGORY
         self._attr_entity_registry_enabled_default = False
         self._attr_device_class = SensorDeviceClass.ENUM
-        self._attr_options = [
-            "Disabled",
-            "Not initialized",
-            "Connecting",
-            "Connected",
-            "Disconnected",
-            "Unknown",
-        ]
+        self._attr_options = WEBSOCKET_STATUS_OPTIONS
 
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"location_{location_id}")},
             name=location_name,
             manufacturer="Homely",
-            model="Location",
+            model="Homely",
             entry_type=DeviceEntryType.SERVICE,
         )
         self._status_listener: Any = None
@@ -226,18 +308,18 @@ class HomelyWebSocketStatusSensor(CoordinatorEntity, SensorEntity):
         """Return the WebSocket connection status."""
         try:
             if not self._websocket_enabled:
-                return "Disabled"
+                return "disabled"
 
             status = self._runtime_data.ws_status
             if isinstance(status, str) and status:
-                return status
+                return _normalize_websocket_status(status)
 
             ws = self._runtime_data.websocket
             if ws is None:
-                return "Not initialized"
-            return "Connected" if ws.is_connected() else "Disconnected"
+                return "not_initialized"
+            return "connected" if ws.is_connected() else "disconnected"
         except (AttributeError, ValueError):
-            return "Unknown"
+            return "unknown"
 
     @property
     def extra_state_attributes(self) -> dict[str, str] | None:

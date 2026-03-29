@@ -11,7 +11,7 @@
       },
       "select_location": {
         "title": "Velg hjem",
-        "description": "Velg hvilket hjem i Homely som skal legges til. Velg \"Add all homes\" for å legge til alle tilgjengelige hjem.",
+        "description": "Velg hvilket hjem i Homely som skal legges til. Velg \"Legg til alle hjem\" for å legge til alle tilgjengelige hjem.",
         "data": {
           "location_id": "Hjem"
         }
@@ -127,6 +127,9 @@
       "jammed": {
         "name": "Blokkert"
       },
+      "any_battery_problem": {
+        "name": "Batteriproblem"
+      },
       "metering_check": {
         "name": "Målersjekk"
       },
@@ -137,6 +140,23 @@
     "sensor": {
       "temperature": {
         "name": "Temperatur"
+      },
+      "sound_volume": {
+        "name": "Lydnivå",
+        "state": {
+          "muted": "Lydløs",
+          "low": "Lav",
+          "high": "Høy"
+        }
+      },
+      "language": {
+        "name": "Språk",
+        "state": {
+          "no": "Norsk",
+          "en": "Engelsk",
+          "sv": "Svensk",
+          "da": "Dansk"
+        }
       },
       "battery_voltage": {
         "name": "Batterispenning"
@@ -160,7 +180,15 @@
         "name": "Effekt"
       },
       "websocket_status": {
-        "name": "WebSocket-status"
+        "name": "WebSocket-status",
+        "state": {
+          "disabled": "Deaktivert",
+          "not_initialized": "Ikke initialisert",
+          "connecting": "Kobler til",
+          "connected": "Tilkoblet",
+          "disconnected": "Frakoblet",
+          "unknown": "Ukjent"
+        }
       }
     }
   }

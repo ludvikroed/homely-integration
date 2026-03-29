@@ -154,6 +154,8 @@ class HomelyBinarySensor(CoordinatorEntity, BinarySensorEntity):
         self._device_id = str(device.get("id"))
         self._path = str(sensor_config["path"])
         self._invert = bool(sensor_config.get("invert", False))
+        self._transform_value = sensor_config.get("transform_value")
+        self._transform_device_value = sensor_config.get("transform_device_value")
         self._device_name = get_device_display_name(device)
 
         sensor_name = sensor_config.get(
@@ -216,6 +218,16 @@ class HomelyBinarySensor(CoordinatorEntity, BinarySensorEntity):
             return False
 
         value = _get_value_by_path(device, self._path)
+        if callable(self._transform_device_value):
+            try:
+                value = self._transform_device_value(device, value)
+            except (TypeError, ValueError):
+                pass
+        elif callable(self._transform_value):
+            try:
+                value = self._transform_value(value)
+            except (TypeError, ValueError):
+                pass
         parsed = _coerce_bool(value)
         if parsed is None:
             return False

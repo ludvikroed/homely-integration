@@ -48,6 +48,15 @@ def _resolve_path_and_value(
 
 def _transform_value(sensor_config: SensorConfig, value: Any) -> Any:
     """Apply optional value transform from the sensor config."""
+    transform_with_device = sensor_config.get("transform_device_value")
+    if callable(transform_with_device):
+        device = sensor_config.get("_source_device")
+        if isinstance(device, dict):
+            try:
+                return transform_with_device(device, value)
+            except (TypeError, ValueError):
+                return value
+
     transform = sensor_config.get("transform_value")
     if callable(transform):
         try:
@@ -65,10 +74,14 @@ def discover_device_sensors(device: DevicePayload) -> list[SensorConfig]:
     """
     discovered: list[SensorConfig] = []
     for sensor_config in SENSORS:
-        matched_path, value = _resolve_path_and_value(device, sensor_config)
+        sensor_config_with_device = {
+            **sensor_config,
+            "_source_device": device,
+        }
+        matched_path, value = _resolve_path_and_value(device, sensor_config_with_device)
 
         if matched_path is not None and value is not None:
-            transformed_value = _transform_value(sensor_config, value)
+            transformed_value = _transform_value(sensor_config_with_device, value)
             get_name = sensor_config.get("get_name")
             if callable(get_name):
                 sensor_name = get_name(device)

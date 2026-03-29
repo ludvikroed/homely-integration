@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from homeassistant.components.sensor import SensorDeviceClass
+
+SOUND_VOLUME_OPTIONS = ["muted", "low", "high"]
+LANGUAGE_OPTIONS = ["no", "en", "sv", "da"]
+
 
 def _as_float(value: Any) -> float | None:
     """Convert numeric API values to float when possible."""
@@ -23,6 +28,33 @@ def _wh_to_kwh(value: Any) -> float | Any:
     if numeric is None:
         return value
     return round(numeric / 1000, 3)
+
+
+def _lock_sound_volume_label(value: Any) -> str | Any:
+    """Map known Yale sound volume values to stable enum states."""
+    labels = {
+        0: "muted",
+        1: "low",
+        2: "high",
+    }
+    if isinstance(value, bool):
+        return str(value).lower()
+    if isinstance(value, (int, float)):
+        if mapped := labels.get(int(value)):
+            return mapped
+        return str(int(value)) if float(value).is_integer() else str(value)
+    if isinstance(value, str):
+        return value.strip().lower()
+    return value
+
+
+def _lock_language_label(value: Any) -> str | Any:
+    """Normalize Yale language codes to stable enum states."""
+    if not isinstance(value, str):
+        return value
+
+    normalized = value.strip().lower()
+    return normalized
 
 
 # Sensor definitions grouped by feature type.
@@ -153,6 +185,31 @@ SENSORS: list[dict[str, Any]] = [
         "unit": "°C",
         "device_suffix": "temperature",
         "state_class": "measurement",
+    },
+    # Lock info sensors
+    {
+        "path": "features.lock.states.soundvolume.value",
+        "format": "string",
+        "type": "sensor",
+        "name": "sound_volume",
+        "translation_key": "sound_volume",
+        "device_class": SensorDeviceClass.ENUM,
+        "options": SOUND_VOLUME_OPTIONS,
+        "device_suffix": "soundvolume",
+        "transform_value": _lock_sound_volume_label,
+        "icon": "mdi:volume-high",
+    },
+    {
+        "path": "features.lock.states.language.value",
+        "format": "string",
+        "type": "sensor",
+        "name": "language",
+        "translation_key": "language",
+        "device_class": SensorDeviceClass.ENUM,
+        "options": LANGUAGE_OPTIONS,
+        "device_suffix": "language",
+        "transform_value": _lock_language_label,
+        "icon": "mdi:translate",
     },
     # Battery voltage sensors
     {

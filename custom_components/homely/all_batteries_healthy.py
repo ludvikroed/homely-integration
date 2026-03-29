@@ -18,7 +18,6 @@ from homeassistant.helpers.update_coordinator import (
 from .const import DOMAIN
 from .entity_ids import battery_problem_unique_id
 
-AGGREGATE_SENSOR_NAME = "Status of batteries"
 DIAGNOSTIC_ENTITY_CATEGORY = getattr(entity_helper, "EntityCategory").DIAGNOSTIC
 
 
@@ -44,7 +43,7 @@ class HomelyAllBatteriesHealthySensor(CoordinatorEntity, BinarySensorEntity):
     ) -> None:
         super().__init__(coordinator)
         self._attr_has_entity_name = True
-        self._attr_name = AGGREGATE_SENSOR_NAME
+        self._attr_translation_key = "any_battery_problem"
         self._attr_unique_id = battery_problem_unique_id(location_id)
         self._attr_icon = "mdi:battery-alert"
         self._attr_entity_category = DIAGNOSTIC_ENTITY_CATEGORY
@@ -53,7 +52,7 @@ class HomelyAllBatteriesHealthySensor(CoordinatorEntity, BinarySensorEntity):
             identifiers={(DOMAIN, f"location_{location_id}")},
             name=location_name,
             manufacturer="Homely",
-            model="Location",
+            model="Homely",
             entry_type=DeviceEntryType.SERVICE,
         )
 
@@ -99,8 +98,3 @@ class HomelyAllBatteriesHealthySensor(CoordinatorEntity, BinarySensorEntity):
             ):
                 return True
         return False
-
-    @property
-    def extra_state_attributes(self) -> dict[str, str]:
-        """Expose human-friendly aggregate status."""
-        return {"status": "Defective" if self.is_on else "Healthy"}

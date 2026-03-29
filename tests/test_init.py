@@ -776,6 +776,48 @@ async def test_coordinator_update_method_skips_polling_when_websocket_connected(
     get_data_with_status.assert_not_awaited()
 
 
+async def test_coordinator_update_method_forced_refresh_bypasses_websocket_skip(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """A forced API refresh should bypass websocket polling suppression once."""
+    config_entry = build_config_entry(
+        options={
+            CONF_ENABLE_WEBSOCKET: True,
+            CONF_POLL_WHEN_WEBSOCKET: False,
+        }
+    )
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+    runtime_data.websocket = SimpleNamespace(
+        is_connected=lambda: True,
+        status="Connected",
+        status_reason="ready",
+        update_token=lambda token: None,
+    )
+    runtime_data.force_api_refresh_once = True
+
+    with patch(
+        "custom_components.homely.get_data_with_status",
+        AsyncMock(return_value=(updated_location_data, 200)),
+    ) as get_data_with_status:
+        result = await runtime_data.coordinator.update_method()
+
+    assert result["alarmState"] == "ARMED_AWAY"
+    assert runtime_data.force_api_refresh_once is False
+    get_data_with_status.assert_awaited_once()
+
+
 async def test_coordinator_update_method_uses_cached_data_on_transient_error(
     hass,
     token_response,
@@ -1999,6 +2041,24 @@ async def test_async_setup_entry_websocket_callbacks_update_runtime_and_listener
         ]
         is True
     )
+
+    runtime_data.coordinator.async_request_refresh.reset_mock()
+    ws.on_data_update(
+        {
+            "type": "device-state-changed",
+            "data": {
+                "deviceId": runtime_data.last_data["devices"][2]["id"],
+                "change": {
+                    "feature": "lock",
+                    "stateName": "soundvolume",
+                    "value": 2,
+                },
+            },
+        }
+    )
+    await hass.async_block_till_done()
+    assert runtime_data.force_api_refresh_once is True
+    runtime_data.coordinator.async_request_refresh.assert_awaited_once()
 
     ws.on_data_update({"type": "disconnect"})
     ws.on_data_update({"type": "unsupported-event"})

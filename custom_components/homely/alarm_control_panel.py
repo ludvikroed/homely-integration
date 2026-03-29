@@ -76,7 +76,7 @@ class HomelyAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
             identifiers={(DOMAIN, f"location_{location_id}")},
             name=location_name,
             manufacturer="Homely",
-            model="Location",
+            model="Homely",
             entry_type=DeviceEntryType.SERVICE,
         )
 

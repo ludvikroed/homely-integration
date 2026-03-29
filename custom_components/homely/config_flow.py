@@ -33,6 +33,14 @@ _LOGGER = logging.getLogger(__name__)
 LOCATION_SELECTION_ALL = "__all_locations__"
 
 
+def _all_homes_label(hass: HomeAssistant | None) -> str:
+    """Return a localized label for selecting every location."""
+    language = getattr(getattr(hass, "config", None), "language", "en")
+    if isinstance(language, str) and language.lower().startswith("nb"):
+        return "Legg til alle hjem"
+    return "Add all homes"
+
+
 def _redact(data: dict[str, Any]) -> dict[str, Any]:
     """Redact sensitive keys before logging."""
     redacted = dict(data)
@@ -272,7 +280,7 @@ class HomelyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             options.append(
                 selector.SelectOptionDict(
                     value=LOCATION_SELECTION_ALL,
-                    label="Add all homes",
+                    label=_all_homes_label(self.hass),
                 )
             )
 

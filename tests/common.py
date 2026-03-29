@@ -133,7 +133,6 @@ LOCATION_DATA: dict[str, Any] = {
                 "lock": {
                     "states": {
                         "state": {"value": True},
-                        "autorelocktime": {"value": 0},
                         "soundvolume": {"value": 1},
                         "language": {"value": "en"},
                     }
@@ -145,7 +144,6 @@ LOCATION_DATA: dict[str, Any] = {
                         "locked": {"value": True},
                         "Broken": {"value": False},
                         "doorclosed": {"value": True},
-                        "autolock": {"value": False},
                         "lowbat": {"value": False},
                         "securesensor": {"value": False},
                         "lockmodel": {"value": "Doorman V2x"},

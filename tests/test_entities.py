@@ -242,13 +242,13 @@ def test_all_batteries_healthy_sensor_aggregates_battery_problems(location_data)
     entity = HomelyAllBatteriesHealthySensor(coordinator, "JF23", LOCATION_ID)
 
     assert entity.is_on is False
-    assert entity.extra_state_attributes == {"status": "Healthy"}
+    assert entity.extra_state_attributes is None
 
     coordinator.data["devices"][2]["features"]["report"]["states"]["lowbat"][
         "value"
     ] = True
     assert entity.is_on is True
-    assert entity.extra_state_attributes == {"status": "Defective"}
+    assert entity.extra_state_attributes is None
 
 
 def test_all_batteries_healthy_sensor_handles_regular_low_and_defect_flags(
@@ -263,7 +263,7 @@ def test_all_batteries_healthy_sensor_handles_regular_low_and_defect_flags(
         True
     )
     assert entity.is_on is True
-    assert entity.extra_state_attributes == {"status": "Defective"}
+    assert entity.extra_state_attributes is None
 
     coordinator.data["devices"][0]["features"]["battery"]["states"]["low"]["value"] = (
         False
@@ -272,7 +272,7 @@ def test_all_batteries_healthy_sensor_handles_regular_low_and_defect_flags(
         "value"
     ] = True
     assert entity.is_on is True
-    assert entity.extra_state_attributes == {"status": "Defective"}
+    assert entity.extra_state_attributes is None
 
 
 def test_all_batteries_healthy_sensor_handles_truthy_values_and_sparse_payloads(
@@ -320,11 +320,11 @@ def test_all_batteries_healthy_sensor_handles_malformed_nested_payloads():
     entity = HomelyAllBatteriesHealthySensor(coordinator, "JF23", LOCATION_ID)
 
     assert entity.is_on is False
-    assert entity.extra_state_attributes == {"status": "Healthy"}
+    assert entity.extra_state_attributes is None
 
     coordinator.data = {"devices": {}}
     assert entity.is_on is False
-    assert entity.extra_state_attributes == {"status": "Healthy"}
+    assert entity.extra_state_attributes is None
 
 
 def test_is_true_supports_common_truthy_values():
