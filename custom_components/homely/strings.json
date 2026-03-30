@@ -54,11 +54,11 @@
     "step": {
       "init": {
         "title": "Advanced Settings",
-        "description": "Configure update behavior for Homely Alarm integration.",
+        "description": "Configure how the Homely integration refreshes data.",
         "data": {
-          "scan_interval": "Scan interval (seconds, minimum 30)",
-          "enable_websocket": "Enable WebSocket for real-time updates",
-          "poll_when_websocket": "Polling while WebSocket is connected"
+          "scan_interval": "Refresh interval (seconds, minimum 30)",
+          "enable_websocket": "Enable live updates",
+          "poll_when_websocket": "Keep refreshing while live updates are active"
         }
       }
     },
@@ -74,6 +74,8 @@
       "fix_flow": {
         "abort": {
           "already_configured": "This location is already configured",
+          "cannot_connect": "Could not connect to Homely right now. Check internet connection and try again.",
+          "no_homes": "No homes were found on this account.",
           "cannot_reconfigure": "Home Assistant could not switch this entry to the selected location.",
           "reauth_required": "Your Homely credentials must be updated before changing location."
         },
@@ -183,10 +185,10 @@
         "name": "Demand"
       },
       "websocket_status": {
-        "name": "WebSocket status",
+        "name": "Live update status",
         "state": {
           "disabled": "Disabled",
-          "not_initialized": "Not initialized",
+          "not_initialized": "Not started",
           "connecting": "Connecting",
           "connected": "Connected",
           "disconnected": "Disconnected",
@@ -194,10 +196,10 @@
         }
       },
       "last_successful_poll": {
-        "name": "Last successful poll"
+        "name": "Last successful API poll"
       },
       "last_websocket_message": {
-        "name": "Last WebSocket message"
+        "name": "Last live update"
       }
     }
   }

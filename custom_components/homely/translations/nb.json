@@ -54,11 +54,11 @@
     "step": {
       "init": {
         "title": "Avanserte innstillinger",
-        "description": "Velg hvordan Homely Alarm-integrasjonen skal oppdateres.",
+        "description": "Velg hvordan Homely-integrasjonen skal oppdatere data.",
         "data": {
           "scan_interval": "Oppdateringsintervall (sekunder, minimum 30)",
-          "enable_websocket": "Aktiver WebSocket for sanntidsoppdateringer",
-          "poll_when_websocket": "Bruk polling også når WebSocket er tilkoblet"
+          "enable_websocket": "Aktiver direkteoppdateringer",
+          "poll_when_websocket": "Fortsett oppdatering også når direkteoppdateringer er aktive"
         }
       }
     },
@@ -74,6 +74,8 @@
       "fix_flow": {
         "abort": {
           "already_configured": "Dette hjemmet er allerede konfigurert",
+          "cannot_connect": "Kunne ikke koble til Homely akkurat nå. Sjekk internettforbindelsen og prøv igjen.",
+          "no_homes": "Fant ingen hjem på denne kontoen.",
           "cannot_reconfigure": "Home Assistant klarte ikke å bytte denne oppføringen til det valgte hjemmet.",
           "reauth_required": "Du må oppdatere e-postadresse og passord for Homely før du kan bytte hjem."
         },
@@ -183,10 +185,10 @@
         "name": "Effekt"
       },
       "websocket_status": {
-        "name": "WebSocket-status",
+        "name": "Status for direkteoppdateringer",
         "state": {
           "disabled": "Deaktivert",
-          "not_initialized": "Ikke initialisert",
+          "not_initialized": "Ikke startet",
           "connecting": "Kobler til",
           "connected": "Tilkoblet",
           "disconnected": "Frakoblet",
@@ -194,10 +196,10 @@
         }
       },
       "last_successful_poll": {
-        "name": "Siste vellykkede polling"
+        "name": "Siste vellykkede API-polling"
       },
       "last_websocket_message": {
-        "name": "Siste WebSocket-melding"
+        "name": "Siste direkteoppdatering"
       }
     }
   }

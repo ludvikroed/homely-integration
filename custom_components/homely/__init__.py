@@ -116,7 +116,7 @@ def _create_missing_location_issue(
         DOMAIN,
         _missing_location_issue_id(entry.entry_id),
         data={"entry_id": entry.entry_id},
-        is_fixable=False,
+        is_fixable=True,
         is_persistent=True,
         severity=ir.IssueSeverity.ERROR,
         translation_key="configured_location_missing",

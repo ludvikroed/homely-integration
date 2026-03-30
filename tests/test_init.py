@@ -483,7 +483,7 @@ async def test_async_setup_entry_invalid_home_mapping_raises_not_ready(
         _missing_location_issue_id(config_entry.entry_id),
     )
     assert issue is not None
-    assert issue.is_fixable is False
+    assert issue.is_fixable is True
 
 
 async def test_async_setup_entry_missing_configured_location_creates_repair_issue(
@@ -515,7 +515,7 @@ async def test_async_setup_entry_missing_configured_location_creates_repair_issu
         _missing_location_issue_id(config_entry.entry_id),
     )
     assert issue is not None
-    assert issue.is_fixable is False
+    assert issue.is_fixable is True
     assert issue.translation_key == "configured_location_missing"
 
 
