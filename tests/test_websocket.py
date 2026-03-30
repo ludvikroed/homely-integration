@@ -267,6 +267,27 @@ def test_update_websocket_token_reraises_unrelated_type_errors():
         raise AssertionError("Expected TypeError to be re-raised")
 
 
+def test_update_websocket_token_handles_broken_connection_probe():
+    """Token updates should still behave sensibly if the connection probe fails."""
+
+    def _raise_runtime_error() -> bool:
+        raise RuntimeError("boom")
+
+    websocket = SimpleNamespace(
+        is_connected=_raise_runtime_error,
+        status="Connecting",
+        update_token=MagicMock(),
+    )
+
+    result = update_websocket_token(websocket, "new-token")
+
+    assert result == "no_reconnect"
+    websocket.update_token.assert_called_once_with(
+        "new-token",
+        reconnect_if_disconnected=False,
+    )
+
+
 def test_websocket_reconnect_interval_backoff_schedule():
     """Reconnect backoff should be quick at first, then slow down."""
     ws = HomelyWebSocket(

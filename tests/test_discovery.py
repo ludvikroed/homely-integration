@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
+
 from custom_components.homely.sensors.discover import (
     _get_value_by_path,
     _resolve_path_and_value,
@@ -53,6 +55,19 @@ def test_discovery_helpers_cover_invalid_paths_and_transform_errors(location_dat
             5,
         )
         == 5
+    )
+
+    assert (
+        _transform_value(
+            {
+                "_source_device": motion_sensor,
+                "transform_device_value": lambda _device, _value: (
+                    _ for _ in ()
+                ).throw(ValueError("bad"))
+            },
+            7,
+        )
+        == 7
     )
 
 
@@ -119,6 +134,21 @@ def test_discover_device_sensors_resolves_motion_lock_flood_and_han_paths(
     )
     assert han_by_suffix["consumption"]["value"] == 769.67
     assert han_by_suffix["demand"]["value"] == 105
+
+
+def test_discover_device_sensors_supports_alternate_report_paths(location_data):
+    """Discovery should find known states even when the API casing varies."""
+    lock_device = deepcopy(location_data["devices"][2])
+    broken_state = lock_device["features"]["report"]["states"].pop("Broken")
+    lock_device["features"]["report"]["states"]["broken"] = broken_state
+
+    lock_discovered = discover_device_sensors(lock_device)
+    jammed_sensor = next(
+        sensor for sensor in lock_discovered if sensor["device_suffix"] == "jammed"
+    )
+
+    assert jammed_sensor["path"] == "features.report.states.broken.value"
+    assert jammed_sensor["value"] is False
 
 
 def test_apply_websocket_event_updates_alarm_state(location_data):

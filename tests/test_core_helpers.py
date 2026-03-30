@@ -20,6 +20,16 @@ from custom_components.homely.device_state import (
 )
 from custom_components.homely.models import HomelyRuntimeData
 from custom_components.homely.models import get_entry_runtime_data
+from custom_components.homely.runtime_state import (
+    record_successful_poll,
+    record_websocket_event,
+    runtime_observability_snapshot,
+    tracked_api_device_ids,
+    update_runtime_websocket_state,
+    websocket_is_connected,
+    websocket_state_context,
+    websocket_state_snapshot,
+)
 from custom_components.homely.sensors import _as_float, _wh_to_kwh
 from custom_components.homely.ws_updates import (
     _normalize_event_type,
@@ -147,6 +157,80 @@ def test_tracked_device_ids_handle_missing_snapshots():
     assert _tracked_api_device_ids(runtime_data) == (False, set())
     runtime_data.coordinator.data = "bad"
     assert _tracked_api_device_ids(runtime_data) == (False, set())
+
+
+def test_runtime_state_helpers_handle_broken_websocket_and_manual_disconnect(
+    location_data,
+):
+    """Runtime websocket helpers should stay safe around broken socket state."""
+    runtime_data = HomelyRuntimeData(
+        coordinator=SimpleNamespace(data=location_data),
+        access_token="access",
+        refresh_token="refresh",
+        expires_at=0,
+        location_id=LOCATION_ID,
+        last_data=location_data,
+    )
+
+    def _raise_runtime_error() -> bool:
+        raise RuntimeError("boom")
+
+    runtime_data.websocket = SimpleNamespace(
+        is_connected=_raise_runtime_error,
+        status="Disconnected",
+        status_reason="manual disconnect",
+    )
+
+    assert websocket_is_connected(runtime_data) is False
+    snapshot = websocket_state_snapshot(runtime_data)
+    assert snapshot.connected is False
+    assert snapshot.status == "Disconnected"
+    assert snapshot.reason == "manual disconnect"
+
+    update_runtime_websocket_state(runtime_data)
+    assert runtime_data.ws_status == "Disconnected"
+    assert runtime_data.ws_status_reason == "manual disconnect"
+    assert runtime_data.last_disconnect_reason is None
+    assert websocket_state_context(runtime_data) == (
+        "websocket_connected=False "
+        "websocket_status=Disconnected "
+        "websocket_reason=manual disconnect"
+    )
+
+
+def test_runtime_state_record_helpers_update_observability_snapshot(location_data):
+    """Runtime observability helpers should reflect recorded poll and websocket events."""
+    runtime_data = HomelyRuntimeData(
+        coordinator=SimpleNamespace(data="bad"),
+        access_token="access",
+        refresh_token="refresh",
+        expires_at=0,
+        location_id=LOCATION_ID,
+        last_data=location_data,
+        tracked_device_ids={"dev-1", "dev-2"},
+    )
+
+    has_snapshot, device_ids = tracked_api_device_ids(runtime_data)
+    assert has_snapshot is True
+    assert len(device_ids) == len(location_data["devices"])
+
+    record_successful_poll(runtime_data, at=100.0)
+    record_websocket_event(
+        runtime_data,
+        "device-state-changed",
+        update_data_activity=True,
+        at=105.0,
+    )
+
+    snapshot = runtime_observability_snapshot(runtime_data)
+    assert snapshot["tracked_devices"] == 2
+    assert snapshot["last_websocket_event_type"] == "device-state-changed"
+    assert snapshot["last_successful_poll_age_seconds"] is not None
+    assert snapshot["last_websocket_event_age_seconds"] is not None
+    assert snapshot["cache_age_seconds"] is not None
+    assert runtime_data.last_successful_poll_at is not None
+    assert runtime_data.last_websocket_event_at is not None
+    assert runtime_data.last_data_activity_monotonic == 105.0
 
 
 def test_log_startup_device_payloads_handles_missing_devices(caplog):

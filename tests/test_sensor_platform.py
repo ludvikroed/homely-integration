@@ -13,7 +13,9 @@ from custom_components.homely.models import HomelyRuntimeData
 from custom_components.homely.sensor import (
     PARALLEL_UPDATES,
     HomelySensor,
+    HomelyRuntimeTimestampSensor,
     HomelyWebSocketStatusSensor,
+    _normalize_websocket_status,
     async_setup_entry,
 )
 from custom_components.homely.const import CONF_ENABLE_WEBSOCKET
@@ -24,6 +26,13 @@ from tests.common import LOCATION_ID, build_config_entry
 def test_sensor_platform_declares_parallel_updates():
     """Coordinator-driven sensor platform should set PARALLEL_UPDATES to 0."""
     assert PARALLEL_UPDATES == 0
+
+
+def test_websocket_status_normalization_handles_unknown_values():
+    """Websocket status normalization should stay stable for odd inputs."""
+    assert _normalize_websocket_status(None) == "unknown"
+    assert _normalize_websocket_status(" Connected ") == "connected"
+    assert _normalize_websocket_status("not a real status") == "unknown"
 
 
 def test_sensor_entity_reads_transformed_values(location_data):
@@ -182,6 +191,116 @@ def test_sensor_entity_handles_missing_devices_and_type_errors(location_data):
     coordinator.data = {"devices": []}
     assert entity.available is False
     assert entity.native_value is None
+
+
+def test_sensor_entity_falls_back_to_last_successful_device_data(location_data):
+    """Sensors should keep using cached device data if coordinator data is temporarily empty."""
+    coordinator = MagicMock()
+    coordinator.data = {"devices": []}
+    coordinator.last_update_success = True
+
+    motion_device = location_data["devices"][0]
+    sensor_config = {
+        "path": "features.temperature.states.temperature.value",
+        "name": "temperature",
+        "device_suffix": "temperature",
+    }
+    entity = HomelySensor(
+        coordinator,
+        motion_device,
+        sensor_config,
+        fallback_data_getter=lambda: location_data,
+    )
+
+    assert entity.available is True
+    assert entity.native_value == 21.8
+
+
+def test_sensor_entity_supports_device_aware_value_transforms(location_data):
+    """Sensors should allow transforms that depend on the current device payload."""
+    coordinator = MagicMock()
+    coordinator.data = location_data
+    coordinator.last_update_success = True
+
+    motion_device = location_data["devices"][0]
+    sensor_config = {
+        "path": "features.temperature.states.temperature.value",
+        "name": "temperature",
+        "device_suffix": "temperature",
+        "transform_device_value": (
+            lambda device, value: f"{device['modelName']}:{value}"
+        ),
+    }
+
+    entity = HomelySensor(coordinator, motion_device, sensor_config)
+
+    assert entity.native_value == "Alarm Motion Sensor 2:21.8"
+
+
+def test_sensor_entity_handles_device_aware_transform_and_unit_errors(location_data):
+    """Device-aware transforms and unit resolvers should fail safely."""
+    coordinator = MagicMock()
+    coordinator.data = location_data
+    coordinator.last_update_success = True
+
+    motion_device = location_data["devices"][0]
+
+    transform_entity = HomelySensor(
+        coordinator,
+        motion_device,
+        {
+            "path": "features.temperature.states.temperature.value",
+            "name": "temperature",
+            "device_suffix": "temperature",
+            "transform_device_value": lambda _device, _value: (
+                _ for _ in ()
+            ).throw(ValueError("bad transform")),
+        },
+    )
+    assert transform_entity.native_value == 21.8
+
+    resolved_unit_entity = HomelySensor(
+        coordinator,
+        motion_device,
+        {
+            "path": "features.temperature.states.temperature.value",
+            "name": "temperature",
+            "device_suffix": "temperature_unit_ok",
+            "unit": "fallback",
+            "resolve_unit_from_device_value": lambda device, value: (
+                "custom-unit" if device["modelName"] and value else "fallback"
+            ),
+        },
+    )
+    assert resolved_unit_entity.native_unit_of_measurement == "custom-unit"
+
+    fallback_unit_entity = HomelySensor(
+        coordinator,
+        motion_device,
+        {
+            "path": "features.temperature.states.temperature.value",
+            "name": "temperature",
+            "device_suffix": "temperature_unit_fallback",
+            "unit": "fallback",
+            "resolve_unit_from_device_value": lambda _device, _value: (
+                _ for _ in ()
+            ).throw(ValueError("bad unit")),
+        },
+    )
+    assert fallback_unit_entity.native_unit_of_measurement == "fallback"
+
+    invalid_unit_entity = HomelySensor(
+        coordinator,
+        motion_device,
+        {
+            "path": "features.temperature.states.temperature.value",
+            "name": "temperature",
+            "device_suffix": "temperature_unit_invalid",
+            "unit": "fallback",
+            "resolve_unit_from_device_value": lambda _device, _value: 123,
+        },
+    )
+    assert invalid_unit_entity.native_unit_of_measurement is None
 
 
 def test_sensor_entity_becomes_unavailable_when_device_is_offline(location_data):
@@ -512,3 +631,43 @@ def test_websocket_status_sensor_handles_unknown_runtime_state(hass, location_da
     entity._runtime_data = SimpleNamespace()
     assert entity.native_value == "unknown"
     assert entity.extra_state_attributes is None
+
+
+def test_runtime_timestamp_sensor_handles_getter_failures(hass, location_data):
+    """Runtime timestamp sensors should tolerate missing metadata safely."""
+    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: True})
+    runtime_data = HomelyRuntimeData(
+        coordinator=SimpleNamespace(data=location_data),
+        access_token="access",
+        refresh_token="refresh",
+        expires_at=0,
+        location_id=LOCATION_ID,
+        last_data=location_data,
+    )
+    config_entry.runtime_data = runtime_data
+
+    broken_entity = HomelyRuntimeTimestampSensor(
+        runtime_data.coordinator,
+        config_entry,
+        LOCATION_ID,
+        translation_key="last_websocket_message",
+        unique_suffix="broken_runtime_timestamp",
+        icon="mdi:clock-outline",
+        value_getter=lambda _runtime_data: (_ for _ in ()).throw(AttributeError("bad")),
+        extra_attributes_getter=lambda _runtime_data: (
+            _ for _ in ()
+        ).throw(ValueError("bad")),
+    )
+    assert broken_entity.native_value is None
+    assert broken_entity.extra_state_attributes is None
+
+    no_extra_entity = HomelyRuntimeTimestampSensor(
+        runtime_data.coordinator,
+        config_entry,
+        LOCATION_ID,
+        translation_key="last_successful_poll",
+        unique_suffix="no_extra_runtime_timestamp",
+        icon="mdi:clock-outline",
+        value_getter=lambda _runtime_data: None,
+    )
+    assert no_extra_entity.extra_state_attributes is None
