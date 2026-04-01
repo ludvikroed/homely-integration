@@ -349,7 +349,29 @@ def build_async_update_data(
                         err,
                     )
 
+        ws = runtime_data.websocket
         ws_connected = websocket_is_connected(runtime_data)
+        if (
+            enable_websocket
+            and ws is not None
+            and not ws_connected
+        ):
+            try:
+                ws.request_reconnect("poll detected disconnected websocket")
+                logger.debug(
+                    "Requested websocket reconnect because polling observed a disconnected websocket "
+                    "entry_id=%s location_id=%s",
+                    entry_id,
+                    location_id,
+                )
+            except Exception as err:
+                logger.debug(
+                    "Failed to request websocket reconnect entry_id=%s location_id=%s: %s",
+                    entry_id,
+                    location_id,
+                    err,
+                )
+
         if (
             enable_websocket
             and ws_connected

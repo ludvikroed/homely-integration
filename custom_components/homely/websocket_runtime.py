@@ -47,11 +47,7 @@ def update_websocket_token(websocket: Any, token: str) -> str:
     except Exception:
         is_connected = False
 
-    status = getattr(websocket, "status", None)
-    reconnect_if_disconnected = not is_connected and status not in {
-        "Connected",
-        "Connecting",
-    }
+    reconnect_if_disconnected = not is_connected
 
     try:
         websocket.update_token(
@@ -388,6 +384,20 @@ async def async_init_websocket(
                 if (
                     status == "Disconnected"
                     and previous_status != "Disconnected"
+                    and reason != "manual disconnect"
+                ):
+                    try:
+                        current_ws.request_reconnect("status callback observed disconnect")
+                    except Exception as err:
+                        logger.debug(
+                            "Failed to request websocket reconnect after disconnect status %s: %s",
+                            ctx(entry.entry_id, location_id),
+                            err,
+                        )
+
+                if (
+                    status == "Disconnected"
+                    and previous_status != "Disconnected"
                     and enable_websocket
                     and not poll_when_websocket
                     and reason != "manual disconnect"
@@ -489,7 +499,7 @@ def register_internet_available_listener(
                 return
 
             ws = runtime_data.websocket
-            if ws and not ws.is_connected():
+            if ws is not None:
                 logger.debug(
                     "Internet available event; requesting websocket reconnect entry_id=%s location_id=%s",
                     entry.entry_id,

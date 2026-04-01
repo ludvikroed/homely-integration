@@ -281,10 +281,27 @@ def test_update_websocket_token_handles_broken_connection_probe():
 
     result = update_websocket_token(websocket, "new-token")
 
-    assert result == "no_reconnect"
+    assert result == "reconnect_if_disconnected"
     websocket.update_token.assert_called_once_with(
         "new-token",
-        reconnect_if_disconnected=False,
+        reconnect_if_disconnected=True,
+    )
+
+
+def test_update_websocket_token_requests_reconnect_for_stale_connecting_status():
+    """Disconnected sockets should still reconnect even if status says Connecting."""
+    websocket = SimpleNamespace(
+        is_connected=lambda: False,
+        status="Connecting",
+        update_token=MagicMock(),
+    )
+
+    result = update_websocket_token(websocket, "new-token")
+
+    assert result == "reconnect_if_disconnected"
+    websocket.update_token.assert_called_once_with(
+        "new-token",
+        reconnect_if_disconnected=True,
     )
 
 

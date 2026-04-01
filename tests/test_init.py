@@ -820,6 +820,135 @@ async def test_coordinator_update_method_forced_refresh_bypasses_websocket_skip(
     get_data_with_status.assert_awaited_once()
 
 
+async def test_coordinator_update_method_requests_websocket_reconnect_when_disconnected(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Polling should nudge websocket reconnects when the socket looks disconnected."""
+    config_entry = build_config_entry(
+        options={
+            CONF_ENABLE_WEBSOCKET: True,
+            CONF_POLL_WHEN_WEBSOCKET: False,
+        }
+    )
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+    websocket = SimpleNamespace(
+        is_connected=lambda: False,
+        status="Disconnected",
+        status_reason="network error: boom",
+        request_reconnect=MagicMock(),
+        update_token=lambda token: None,
+    )
+    runtime_data.websocket = websocket
+
+    with patch(
+        "custom_components.homely.get_data_with_status",
+        AsyncMock(return_value=(updated_location_data, 200)),
+    ) as get_data_with_status:
+        result = await runtime_data.coordinator.update_method()
+
+    assert result["alarmState"] == "ARMED_AWAY"
+    websocket.request_reconnect.assert_called_once_with(
+        "poll detected disconnected websocket"
+    )
+    get_data_with_status.assert_awaited_once()
+
+
+async def test_coordinator_update_method_requests_reconnect_for_stale_connecting_websocket(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Polling should still nudge reconnects when status is stale Connecting."""
+    config_entry = build_config_entry(
+        options={
+            CONF_ENABLE_WEBSOCKET: True,
+            CONF_POLL_WHEN_WEBSOCKET: False,
+        }
+    )
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+    websocket = SimpleNamespace(
+        is_connected=lambda: False,
+        status="Connecting",
+        status_reason="stuck connect",
+        request_reconnect=MagicMock(),
+        update_token=lambda token: None,
+    )
+    runtime_data.websocket = websocket
+
+    with patch(
+        "custom_components.homely.get_data_with_status",
+        AsyncMock(return_value=(updated_location_data, 200)),
+    ):
+        result = await runtime_data.coordinator.update_method()
+
+    assert result["alarmState"] == "ARMED_AWAY"
+    websocket.request_reconnect.assert_called_once_with(
+        "poll detected disconnected websocket"
+    )
+
+
+async def test_coordinator_update_method_swallow_websocket_reconnect_request_errors(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Polling should keep working even if websocket reconnect nudges fail."""
+    config_entry = build_config_entry(
+        options={
+            CONF_ENABLE_WEBSOCKET: True,
+            CONF_POLL_WHEN_WEBSOCKET: False,
+        }
+    )
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+    runtime_data.websocket = SimpleNamespace(
+        is_connected=lambda: False,
+        status="Disconnected",
+        status_reason="network error: boom",
+        request_reconnect=MagicMock(side_effect=RuntimeError("boom")),
+        update_token=lambda token: None,
+    )
+
+    with patch(
+        "custom_components.homely.get_data_with_status",
+        AsyncMock(return_value=(updated_location_data, 200)),
+    ):
+        result = await runtime_data.coordinator.update_method()
+
+    assert result["alarmState"] == "ARMED_AWAY"
+
+
 async def test_async_setup_entry_registers_periodic_refresh_when_websocket_polling_is_disabled(
     hass,
     token_response,
@@ -2100,6 +2229,7 @@ async def test_async_setup_entry_websocket_callbacks_update_runtime_and_listener
     assert runtime_data.ws_status == "Disconnected"
     assert runtime_data.ws_status_reason == "network error: boom"
     assert runtime_data.last_disconnect_reason == "network error: boom"
+    assert "status callback observed disconnect" in ws.request_reconnect_calls
     listener.assert_called_once()
     runtime_data.coordinator.async_update_listeners.assert_called()
     runtime_data.coordinator.async_request_refresh.assert_awaited_once()
@@ -2206,7 +2336,8 @@ async def test_async_setup_entry_websocket_handles_connect_failure_and_internet_
     hass.bus.async_fire("internet_available")
     await hass.async_block_till_done()
 
-    assert ws.request_reconnect_calls == ["internet_available event"]
+    assert "poll detected disconnected websocket" in ws.request_reconnect_calls
+    assert "internet_available event" in ws.request_reconnect_calls
 
 
 async def test_async_setup_entry_websocket_status_callback_tolerates_listener_failures(
@@ -2556,3 +2687,38 @@ async def test_async_setup_entry_internet_available_callback_swallows_reconnect_
     ws.request_reconnect = MagicMock(side_effect=RuntimeError("boom"))
     hass.bus.async_fire("internet_available")
     await hass.async_block_till_done()
+
+
+async def test_async_setup_entry_internet_available_callback_does_not_depend_on_is_connected(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Internet recovery should still request reconnects if connection probes are broken."""
+    _FakeHomelyWebSocket.reset()
+    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: True})
+
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+        extra_patches=(
+            patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),
+        ),
+    )
+
+    ws = _FakeHomelyWebSocket.instances[0]
+
+    def _broken_is_connected() -> bool:
+        raise RuntimeError("boom")
+
+    ws.is_connected = _broken_is_connected
+    hass.bus.async_fire("internet_available")
+    await hass.async_block_till_done()
+
+    assert "internet_available event" in ws.request_reconnect_calls
