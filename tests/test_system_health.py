@@ -85,8 +85,50 @@ async def test_system_health_info_summarizes_entries(hass):
     assert info["entries_with_api_available"] == 1
     assert info["entries_with_live_updates_enabled"] == 1
     assert info["entries_with_live_updates_connected"] == 1
+    assert info["live_update_states"] == "JF23: connected; Cabin: disabled"
     assert info["oldest_cached_data_age_seconds"] is not None
     assert info["oldest_successful_api_poll_age_seconds"] is not None
+
+
+async def test_system_health_info_surfaces_websocket_status_mismatches(hass):
+    """System health should explain mismatches between reported and actual state."""
+    entry = build_config_entry(
+        options={CONF_ENABLE_WEBSOCKET: True},
+        unique_id=LOCATION_ID,
+    )
+    entry.add_to_hass(hass)
+    runtime_data = HomelyRuntimeData(
+        coordinator=SimpleNamespace(data=copy_location_data()),
+        access_token="access",
+        refresh_token="refresh",
+        expires_at=0,
+        location_id=LOCATION_ID,
+        last_data=copy_location_data(),
+        ws_status="Connected",
+    )
+    runtime_data.websocket = SimpleNamespace(is_connected=lambda: False, status="Connected")
+    entry.runtime_data = runtime_data
+
+    with (
+        patch(
+            "custom_components.homely.system_health.async_get_loaded_integration",
+            return_value=SimpleNamespace(version="1.4.6-beta"),
+        ),
+        patch(
+            "custom_components.homely.system_health._safe_sdk_version",
+            return_value="0.1.2",
+        ),
+        patch(
+            "custom_components.homely.system_health.system_health.async_check_can_reach_url",
+            AsyncMock(return_value="ok"),
+        ),
+    ):
+        info = await system_health_info(hass)
+
+    assert info["entries_with_live_updates_enabled"] == 1
+    assert info["entries_with_live_updates_connected"] == 0
+    assert await info["api_endpoint_reachable"] == "ok"
+    assert info["live_update_states"] == "JF23: disconnected (reported connected)"
 
 
 async def test_system_health_registers_manage_url(hass):

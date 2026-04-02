@@ -359,16 +359,17 @@ def test_websocket_status_sensor_uses_runtime_data(hass, location_data):
     entity = HomelyWebSocketStatusSensor(
         runtime_data.coordinator, hass, config_entry, LOCATION_ID
     )
-    assert entity.native_value == "connected"
+    runtime_data.websocket = SimpleNamespace(is_connected=lambda: False)
+    assert entity.native_value == "disconnected"
     assert entity.extra_state_attributes == {
         "reason": "event received",
+        "reported_status": "connected",
         "last_disconnect_reason": "network error: boom",
     }
     assert entity.entity_registry_enabled_default is False
     assert "connected" in entity.options
 
     runtime_data.ws_status = ""
-    runtime_data.websocket = SimpleNamespace(is_connected=lambda: False)
     assert entity.native_value == "disconnected"
 
     runtime_data.websocket = None
@@ -464,7 +465,15 @@ async def test_sensor_async_setup_entry_creates_ws_status_and_device_sensors(
     assert "70b9db72-5c00-4316-9ffa-ac7bf60fcb47_temperature" in unique_ids
     assert "6c120e85-e8d5-49ac-abc0-baa29f9243b7_soundvolume" in unique_ids
     assert "6c120e85-e8d5-49ac-abc0-baa29f9243b7_language" in unique_ids
+    assert "6c120e85-e8d5-49ac-abc0-baa29f9243b7_error_code" in unique_ids
     assert "1d6d0206-bfcc-4c8b-83f1-c23d7270fe9f_consumption" in unique_ids
+
+    by_unique_id = {entity.unique_id: entity for entity in collected}
+    assert (
+        by_unique_id["6c120e85-e8d5-49ac-abc0-baa29f9243b7_error_code"]
+        .entity_registry_enabled_default
+        is True
+    )
 
 
 async def test_sensor_async_setup_entry_handles_sparse_device_lists(

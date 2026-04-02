@@ -289,7 +289,7 @@ def build_websocket_data_handler(
 
         except Exception as err:
             logger.error(
-                "Unhandled exception in websocket callback %s: %s",
+                "Unhandled exception in websocket callback %s: %s. Please open a GitHub issue if this keeps happening.",
                 ctx(entry.entry_id, location_id),
                 err,
                 exc_info=True,

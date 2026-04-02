@@ -112,7 +112,7 @@ class HomelyAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
                     else f"{self._location_id[:8]}..."
                 )
                 _LOGGER.warning(
-                    "Unknown alarm state from API location=%s state=%s",
+                    "Unknown alarm state from API location=%s state=%s. Please open a GitHub issue if this keeps happening.",
                     location_hint,
                     api_state_str,
                 )

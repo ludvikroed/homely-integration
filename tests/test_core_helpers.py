@@ -21,11 +21,13 @@ from custom_components.homely.device_state import (
 from custom_components.homely.models import HomelyRuntimeData
 from custom_components.homely.models import get_entry_runtime_data
 from custom_components.homely.runtime_state import (
+    reported_websocket_status,
     record_successful_poll,
     record_websocket_event,
     runtime_observability_snapshot,
     tracked_api_device_ids,
     update_runtime_websocket_state,
+    websocket_connection_state,
     websocket_is_connected,
     websocket_state_context,
     websocket_state_snapshot,
@@ -196,6 +198,37 @@ def test_runtime_state_helpers_handle_broken_websocket_and_manual_disconnect(
         "websocket_status=Disconnected "
         "websocket_reason=manual disconnect"
     )
+
+
+def test_runtime_state_connection_state_prefers_effective_socket_connection(
+    location_data,
+):
+    """Reported Connected should not override a disconnected socket."""
+    runtime_data = HomelyRuntimeData(
+        coordinator=SimpleNamespace(data=location_data),
+        access_token="access",
+        refresh_token="refresh",
+        expires_at=0,
+        location_id=LOCATION_ID,
+        last_data=location_data,
+        ws_status="Connected",
+        ws_status_reason="event received",
+    )
+    runtime_data.websocket = SimpleNamespace(is_connected=lambda: False, status="Connected")
+
+    assert reported_websocket_status(runtime_data) == "connected"
+
+    websocket_state = websocket_connection_state(runtime_data)
+    assert websocket_state.connected is False
+    assert websocket_state.reported_status == "connected"
+    assert websocket_state.effective_status == "disconnected"
+    assert websocket_state.status_mismatch is True
+
+    observability = runtime_observability_snapshot(runtime_data)
+    assert observability["websocket_connected"] is False
+    assert observability["websocket_effective_status"] == "disconnected"
+    assert observability["websocket_reported_status"] == "connected"
+    assert observability["websocket_status_mismatch"] is True
 
 
 def test_runtime_state_record_helpers_update_observability_snapshot(location_data):

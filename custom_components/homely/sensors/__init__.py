@@ -267,7 +267,6 @@ SENSORS: list[dict[str, Any]] = [
         "translation_key": "error_code",
         "device_suffix": "error_code",
         "entity_category": "diagnostic",
-        "enabled_default": False,
         "icon": "mdi:alert-circle-outline",
     },
     # Metering sensors (for HAN plugs)

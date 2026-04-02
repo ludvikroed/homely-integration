@@ -20,6 +20,26 @@ class WebSocketStateSnapshot:
     reason: str | None
 
 
+@dataclass(frozen=True)
+class WebSocketConnectionState:
+    """Normalized websocket status used by sensors and diagnostics."""
+
+    connected: bool
+    reported_status: str
+    effective_status: str
+    reason: str | None
+    status_mismatch: bool
+
+
+WEBSOCKET_STATUS_OPTIONS = {
+    "not_initialized",
+    "connecting",
+    "connected",
+    "disconnected",
+    "unknown",
+}
+
+
 def current_runtime_data(entry: HomelyConfigEntry) -> HomelyRuntimeData | None:
     """Return runtime data for an entry when it is still loaded."""
     return getattr(entry, "runtime_data", None)
@@ -45,6 +65,32 @@ def websocket_is_connected(runtime_data: HomelyRuntimeData) -> bool:
         return False
 
 
+def normalize_websocket_status(value: Any) -> str:
+    """Convert internal websocket labels to stable enum states."""
+    if not isinstance(value, str):
+        return "unknown"
+
+    normalized = value.strip().lower().replace(" ", "_")
+    return normalized if normalized in WEBSOCKET_STATUS_OPTIONS else "unknown"
+
+
+def reported_websocket_status(runtime_data: HomelyRuntimeData) -> str:
+    """Return the latest websocket status reported by runtime state."""
+    status = normalize_websocket_status(runtime_data.ws_status)
+    if status in {"connected", "disconnected", "connecting"}:
+        return status
+
+    websocket = runtime_data.websocket
+    if websocket is None:
+        return "not_initialized"
+
+    websocket_status = normalize_websocket_status(getattr(websocket, "status", None))
+    if websocket_status != "unknown":
+        return websocket_status
+
+    return "connected" if websocket_is_connected(runtime_data) else "disconnected"
+
+
 def websocket_state_snapshot(runtime_data: HomelyRuntimeData) -> WebSocketStateSnapshot:
     """Return websocket status details for diagnostics and logs."""
     websocket = runtime_data.websocket
@@ -61,6 +107,34 @@ def websocket_state_snapshot(runtime_data: HomelyRuntimeData) -> WebSocketStateS
         connected=websocket_is_connected(runtime_data),
         status=str(status),
         reason=reason if reason is None else str(reason),
+    )
+
+
+def websocket_connection_state(
+    runtime_data: HomelyRuntimeData,
+) -> WebSocketConnectionState:
+    """Return a normalized websocket state for UI and diagnostics."""
+    reported_status = reported_websocket_status(runtime_data)
+    websocket = runtime_data.websocket
+    connected = websocket_is_connected(runtime_data) if websocket is not None else False
+
+    if websocket is None:
+        effective_status = "not_initialized"
+    elif connected:
+        effective_status = "connected"
+    elif reported_status in {"connecting", "not_initialized"}:
+        effective_status = reported_status
+    elif reported_status == "unknown":
+        effective_status = "disconnected"
+    else:
+        effective_status = "disconnected"
+
+    return WebSocketConnectionState(
+        connected=connected,
+        reported_status=reported_status,
+        effective_status=effective_status,
+        reason=runtime_data.ws_status_reason,
+        status_mismatch=reported_status != effective_status,
     )
 
 
@@ -167,12 +241,16 @@ def cache_age_seconds(runtime_data: HomelyRuntimeData) -> int | None:
 
 def runtime_observability_snapshot(runtime_data: HomelyRuntimeData) -> dict[str, Any]:
     """Return structured runtime observability fields for diagnostics."""
+    websocket_state = websocket_connection_state(runtime_data)
     return {
         "api_available": runtime_data.api_available,
         "ws_status": runtime_data.ws_status,
         "ws_status_reason": runtime_data.ws_status_reason,
         "last_disconnect_reason": runtime_data.last_disconnect_reason,
-        "websocket_connected": websocket_is_connected(runtime_data),
+        "websocket_connected": websocket_state.connected,
+        "websocket_effective_status": websocket_state.effective_status,
+        "websocket_reported_status": websocket_state.reported_status,
+        "websocket_status_mismatch": websocket_state.status_mismatch,
         "tracked_devices": len(runtime_data.tracked_device_ids),
         "last_successful_poll_age_seconds": monotonic_age_seconds(
             runtime_data.last_successful_poll_monotonic

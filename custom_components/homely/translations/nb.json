@@ -68,34 +68,6 @@
       "unknown": "Det oppstod en uventet feil"
     }
   },
-  "issues": {
-    "configured_location_missing": {
-      "title": "Det konfigurerte hjemmet i Homely er ikke lenger tilgjengelig",
-      "fix_flow": {
-        "abort": {
-          "already_configured": "Dette hjemmet er allerede konfigurert",
-          "cannot_connect": "Kunne ikke koble til Homely akkurat nå. Sjekk internettforbindelsen og prøv igjen.",
-          "no_homes": "Fant ingen hjem på denne kontoen.",
-          "cannot_reconfigure": "Home Assistant klarte ikke å bytte denne oppføringen til det valgte hjemmet.",
-          "reauth_required": "Du må oppdatere e-postadresse og passord for Homely før du kan bytte hjem."
-        },
-        "error": {
-          "cannot_connect": "Kunne ikke koble til Homely akkurat nå. Sjekk internettforbindelsen og prøv igjen.",
-          "invalid_location": "Det valgte hjemmet er ikke gyldig for denne kontoen.",
-          "no_homes": "Fant ingen hjem på denne kontoen."
-        },
-        "step": {
-          "select_location": {
-            "title": "Velg hjem",
-            "description": "Det konfigurerte hjemmet i Homely for {entry_title} er ikke lenger tilgjengelig. Velg et nytt hjem for å holde denne integrasjonsoppføringen i drift.",
-            "data": {
-              "location_id": "Hjem"
-            }
-          }
-        }
-      }
-    }
-  },
   "entity": {
     "alarm_control_panel": {},
     "binary_sensor": {
@@ -185,7 +157,7 @@
         "name": "Effekt"
       },
       "websocket_status": {
-        "name": "Status for direkteoppdateringer",
+        "name": "WebSocket-status",
         "state": {
           "disabled": "Deaktivert",
           "not_initialized": "Ikke startet",
@@ -199,7 +171,7 @@
         "name": "Siste vellykkede API-polling"
       },
       "last_websocket_message": {
-        "name": "Siste direkteoppdatering"
+        "name": "Siste WebSocket-oppdatering"
       }
     }
   }

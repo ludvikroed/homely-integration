@@ -12,7 +12,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
-from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.device_registry import DeviceEntry
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from .api import (
@@ -98,38 +97,6 @@ def _log_startup_device_payloads(
 ) -> None:
     """Compatibility wrapper for startup payload logging helper tests."""
     _log_startup_device_payloads_impl(_LOGGER, data, entry_id, location_id)
-
-
-def _missing_location_issue_id(entry_id: str) -> str:
-    """Return the repair issue id for a missing configured location."""
-    return f"configured_location_missing_{entry_id}"
-
-
-def _create_missing_location_issue(
-    hass: HomeAssistant,
-    entry: ConfigEntry,
-    location_identifier: str,
-) -> None:
-    """Create a repair issue when the configured location is unavailable."""
-    ir.async_create_issue(
-        hass,
-        DOMAIN,
-        _missing_location_issue_id(entry.entry_id),
-        data={"entry_id": entry.entry_id},
-        is_fixable=True,
-        is_persistent=True,
-        severity=ir.IssueSeverity.ERROR,
-        translation_key="configured_location_missing",
-        translation_placeholders={
-            "entry_title": entry.title,
-            "location": location_identifier,
-        },
-    )
-
-
-def _delete_missing_location_issue(hass: HomeAssistant, entry_id: str) -> None:
-    """Delete the missing-location repair issue for an entry."""
-    ir.async_delete_issue(hass, DOMAIN, _missing_location_issue_id(entry_id))
 
 
 def _get_alarm_state(data: dict[str, Any] | None) -> Any:
@@ -331,7 +298,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> bo
                 location_id = candidate_location_id
                 break
         if location_id is None:
-            _create_missing_location_issue(hass, entry, configured_location_id)
             raise ConfigEntryNotReady(
                 f"Configured location_id={configured_location_id} is not available"
             )
@@ -353,7 +319,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> bo
                 entry_id,
                 err,
             )
-            _create_missing_location_issue(hass, entry, str(home_id))
             raise ConfigEntryNotReady(
                 f"Configured home_id={home_id} is not available"
             ) from err
@@ -364,8 +329,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> bo
             location_id,
             entry_id,
         )
-
-    _delete_missing_location_issue(hass, entry_id)
 
     normalized_location_id = str(location_id)
     if (
@@ -636,20 +599,30 @@ async def async_unload_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> b
     if unload_ok:
         ws = entry_data.websocket if entry_data is not None else None
         if ws:
-            try:
-                await ws.disconnect()
+            disconnect = getattr(ws, "disconnect", None)
+            if not callable(disconnect):
                 _LOGGER.debug(
-                    "WebSocket disconnected entry_id=%s location_id=%s",
+                    "WebSocket object has no disconnect method entry_id=%s location_id=%s",
                     entry.entry_id,
                     location_id,
                 )
-            except Exception as err:
-                _LOGGER.error(
-                    "Error disconnecting websocket entry_id=%s location_id=%s: %s",
-                    entry.entry_id,
-                    location_id,
-                    err,
-                )
+                disconnect = None
+
+            if disconnect is not None:
+                try:
+                    await disconnect()
+                    _LOGGER.debug(
+                        "WebSocket disconnected entry_id=%s location_id=%s",
+                        entry.entry_id,
+                        location_id,
+                    )
+                except Exception as err:
+                    _LOGGER.warning(
+                        "Error disconnecting websocket entry_id=%s location_id=%s: %s",
+                        entry.entry_id,
+                        location_id,
+                        err,
+                    )
 
         setattr(entry, "runtime_data", None)
         _LOGGER.debug(

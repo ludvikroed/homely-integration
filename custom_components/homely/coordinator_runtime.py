@@ -8,7 +8,6 @@ from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from .api import RefreshTokenResult, describe_refresh_token_failure
@@ -89,6 +88,67 @@ def build_async_update_data(
         force_api_refresh_once = runtime_data.force_api_refresh_once
         runtime_data.force_api_refresh_once = False
 
+        def _classify_refresh_failure(
+            result: RefreshTokenResult | None,
+        ) -> str:
+            """Group refresh failures into practical logging categories."""
+            if result is None or result.response is not None:
+                return "unknown_refresh_failure"
+
+            if result.reason == "invalid_refresh_token":
+                return "refresh_token_rejected"
+            if result.reason in {"cannot_connect", "http_error"}:
+                return "homely_unavailable"
+            if result.reason in {"invalid_json", "invalid_payload", "empty_response"}:
+                return "malformed_auth_response"
+            return result.reason or "unknown_refresh_failure"
+
+        def _classify_login_reason(login_reason: str | None) -> str:
+            """Group full-login failures into practical logging categories."""
+            if login_reason == "invalid_auth":
+                return "reported_invalid_auth"
+            if login_reason == "cannot_connect":
+                return "homely_unavailable"
+            return login_reason or "full_login_failed"
+
+        def _auth_issue_log_level(kind: str, *, used_cache: bool) -> int:
+            """Return log level for background auth issues."""
+            if not used_cache:
+                return logging.WARNING
+            if kind in {"malformed_auth_response", "full_login_failed"}:
+                return logging.WARNING
+            return logging.DEBUG
+
+        def _log_auth_issue(
+            message: str,
+            *,
+            kind: str,
+            used_cache: bool,
+            refresh_failure: str | None = None,
+            login_reason: str | None = None,
+            status_code: int | None = None,
+            detail: str | None = None,
+            exc_info: bool = False,
+        ) -> None:
+            """Log a normalized background auth issue with consistent context."""
+            parts = [message, f"kind={kind}", ctx(entry_id, location_id)]
+            if status_code is not None:
+                parts.append(f"status={status_code}")
+            if login_reason:
+                parts.append(f"login_reason={login_reason}")
+            if refresh_failure:
+                parts.append(f"refresh={refresh_failure}")
+            if detail:
+                parts.append(f"detail={detail}")
+            parts.append(websocket_state_context(runtime_data))
+            if kind == "malformed_auth_response":
+                parts.append("Please open a GitHub issue if this keeps happening.")
+            logger.log(
+                _auth_issue_log_level(kind, used_cache=used_cache),
+                " ".join(parts),
+                exc_info=exc_info,
+            )
+
         def _mark_api_unavailable(message: str) -> None:
             if runtime_data.api_available:
                 runtime_data.api_available = False
@@ -100,6 +160,37 @@ def build_async_update_data(
                 logger.info(
                     "Homely API is reachable again %s",
                     ctx(entry_id, location_id),
+                )
+
+        def _sync_websocket_token(token: str) -> None:
+            """Update the websocket token without nudging healthy sessions."""
+            ws = runtime_data.websocket
+            if ws is None:
+                return
+
+            try:
+                update_mode = update_websocket_token(ws, token)
+                if update_mode in {
+                    "reconnect_if_disconnected",
+                    "legacy_reconnect",
+                }:
+                    logger.debug(
+                        "Updated websocket token and allowed reconnect because websocket was disconnected entry_id=%s location_id=%s",
+                        entry_id,
+                        location_id,
+                    )
+                else:
+                    logger.debug(
+                        "Updated websocket token in-place without reconnect entry_id=%s location_id=%s",
+                        entry_id,
+                        location_id,
+                    )
+            except Exception as err:
+                logger.debug(
+                    "Failed to update websocket token entry_id=%s location_id=%s: %s",
+                    entry_id,
+                    location_id,
+                    err,
                 )
 
         def _use_cached_data(message: str) -> dict[str, Any] | None:
@@ -150,17 +241,17 @@ def build_async_update_data(
                     password,
                 )
             except Exception as err:
-                logger.warning(
-                    "Fallback full login raised %s refresh=%s %s: %s",
-                    ctx(entry_id, location_id),
-                    refresh_failure or "reason=unknown",
-                    websocket_state_context(runtime_data),
-                    err,
-                    exc_info=logger.isEnabledFor(logging.DEBUG),
-                )
                 cached_data = _use_cached_data(
-                    "Token refresh failed and full login raised "
-                    f"({err}); continuing with cached data"
+                    "Homely auth endpoint failed during fallback login; using cached data"
+                )
+                _log_auth_issue(
+                    "Fallback full login raised during background authentication",
+                    kind="homely_unavailable",
+                    used_cache=cached_data is not None,
+                    refresh_failure=refresh_failure,
+                    detail=str(err),
+                    exc_info=logger.isEnabledFor(logging.DEBUG)
+                    and cached_data is None,
                 )
                 if cached_data is not None:
                     return None, cached_data
@@ -169,24 +260,32 @@ def build_async_update_data(
                 ) from err
 
             if not login_response:
+                failure_kind = _classify_login_reason(login_reason)
                 if login_reason == "invalid_auth":
-                    raise ConfigEntryAuthFailed(
-                        "Stored Homely credentials are no longer valid"
+                    cached_data = _use_cached_data(
+                        "Homely login endpoint reported invalid_auth during background refresh; using cached data and retrying later"
                     )
-                logger.warning(
-                    "Fallback full login returned no token %s login_reason=%s refresh=%s %s",
-                    ctx(entry_id, location_id),
-                    login_reason or "unknown",
-                    refresh_failure or "reason=unknown",
-                    websocket_state_context(runtime_data),
-                )
+                    _log_auth_issue(
+                        "Fallback full login reported invalid_auth during background refresh",
+                        kind=failure_kind,
+                        used_cache=cached_data is not None,
+                        refresh_failure=refresh_failure,
+                        login_reason=login_reason,
+                    )
+                    if cached_data is not None:
+                        return None, cached_data
+                    raise UpdateFailed(
+                        "Homely login endpoint reported invalid_auth, but automatic reauthentication is disabled; will retry later"
+                    )
                 cached_data = _use_cached_data(
-                    "Token refresh failed and full login returned no token"
-                    + (
-                        f" (refresh={refresh_failure}); continuing with cached data"
-                        if refresh_failure
-                        else "; continuing with cached data"
-                    )
+                    "Homely auth endpoint did not return a usable token during fallback login; using cached data"
+                )
+                _log_auth_issue(
+                    "Fallback full login returned no usable token",
+                    kind=failure_kind,
+                    used_cache=cached_data is not None,
+                    refresh_failure=refresh_failure,
+                    login_reason=login_reason,
                 )
                 if cached_data is not None:
                     return None, cached_data
@@ -217,6 +316,33 @@ def build_async_update_data(
             )
             return new_access_token, None
 
+        async def _retry_poll_with_stored_credentials(
+            auth_status_code: int,
+        ) -> tuple[dict[str, Any] | None, int | None, dict[str, Any] | None]:
+            """Retry a rejected API poll with a fresh full login before reauth."""
+            logger.debug(
+                "Polling API rejected current access token; retrying with stored credentials "
+                "kind=access_token_rejected status=%s %s %s",
+                auth_status_code,
+                ctx(entry_id, location_id),
+                websocket_state_context(runtime_data),
+            )
+            recovered_token, cached_data = await _perform_full_login(
+                f"reason=api_auth_status status={auth_status_code}"
+            )
+            if cached_data is not None:
+                return None, None, cached_data
+            if recovered_token is None:
+                raise UpdateFailed("Fallback full login returned no usable token")
+
+            _sync_websocket_token(recovered_token)
+            updated, retry_status_code = await get_data_with_status(
+                hass,
+                recovered_token,
+                runtime_data.location_id,
+            )
+            return updated, retry_status_code, None
+
         if time.time() >= expires_at:
             logger.debug(
                 "Token expires soon; refreshing entry_id=%s location_id=%s",
@@ -227,15 +353,16 @@ def build_async_update_data(
             try:
                 refresh_response = await fetch_refresh_token(hass, refresh_token)
             except Exception as err:
-                logger.warning(
-                    "Token refresh request failed %s %s: %s",
-                    ctx(entry_id, location_id),
-                    websocket_state_context(runtime_data),
-                    err,
-                    exc_info=logger.isEnabledFor(logging.DEBUG),
-                )
                 cached_data = _use_cached_data(
-                    f"Token refresh request failed ({err}); continuing with cached data"
+                    "Homely auth endpoint failed during token refresh; using cached data"
+                )
+                _log_auth_issue(
+                    "Token refresh request raised during background refresh",
+                    kind="homely_unavailable",
+                    used_cache=cached_data is not None,
+                    detail=str(err),
+                    exc_info=logger.isEnabledFor(logging.DEBUG)
+                    and cached_data is None,
                 )
                 if cached_data is not None:
                     return cached_data
@@ -244,11 +371,12 @@ def build_async_update_data(
             refresh_result = get_last_refresh_token_result()
             refresh_failure = describe_refresh_token_failure(refresh_result)
             if not refresh_response:
-                logger.debug(
-                    "Token refresh returned no token; trying full login %s refresh=%s %s",
-                    ctx(entry_id, location_id),
-                    refresh_failure,
-                    websocket_state_context(runtime_data),
+                refresh_failure_kind = _classify_refresh_failure(refresh_result)
+                _log_auth_issue(
+                    "Token refresh returned no usable token; trying full login",
+                    kind=refresh_failure_kind,
+                    used_cache=True,
+                    refresh_failure=refresh_failure,
                 )
                 recovered_token, cached_data = await _perform_full_login(
                     refresh_failure
@@ -266,11 +394,11 @@ def build_async_update_data(
                 new_expires_in = refresh_response.get("expires_in")
                 if not new_access_token or not new_expires_in:
                     refresh_failure = "reason=invalid_payload"
-                    logger.warning(
-                        "Token refresh returned incomplete payload %s refresh=%s %s",
-                        ctx(entry_id, location_id),
-                        refresh_failure,
-                        websocket_state_context(runtime_data),
+                    _log_auth_issue(
+                        "Token refresh returned incomplete payload; trying full login",
+                        kind="malformed_auth_response",
+                        used_cache=True,
+                        refresh_failure=refresh_failure,
                     )
                     recovered_token, cached_data = await _perform_full_login(
                         refresh_failure
@@ -289,12 +417,12 @@ def build_async_update_data(
                         refresh_failure = (
                             f"reason=invalid_expires_in value={new_expires_in!r}"
                         )
-                        logger.warning(
-                            "Token refresh returned invalid expires_in %s refresh=%s expires_in=%r %s",
-                            ctx(entry_id, location_id),
-                            refresh_failure,
-                            new_expires_in,
-                            websocket_state_context(runtime_data),
+                        _log_auth_issue(
+                            "Token refresh returned invalid expires_in; trying full login",
+                            kind="malformed_auth_response",
+                            used_cache=True,
+                            refresh_failure=refresh_failure,
+                            detail=repr(new_expires_in),
                         )
                         recovered_token, cached_data = await _perform_full_login(
                             refresh_failure
@@ -322,32 +450,7 @@ def build_async_update_data(
                             max(new_expires_in_seconds - 60, 0),
                         )
 
-            ws = runtime_data.websocket
-            if ws is not None:
-                try:
-                    update_mode = update_websocket_token(ws, access_token)
-                    if update_mode in {
-                        "reconnect_if_disconnected",
-                        "legacy_reconnect",
-                    }:
-                        logger.debug(
-                            "Updated websocket token and allowed reconnect because websocket was disconnected entry_id=%s location_id=%s",
-                            entry_id,
-                            location_id,
-                        )
-                    else:
-                        logger.debug(
-                            "Updated websocket token in-place without reconnect entry_id=%s location_id=%s",
-                            entry_id,
-                            location_id,
-                        )
-                except Exception as err:
-                    logger.debug(
-                        "Failed to update websocket token entry_id=%s location_id=%s: %s",
-                        entry_id,
-                        location_id,
-                        err,
-                    )
+            _sync_websocket_token(access_token)
 
         ws = runtime_data.websocket
         ws_connected = websocket_is_connected(runtime_data)
@@ -400,11 +503,14 @@ def build_async_update_data(
                 access_token,
                 runtime_data.location_id,
             )
+            if not updated and status_code in (401, 403):
+                updated, status_code, cached_data = await _retry_poll_with_stored_credentials(
+                    status_code
+                )
+                if cached_data is not None:
+                    return cached_data
+
             if not updated:
-                if status_code in (401, 403):
-                    raise ConfigEntryAuthFailed(
-                        "Homely token is no longer accepted by API"
-                    )
                 if (
                     status_code in _TRANSIENT_HTTP_STATUS
                     and isinstance(runtime_data.last_data, dict)
@@ -415,6 +521,21 @@ def build_async_update_data(
                         f"{status_code}; continuing with cached data"
                     )
                     return runtime_data.last_data
+                if status_code in (401, 403):
+                    cached_data = _use_cached_data(
+                        "Homely API still rejected credentials after retrying stored credentials; using cached data"
+                    )
+                    _log_auth_issue(
+                        "Polling API still rejected credentials after retrying stored credentials",
+                        kind="access_token_rejected",
+                        used_cache=cached_data is not None,
+                        status_code=status_code,
+                    )
+                    if cached_data is not None:
+                        return cached_data
+                    raise UpdateFailed(
+                        "Failed to fetch data from API after retrying stored credentials"
+                    )
                 raise UpdateFailed("Failed to fetch data from API")
 
             _mark_api_available()
@@ -431,8 +552,6 @@ def build_async_update_data(
                 device_count,
             )
         except UpdateFailed:
-            raise
-        except ConfigEntryAuthFailed:
             raise
         except Exception as err:
             cached_data = _use_cached_data(

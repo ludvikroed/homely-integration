@@ -68,34 +68,6 @@
       "unknown": "Unexpected error occurred"
     }
   },
-  "issues": {
-    "configured_location_missing": {
-      "title": "Configured Homely location is no longer available",
-      "fix_flow": {
-        "abort": {
-          "already_configured": "This location is already configured",
-          "cannot_connect": "Could not connect to Homely right now. Check internet connection and try again.",
-          "no_homes": "No homes were found on this account.",
-          "cannot_reconfigure": "Home Assistant could not switch this entry to the selected location.",
-          "reauth_required": "Your Homely credentials must be updated before changing location."
-        },
-        "error": {
-          "cannot_connect": "Could not connect to Homely right now. Check internet connection and try again.",
-          "invalid_location": "The selected location is not valid for this account.",
-          "no_homes": "No homes were found on this account."
-        },
-        "step": {
-          "select_location": {
-            "title": "Choose location",
-            "description": "The configured Homely location for {entry_title} is no longer available. Select a replacement location to keep this integration entry working.",
-            "data": {
-              "location_id": "Location"
-            }
-          }
-        }
-      }
-    }
-  },
   "entity": {
     "alarm_control_panel": {},
     "binary_sensor": {
@@ -185,7 +157,7 @@
         "name": "Demand"
       },
       "websocket_status": {
-        "name": "Live update status",
+        "name": "Live update connection status",
         "state": {
           "disabled": "Disabled",
           "not_initialized": "Not started",
@@ -199,7 +171,7 @@
         "name": "Last successful API poll"
       },
       "last_websocket_message": {
-        "name": "Last live update"
+        "name": "Last received live update"
       }
     }
   }

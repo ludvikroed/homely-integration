@@ -24,6 +24,10 @@ from .naming import (
     get_device_display_name,
     humanize_label,
 )
+from .runtime_state import (
+    normalize_websocket_status as _normalize_runtime_websocket_status,
+    websocket_connection_state,
+)
 from .sensors.discover import discover_device_sensors, _get_value_by_path
 
 PARALLEL_UPDATES = 0
@@ -42,11 +46,7 @@ WEBSOCKET_STATUS_OPTIONS = [
 
 def _normalize_websocket_status(value: Any) -> str:
     """Convert internal websocket status labels to stable enum states."""
-    if not isinstance(value, str):
-        return "unknown"
-
-    normalized = value.strip().lower().replace(" ", "_")
-    return normalized if normalized in WEBSOCKET_STATUS_OPTIONS else "unknown"
+    return _normalize_runtime_websocket_status(value)
 
 
 async def async_setup_entry(
@@ -334,14 +334,7 @@ class HomelyWebSocketStatusSensor(CoordinatorEntity, SensorEntity):
             if not self._websocket_enabled:
                 return "disabled"
 
-            status = self._runtime_data.ws_status
-            if isinstance(status, str) and status:
-                return _normalize_websocket_status(status)
-
-            ws = self._runtime_data.websocket
-            if ws is None:
-                return "not_initialized"
-            return "connected" if ws.is_connected() else "disconnected"
+            return websocket_connection_state(self._runtime_data).effective_status
         except (AttributeError, ValueError):
             return "unknown"
 
@@ -350,9 +343,12 @@ class HomelyWebSocketStatusSensor(CoordinatorEntity, SensorEntity):
         """Expose last websocket status reason for debugging."""
         attributes: dict[str, str] = {}
         try:
+            websocket_state = websocket_connection_state(self._runtime_data)
             reason = self._runtime_data.ws_status_reason
             if reason:
                 attributes["reason"] = reason
+            if websocket_state.status_mismatch:
+                attributes["reported_status"] = websocket_state.reported_status
             last_disconnect_reason = getattr(
                 self._runtime_data,
                 "last_disconnect_reason",

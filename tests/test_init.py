@@ -12,14 +12,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
-from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from custom_components.homely import api
 from custom_components.homely import (
     _cached_data_grace_seconds,
     _device_id_snapshot,
-    _missing_location_issue_id,
     _log_startup_device_payloads,
     _pending_import_locations,
     _redact_for_debug_logging,
@@ -478,19 +476,12 @@ async def test_async_setup_entry_invalid_home_mapping_raises_not_ready(
         else:
             raise AssertionError("Expected ConfigEntryNotReady")
 
-    issue = ir.async_get(hass).async_get_issue(
-        DOMAIN,
-        _missing_location_issue_id(config_entry.entry_id),
-    )
-    assert issue is not None
-    assert issue.is_fixable is True
 
-
-async def test_async_setup_entry_missing_configured_location_creates_repair_issue(
+async def test_async_setup_entry_missing_configured_location_raises_not_ready(
     hass,
     token_response,
 ):
-    """Missing configured locations should raise not-ready and create a repair issue."""
+    """Missing configured locations should raise not-ready."""
     config_entry = build_config_entry()
 
     with (
@@ -501,7 +492,7 @@ async def test_async_setup_entry_missing_configured_location_creates_repair_issu
         patch(
             "custom_components.homely.get_location_id",
             AsyncMock(return_value=[{"locationId": "other-location", "name": "Other"}]),
-        ),
+        )
     ):
         try:
             await async_setup_entry(hass, config_entry)
@@ -509,56 +500,6 @@ async def test_async_setup_entry_missing_configured_location_creates_repair_issu
             pass
         else:
             raise AssertionError("Expected ConfigEntryNotReady")
-
-    issue = ir.async_get(hass).async_get_issue(
-        DOMAIN,
-        _missing_location_issue_id(config_entry.entry_id),
-    )
-    assert issue is not None
-    assert issue.is_fixable is True
-    assert issue.translation_key == "configured_location_missing"
-
-
-async def test_async_setup_entry_clears_missing_location_repair_issue_on_success(
-    hass,
-    token_response,
-    location_response,
-    location_data,
-    updated_location_data,
-):
-    """A successful setup should clear an earlier missing-location repair issue."""
-    config_entry = build_config_entry()
-    ir.async_create_issue(
-        hass,
-        DOMAIN,
-        _missing_location_issue_id(config_entry.entry_id),
-        data={"entry_id": config_entry.entry_id},
-        is_fixable=False,
-        is_persistent=True,
-        severity=ir.IssueSeverity.ERROR,
-        translation_key="configured_location_missing",
-        translation_placeholders={
-            "entry_title": config_entry.title,
-            "location": LOCATION_ID,
-        },
-    )
-
-    await _setup_loaded_entry(
-        hass,
-        config_entry,
-        token_response,
-        location_response,
-        location_data,
-        updated_location_data,
-    )
-
-    assert (
-        ir.async_get(hass).async_get_issue(
-            DOMAIN,
-            _missing_location_issue_id(config_entry.entry_id),
-        )
-        is None
-    )
 
 
 async def test_async_setup_entry_missing_location_payload_raises_not_ready(
@@ -1296,14 +1237,14 @@ async def test_coordinator_update_method_does_not_double_schedule_topology_reloa
     async_reload.assert_not_awaited()
 
 
-async def test_coordinator_update_method_refresh_auth_failure_raises(
+async def test_coordinator_update_method_refresh_invalid_auth_uses_cache(
     hass,
     token_response,
     location_response,
     location_data,
     updated_location_data,
 ):
-    """Expired credentials during refresh should raise ConfigEntryAuthFailed."""
+    """Runtime invalid_auth responses should keep cached data instead of reauth."""
     config_entry = build_config_entry()
     await _setup_loaded_entry(
         hass,
@@ -1325,12 +1266,48 @@ async def test_coordinator_update_method_refresh_auth_failure_raises(
             AsyncMock(return_value=(None, "invalid_auth")),
         ),
     ):
+        result = await runtime_data.coordinator.update_method()
+
+    assert result == runtime_data.last_data
+
+
+async def test_coordinator_update_method_refresh_invalid_auth_with_stale_cache_raises_update_failed(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Runtime invalid_auth should not trigger reauth even when cache is stale."""
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+    runtime_data.expires_at = 0
+    runtime_data.websocket = None
+    runtime_data.last_data_activity_monotonic = time.monotonic() - 301
+
+    with (
+        patch(
+            "custom_components.homely.fetch_refresh_token", AsyncMock(return_value=None)
+        ),
+        patch(
+            "custom_components.homely.fetch_token_with_reason",
+            AsyncMock(return_value=(None, "invalid_auth")),
+        ),
+    ):
         try:
             await runtime_data.coordinator.update_method()
-        except ConfigEntryAuthFailed:
-            pass
+        except UpdateFailed as err:
+            assert "automatic reauthentication is disabled" in str(err)
         else:
-            raise AssertionError("Expected ConfigEntryAuthFailed")
+            raise AssertionError("Expected UpdateFailed")
 
 
 async def test_coordinator_update_method_refreshes_via_full_login_and_updates_websocket(
@@ -1424,7 +1401,7 @@ async def test_coordinator_update_method_refresh_fallback_non_auth_failure_uses_
     )
     runtime_data.last_data_activity_monotonic = time.monotonic() - 7200
 
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.DEBUG):
         with (
             patch(
                 "custom_components.homely.fetch_refresh_token",
@@ -1442,8 +1419,9 @@ async def test_coordinator_update_method_refresh_fallback_non_auth_failure_uses_
     assert runtime_data.ws_status == "Connected"
     assert runtime_data.ws_status_reason == "ready"
     joined = "\n".join(record.getMessage() for record in caplog.records)
-    assert "Fallback full login returned no token" in joined
-    assert "reason=cannot_connect" in joined
+    assert "Fallback full login returned no usable token" in joined
+    assert "kind=homely_unavailable" in joined
+    assert "login_reason=cannot_connect" in joined
     assert "websocket_connected=True" in joined
 
 
@@ -1468,7 +1446,7 @@ async def test_coordinator_update_method_refresh_exception_uses_cache(
     runtime_data = config_entry.runtime_data
     runtime_data.expires_at = 0
 
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.DEBUG):
         with patch(
             "custom_components.homely.fetch_refresh_token",
             AsyncMock(side_effect=RuntimeError("network down")),
@@ -1477,7 +1455,7 @@ async def test_coordinator_update_method_refresh_exception_uses_cache(
 
     assert result == runtime_data.last_data
     assert runtime_data.api_available is False
-    assert "Token refresh request failed" in "\n".join(
+    assert "Token refresh request raised during background refresh" in "\n".join(
         record.getMessage() for record in caplog.records
     )
 
@@ -1708,8 +1686,10 @@ async def test_coordinator_update_method_refresh_response_invalid_expires_uses_c
     assert result == runtime_data.last_data
     assert runtime_data.api_available is False
     joined = "\n".join(record.getMessage() for record in caplog.records)
-    assert "Fallback full login returned no token" in joined
+    assert "Token refresh returned invalid expires_in; trying full login" in joined
+    assert "kind=malformed_auth_response" in joined
     assert "invalid_expires_in" in joined
+    assert "Please open a GitHub issue if this keeps happening." in joined
 
 
 async def test_coordinator_update_method_logs_refresh_failure_detail_and_body_preview(
@@ -1766,10 +1746,12 @@ async def test_coordinator_update_method_logs_refresh_failure_detail_and_body_pr
 
     assert result == runtime_data.last_data
     joined = "\n".join(record.getMessage() for record in caplog.records)
+    assert "kind=malformed_auth_response" in joined
     assert "reason=invalid_payload" in joined
     assert "detail=missing access_token or expires_in" in joined
     assert "body_preview=" in joined
     assert "{'access_token': 'token'}" in joined
+    assert "Please open a GitHub issue if this keeps happening." in joined
 
 
 async def test_coordinator_update_method_refreshes_token_in_place(
@@ -1983,14 +1965,14 @@ async def test_coordinator_update_method_full_login_invalid_expires_raises_updat
             raise AssertionError("Expected UpdateFailed")
 
 
-async def test_coordinator_update_method_http_401_raises_auth_failed(
+async def test_coordinator_update_method_http_401_retries_full_login_before_reauth(
     hass,
     token_response,
     location_response,
     location_data,
     updated_location_data,
 ):
-    """Auth rejections during polling should surface as auth failures."""
+    """Polling auth rejections should retry stored credentials before reauth."""
     config_entry = build_config_entry()
     await _setup_loaded_entry(
         hass,
@@ -2002,16 +1984,164 @@ async def test_coordinator_update_method_http_401_raises_auth_failed(
     )
     runtime_data = config_entry.runtime_data
 
-    with patch(
-        "custom_components.homely.get_data_with_status",
-        AsyncMock(return_value=(None, 401)),
+    with (
+        patch(
+            "custom_components.homely.get_data_with_status",
+            AsyncMock(
+                side_effect=[
+                    (None, 401),
+                    (updated_location_data, 200),
+                ]
+            ),
+        ) as get_data_with_status,
+        patch(
+            "custom_components.homely.fetch_token_with_reason",
+            AsyncMock(
+                return_value=(
+                    {
+                        "access_token": "fresh-access-token",
+                        "refresh_token": "fresh-refresh-token",
+                        "expires_in": 1800,
+                    },
+                    None,
+                )
+            ),
+        ) as fetch_token_with_reason,
     ):
-        try:
-            await runtime_data.coordinator.update_method()
-        except ConfigEntryAuthFailed:
-            pass
-        else:
-            raise AssertionError("Expected ConfigEntryAuthFailed")
+        result = await runtime_data.coordinator.update_method()
+
+    assert result["alarmState"] == "ARMED_AWAY"
+    assert runtime_data.access_token == "fresh-access-token"
+    assert runtime_data.refresh_token == "fresh-refresh-token"
+    fetch_token_with_reason.assert_awaited_once()
+    assert get_data_with_status.await_count == 2
+
+
+async def test_coordinator_update_method_http_401_updates_connected_websocket_token_in_place(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """A 401 retry should update a healthy websocket token without reconnecting it."""
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+    websocket = SimpleNamespace(
+        is_connected=lambda: True,
+        status="Connected",
+        status_reason="ready",
+        update_token=MagicMock(),
+    )
+    runtime_data.websocket = websocket
+
+    with (
+        patch(
+            "custom_components.homely.get_data_with_status",
+            AsyncMock(
+                side_effect=[
+                    (None, 401),
+                    (updated_location_data, 200),
+                ]
+            ),
+        ),
+        patch(
+            "custom_components.homely.fetch_token_with_reason",
+            AsyncMock(
+                return_value=(
+                    {
+                        "access_token": "fresh-access-token",
+                        "refresh_token": "fresh-refresh-token",
+                        "expires_in": 1800,
+                    },
+                    None,
+                )
+            ),
+        ),
+    ):
+        result = await runtime_data.coordinator.update_method()
+
+    assert result["alarmState"] == "ARMED_AWAY"
+    websocket.update_token.assert_called_once_with(
+        "fresh-access-token",
+        reconnect_if_disconnected=False,
+    )
+
+
+async def test_coordinator_update_method_http_401_uses_cache_when_full_login_is_invalid(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Polling invalid_auth should keep retrying later instead of triggering reauth."""
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+
+    with (
+        patch(
+            "custom_components.homely.get_data_with_status",
+            AsyncMock(return_value=(None, 401)),
+        ),
+        patch(
+            "custom_components.homely.fetch_token_with_reason",
+            AsyncMock(return_value=(None, "invalid_auth")),
+        ),
+    ):
+        result = await runtime_data.coordinator.update_method()
+
+    assert result == runtime_data.last_data
+
+
+async def test_coordinator_update_method_http_401_uses_cache_when_full_login_cannot_connect(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Polling auth rejections should keep cached data on temporary login outages."""
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+
+    with (
+        patch(
+            "custom_components.homely.get_data_with_status",
+            AsyncMock(return_value=(None, 401)),
+        ),
+        patch(
+            "custom_components.homely.fetch_token_with_reason",
+            AsyncMock(return_value=(None, "cannot_connect")),
+        ),
+    ):
+        result = await runtime_data.coordinator.update_method()
+
+    assert result == runtime_data.last_data
 
 
 async def test_coordinator_update_method_uses_cache_on_unexpected_poll_exception(

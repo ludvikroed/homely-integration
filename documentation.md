@@ -75,14 +75,6 @@ The WebSocket status sensor can show:
 
 When available, `reason` shows the current websocket reason and `last_disconnect_reason` keeps the latest disconnect reason after reconnect.
 
-## Reauthentication
-
-If Homely rejects stored credentials, Home Assistant can start a reauthentication flow for the integration.
-
-- Open the repair or reauthentication prompt in Home Assistant
-- Enter updated Homely credentials
-- The config entry reloads with the new credentials
-
 ## Remove stale devices
 
 If Homely stops reporting a device, you can remove it manually in Home Assistant:

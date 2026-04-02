@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from copy import deepcopy
 from unittest.mock import MagicMock
 
@@ -49,7 +50,9 @@ def test_alarm_panel_maps_known_alarm_states(location_data):
     assert entity.alarm_state is AlarmControlPanelState.ARMING
 
 
-def test_alarm_panel_uses_nested_fallback_and_handles_unknown_state(location_data):
+def test_alarm_panel_uses_nested_fallback_and_handles_unknown_state(
+    location_data, caplog
+):
     """Alarm entity should fall back to nested data and ignore unknown states."""
     coordinator = MagicMock()
     nested_only = deepcopy(location_data)
@@ -60,10 +63,16 @@ def test_alarm_panel_uses_nested_fallback_and_handles_unknown_state(location_dat
 
     assert entity.alarm_state is AlarmControlPanelState.TRIGGERED
 
-    coordinator.data["features"]["alarm"]["states"]["alarm"]["value"] = "SOMETHING_NEW"
-    assert entity.alarm_state is None
+    with caplog.at_level(logging.WARNING):
+        coordinator.data["features"]["alarm"]["states"]["alarm"]["value"] = (
+            "SOMETHING_NEW"
+        )
+        assert entity.alarm_state is None
 
     assert entity.alarm_state is None
+    joined = "\n".join(record.getMessage() for record in caplog.records)
+    assert "Unknown alarm state from API" in joined
+    assert "Please open a GitHub issue if this keeps happening." in joined
 
 
 def test_location_level_entities_use_service_device_type(hass, location_data):

@@ -14,7 +14,7 @@ from homely.client import BASE_URL
 
 from .const import CONF_ENABLE_WEBSOCKET, DEFAULT_ENABLE_WEBSOCKET, DOMAIN
 from .models import HomelyRuntimeData
-from .runtime_state import cache_age_seconds, websocket_is_connected
+from .runtime_state import cache_age_seconds, websocket_connection_state
 
 
 @callback
@@ -58,6 +58,8 @@ def _runtime_entry_summaries(entries: list[ConfigEntry]) -> dict[str, Any]:
 
     total_devices = sum(len(runtime.tracked_device_ids) for runtime in runtime_entries)
     api_available_count = sum(1 for runtime in runtime_entries if runtime.api_available)
+    live_update_states: list[str] = []
+    websocket_connected_count = 0
     websocket_enabled_count = sum(
         1
         for entry in entries
@@ -68,9 +70,27 @@ def _runtime_entry_summaries(entries: list[ConfigEntry]) -> dict[str, Any]:
             )
         )
     )
-    websocket_connected_count = sum(
-        1 for runtime in runtime_entries if websocket_is_connected(runtime)
-    )
+    for entry in entries:
+        websocket_enabled = bool(
+            entry.options.get(
+                CONF_ENABLE_WEBSOCKET,
+                entry.data.get(CONF_ENABLE_WEBSOCKET, DEFAULT_ENABLE_WEBSOCKET),
+            )
+        )
+        if not websocket_enabled:
+            live_update_states.append(f"{entry.title}: disabled")
+            continue
+
+        websocket_state = websocket_connection_state(entry.runtime_data)
+        if websocket_state.connected:
+            websocket_connected_count += 1
+
+        state_label = websocket_state.effective_status
+        if websocket_state.status_mismatch:
+            state_label = (
+                f"{state_label} (reported {websocket_state.reported_status})"
+            )
+        live_update_states.append(f"{entry.title}: {state_label}")
 
     cache_ages = [
         age
@@ -89,6 +109,7 @@ def _runtime_entry_summaries(entries: list[ConfigEntry]) -> dict[str, Any]:
         "entries_with_api_available": api_available_count,
         "entries_with_live_updates_enabled": websocket_enabled_count,
         "entries_with_live_updates_connected": websocket_connected_count,
+        "live_update_states": "; ".join(live_update_states) or "none",
         "oldest_cached_data_age_seconds": max(cache_ages) if cache_ages else None,
         "oldest_successful_api_poll_age_seconds": (
             max(last_poll_ages) if last_poll_ages else None
@@ -123,6 +144,7 @@ async def system_health_info(hass: HomeAssistant) -> dict[str, Any]:
         "entries_with_live_updates_connected": summary[
             "entries_with_live_updates_connected"
         ],
+        "live_update_states": summary["live_update_states"],
         "oldest_cached_data_age_seconds": summary["oldest_cached_data_age_seconds"],
         "oldest_successful_api_poll_age_seconds": summary[
             "oldest_successful_api_poll_age_seconds"
