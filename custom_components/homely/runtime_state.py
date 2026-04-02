@@ -55,12 +55,40 @@ def cached_location_data(runtime_data: HomelyRuntimeData) -> dict[str, Any] | No
 
 def websocket_is_connected(runtime_data: HomelyRuntimeData) -> bool:
     """Return whether the current websocket looks connected."""
-    websocket = runtime_data.websocket
+    return websocket_object_is_connected(runtime_data.websocket)
+
+
+def websocket_object_is_connected(websocket: Any | None) -> bool:
+    """Return whether a websocket object looks connected.
+
+    Socket.IO can report the namespace-level ``connected`` flag as false while the
+    underlying Engine.IO transport is still alive and actively delivering events.
+    Treat either signal as connected to avoid tearing down healthy sessions.
+    """
     if websocket is None:
         return False
 
+    is_connected = getattr(websocket, "is_connected", None)
+    if callable(is_connected):
+        try:
+            if bool(is_connected()):
+                return True
+        except Exception:
+            pass
+
+    socket = getattr(websocket, "socket", None)
+    if socket is None:
+        return False
+
     try:
-        return bool(websocket.is_connected())
+        if bool(getattr(socket, "connected")):
+            return True
+    except Exception:
+        pass
+
+    engineio_client = getattr(socket, "eio", None)
+    try:
+        return str(getattr(engineio_client, "state", "")).lower() == "connected"
     except Exception:
         return False
 

@@ -28,6 +28,7 @@ from custom_components.homely.runtime_state import (
     tracked_api_device_ids,
     update_runtime_websocket_state,
     websocket_connection_state,
+    websocket_object_is_connected,
     websocket_is_connected,
     websocket_state_context,
     websocket_state_snapshot,
@@ -229,6 +230,35 @@ def test_runtime_state_connection_state_prefers_effective_socket_connection(
     assert observability["websocket_effective_status"] == "disconnected"
     assert observability["websocket_reported_status"] == "connected"
     assert observability["websocket_status_mismatch"] is True
+
+
+def test_runtime_state_connection_state_accepts_live_engineio_transport(location_data):
+    """Engine.IO transport should count as connected for runtime health decisions."""
+    runtime_data = HomelyRuntimeData(
+        coordinator=SimpleNamespace(data=location_data),
+        access_token="access",
+        refresh_token="refresh",
+        expires_at=0,
+        location_id=LOCATION_ID,
+        last_data=location_data,
+        ws_status="Connected",
+    )
+    runtime_data.websocket = SimpleNamespace(
+        is_connected=lambda: False,
+        status="Connected",
+        socket=SimpleNamespace(
+            connected=False,
+            eio=SimpleNamespace(state="connected"),
+        ),
+    )
+
+    assert websocket_object_is_connected(runtime_data.websocket) is True
+    assert websocket_is_connected(runtime_data) is True
+
+    websocket_state = websocket_connection_state(runtime_data)
+    assert websocket_state.connected is True
+    assert websocket_state.effective_status == "connected"
+    assert websocket_state.status_mismatch is False
 
 
 def test_runtime_state_record_helpers_update_observability_snapshot(location_data):

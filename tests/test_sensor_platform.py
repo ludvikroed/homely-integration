@@ -6,6 +6,7 @@ from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import homeassistant.helpers.entity as entity_helper
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
@@ -21,6 +22,8 @@ from custom_components.homely.sensor import (
 from custom_components.homely.const import CONF_ENABLE_WEBSOCKET
 from custom_components.homely.sensors.discover import discover_device_sensors
 from tests.common import LOCATION_ID, build_config_entry
+
+DIAGNOSTIC_ENTITY_CATEGORY = getattr(entity_helper, "EntityCategory").DIAGNOSTIC
 
 
 def test_sensor_platform_declares_parallel_updates():
@@ -65,7 +68,7 @@ def test_motion_sensitivity_sensor_exposes_config_value(location_data):
     entity = HomelySensor(coordinator, motion_device, sensitivity)
 
     assert entity.native_value == 1
-    assert entity.entity_category is None
+    assert entity.entity_category == DIAGNOSTIC_ENTITY_CATEGORY
 
 
 def test_lock_info_sensors_expose_language_and_sound(location_data):

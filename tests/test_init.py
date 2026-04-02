@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from custom_components.homely import api
@@ -218,6 +219,126 @@ async def test_async_setup_entry_loads_runtime_data(
     assert runtime_data.last_data["name"] == "JF23"
     assert runtime_data.coordinator.data["alarmState"] == "ARMED_AWAY"
     assert runtime_data.last_successful_poll_at is not None
+
+
+async def test_async_setup_entry_reenables_legacy_integration_disabled_error_code_sensor(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Legacy integration-disabled Yale error code sensors should be restored."""
+    config_entry = build_config_entry()
+    config_entry.add_to_hass(hass)
+    entity_registry = er.async_get(hass)
+    entity_entry = entity_registry.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        "6c120e85-e8d5-49ac-abc0-baa29f9243b7_error_code",
+        suggested_object_id="yale_doorman_feilkode",
+        config_entry=config_entry,
+        disabled_by=er.RegistryEntryDisabler.INTEGRATION,
+    )
+
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch(
+                "custom_components.homely.fetch_token_with_reason",
+                AsyncMock(return_value=(token_response, None)),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "custom_components.homely.get_location_id",
+                AsyncMock(return_value=location_response),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "custom_components.homely.get_data",
+                AsyncMock(return_value=location_data),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "custom_components.homely.get_data_with_status",
+                AsyncMock(return_value=(updated_location_data, 200)),
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                hass.config_entries,
+                "async_forward_entry_setups",
+                AsyncMock(return_value=None),
+            )
+        )
+        assert await hass.config_entries.async_setup(config_entry.entry_id)
+        await hass.async_block_till_done()
+
+    refreshed = entity_registry.async_get(entity_entry.entity_id)
+    assert refreshed is not None
+    assert refreshed.disabled_by is None
+
+
+async def test_async_setup_entry_keeps_user_disabled_error_code_sensor_disabled(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """User-disabled Yale error code sensors should stay disabled."""
+    config_entry = build_config_entry()
+    config_entry.add_to_hass(hass)
+    entity_registry = er.async_get(hass)
+    entity_entry = entity_registry.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        "6c120e85-e8d5-49ac-abc0-baa29f9243b7_error_code",
+        suggested_object_id="yale_doorman_feilkode",
+        config_entry=config_entry,
+        disabled_by=er.RegistryEntryDisabler.USER,
+    )
+
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch(
+                "custom_components.homely.fetch_token_with_reason",
+                AsyncMock(return_value=(token_response, None)),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "custom_components.homely.get_location_id",
+                AsyncMock(return_value=location_response),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "custom_components.homely.get_data",
+                AsyncMock(return_value=location_data),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "custom_components.homely.get_data_with_status",
+                AsyncMock(return_value=(updated_location_data, 200)),
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                hass.config_entries,
+                "async_forward_entry_setups",
+                AsyncMock(return_value=None),
+            )
+        )
+        assert await hass.config_entries.async_setup(config_entry.entry_id)
+        await hass.async_block_till_done()
+
+    refreshed = entity_registry.async_get(entity_entry.entity_id)
+    assert refreshed is not None
+    assert refreshed.disabled_by is er.RegistryEntryDisabler.USER
 
 
 def test_pending_import_locations_ignores_invalid_items():
@@ -848,6 +969,48 @@ async def test_coordinator_update_method_requests_reconnect_for_stale_connecting
     websocket.request_reconnect.assert_called_once_with(
         "poll detected disconnected websocket"
     )
+
+
+async def test_coordinator_update_method_does_not_reconnect_live_engineio_websocket(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Polling should not reconnect a websocket with a live Engine.IO transport."""
+    config_entry = build_config_entry(
+        options={
+            CONF_ENABLE_WEBSOCKET: True,
+            CONF_POLL_WHEN_WEBSOCKET: False,
+        }
+    )
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+    websocket = SimpleNamespace(
+        is_connected=lambda: False,
+        status="Connected",
+        status_reason="event received",
+        socket=SimpleNamespace(
+            connected=False,
+            eio=SimpleNamespace(state="connected"),
+        ),
+        request_reconnect=MagicMock(),
+        update_token=MagicMock(),
+    )
+    runtime_data.websocket = websocket
+
+    result = await runtime_data.coordinator.update_method()
+
+    assert result == runtime_data.last_data
+    websocket.request_reconnect.assert_not_called()
 
 
 async def test_coordinator_update_method_swallow_websocket_reconnect_request_errors(
@@ -1858,6 +2021,64 @@ async def test_coordinator_update_method_refreshes_connected_websocket_without_r
     assert runtime_data.refresh_token == "connected-refresh-token"
     websocket.update_token.assert_called_once_with(
         "connected-access-token",
+        reconnect_if_disconnected=False,
+    )
+
+
+async def test_coordinator_update_method_refreshes_engineio_connected_websocket_without_reconnect(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Token refresh should not nudge reconnect if the Engine.IO transport is alive."""
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+    runtime_data.expires_at = 0
+    websocket = SimpleNamespace(
+        is_connected=lambda: False,
+        status="Connected",
+        status_reason="event received",
+        socket=SimpleNamespace(
+            connected=False,
+            eio=SimpleNamespace(state="connected"),
+        ),
+        update_token=MagicMock(),
+    )
+    runtime_data.websocket = websocket
+
+    with (
+        patch(
+            "custom_components.homely.fetch_refresh_token",
+            AsyncMock(
+                return_value={
+                    "access_token": "engineio-access-token",
+                    "refresh_token": "engineio-refresh-token",
+                    "expires_in": 1800,
+                }
+            ),
+        ),
+        patch(
+            "custom_components.homely.get_data_with_status",
+            AsyncMock(return_value=(updated_location_data, 200)),
+        ),
+    ):
+        result = await runtime_data.coordinator.update_method()
+
+    assert result["alarmState"] == "ARMED_AWAY"
+    assert runtime_data.access_token == "engineio-access-token"
+    assert runtime_data.refresh_token == "engineio-refresh-token"
+    websocket.update_token.assert_called_once_with(
+        "engineio-access-token",
         reconnect_if_disconnected=False,
     )
 

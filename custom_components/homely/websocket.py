@@ -15,6 +15,32 @@ HomelyWebSocket = cast(
 _LOGGER = logging.getLogger(HomelyWebSocket.__module__)
 
 
+def _socket_transport_is_connected(socket: Any | None) -> bool:
+    """Return True when the underlying Socket.IO or Engine.IO transport is alive."""
+    if socket is None:
+        return False
+
+    try:
+        if bool(getattr(socket, "connected")):
+            return True
+    except Exception:
+        pass
+
+    engineio_client = getattr(socket, "eio", None)
+    try:
+        return str(getattr(engineio_client, "state", "")).lower() == "connected"
+    except Exception:
+        return False
+
+
+def _is_connected(self: Any) -> bool:
+    """Return True when the websocket transport looks alive."""
+    try:
+        return _socket_transport_is_connected(getattr(self, "socket", None))
+    except Exception:
+        return False
+
+
 def _reconnect_interval_for_attempt(self: Any, attempt: int) -> int:
     """Return reconnect delay for the given attempt number."""
     if attempt <= 3:
@@ -93,5 +119,7 @@ async def _reconnect_loop(self: Any) -> None:
 setattr(HomelyWebSocket, "_reconnect_interval_for_attempt", _reconnect_interval_for_attempt)
 setattr(HomelyWebSocket, "_start_reconnect_loop", _start_reconnect_loop)
 setattr(HomelyWebSocket, "_reconnect_loop", _reconnect_loop)
+setattr(HomelyWebSocket, "_socket_transport_is_connected", staticmethod(_socket_transport_is_connected))
+setattr(HomelyWebSocket, "is_connected", _is_connected)
 
 __all__ = ["HomelyWebSocket"]

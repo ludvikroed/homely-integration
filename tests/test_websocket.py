@@ -222,6 +222,27 @@ def test_update_websocket_token_requests_reconnect_when_disconnected():
     )
 
 
+def test_update_websocket_token_does_not_nudge_engineio_connected_socket():
+    """An alive Engine.IO transport should not be treated as disconnected."""
+    websocket = SimpleNamespace(
+        is_connected=lambda: False,
+        status="Connected",
+        socket=SimpleNamespace(
+            connected=False,
+            eio=SimpleNamespace(state="connected"),
+        ),
+        update_token=MagicMock(),
+    )
+
+    result = update_websocket_token(websocket, "new-token")
+
+    assert result == "no_reconnect"
+    websocket.update_token.assert_called_once_with(
+        "new-token",
+        reconnect_if_disconnected=False,
+    )
+
+
 def test_update_websocket_token_supports_legacy_clients_without_reconnect_kwarg():
     """Legacy websocket clients should still accept token refreshes."""
 
@@ -303,6 +324,22 @@ def test_update_websocket_token_requests_reconnect_for_stale_connecting_status()
         "new-token",
         reconnect_if_disconnected=True,
     )
+
+
+def test_websocket_is_connected_uses_engineio_transport_state():
+    """Engine.IO state should count as connected even if namespace flag is false."""
+    ws = HomelyWebSocket(
+        entry_id="entry-1",
+        location_id="loc-1",
+        token="token",
+        on_data_update=lambda data: None,
+    )
+    ws.socket = SimpleNamespace(
+        connected=False,
+        eio=SimpleNamespace(state="connected"),
+    )
+
+    assert ws.is_connected() is True
 
 
 def test_websocket_reconnect_interval_backoff_schedule():

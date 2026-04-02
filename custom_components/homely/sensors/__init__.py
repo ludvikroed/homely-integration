@@ -84,6 +84,7 @@ SENSORS: list[dict[str, Any]] = [
         "name": "motion_sensitivity",
         "translation_key": "motion_sensitivity",
         "device_suffix": "sensitivitylevel",
+        "entity_category": "diagnostic",
         "icon": "mdi:tune-vertical",
     },
     {

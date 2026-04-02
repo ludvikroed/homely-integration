@@ -12,6 +12,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceEntry
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from .api import (
@@ -209,6 +210,50 @@ def _schedule_pending_location_imports(
         existing_location_ids.add(location_id)
 
     _clear_pending_import_locations(hass, entry)
+
+
+def _reenable_legacy_error_code_entities(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+) -> None:
+    """Re-enable legacy Yale error-code sensors that were once disabled by default.
+
+    Earlier versions exposed the `error_code` sensor with
+    `entity_registry_enabled_default = False`, which caused Home Assistant to
+    persist `disabled_by=integration` in the entity registry. Once we flipped the
+    default to enabled, existing installs kept the old disabled registry entry.
+
+    Only restore entities that were disabled by the integration itself; if the
+    user manually disabled one, we should respect that choice.
+    """
+    entity_registry = er.async_get(hass)
+    reenabled = 0
+
+    for registry_entry in er.async_entries_for_config_entry(
+        entity_registry,
+        entry.entry_id,
+    ):
+        if registry_entry.domain != Platform.SENSOR:
+            continue
+        if registry_entry.platform != DOMAIN:
+            continue
+        if not registry_entry.unique_id.endswith("_error_code"):
+            continue
+        if registry_entry.disabled_by is not er.RegistryEntryDisabler.INTEGRATION:
+            continue
+
+        entity_registry.async_update_entity(
+            registry_entry.entity_id,
+            disabled_by=None,
+        )
+        reenabled += 1
+
+    if reenabled:
+        _LOGGER.info(
+            "Re-enabled %s legacy Homely error code sensor(s) entry_id=%s",
+            reenabled,
+            entry.entry_id,
+        )
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -522,6 +567,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> bo
         )
 
     await coordinator.async_config_entry_first_refresh()
+    _reenable_legacy_error_code_entities(hass, entry)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     _schedule_pending_location_imports(hass, entry)
 

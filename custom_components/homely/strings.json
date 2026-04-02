@@ -56,9 +56,9 @@
         "title": "Advanced Settings",
         "description": "Configure how the Homely integration refreshes data.",
         "data": {
-          "scan_interval": "Refresh interval (seconds, minimum 30)",
-          "enable_websocket": "Enable live updates",
-          "poll_when_websocket": "Keep refreshing while live updates are active"
+          "scan_interval": "Regular API polling interval (seconds, minimum 30)",
+          "enable_websocket": "Enable live updates via WebSocket",
+          "poll_when_websocket": "Continue regular API polling while live updates are active"
         }
       }
     },

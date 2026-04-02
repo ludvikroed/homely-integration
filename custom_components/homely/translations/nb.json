@@ -56,9 +56,9 @@
         "title": "Avanserte innstillinger",
         "description": "Velg hvordan Homely-integrasjonen skal oppdatere data.",
         "data": {
-          "scan_interval": "Oppdateringsintervall (sekunder, minimum 30)",
-          "enable_websocket": "Aktiver direkteoppdateringer",
-          "poll_when_websocket": "Fortsett oppdatering også når direkteoppdateringer er aktive"
+          "scan_interval": "Vanlig API-pollingintervall (sekunder, minimum 30)",
+          "enable_websocket": "Aktiver direkteoppdateringer via WebSocket",
+          "poll_when_websocket": "Fortsett vanlig API-polling også når direkteoppdateringer er aktive"
         }
       }
     },
@@ -102,7 +102,7 @@
         "name": "Blokkert"
       },
       "any_battery_problem": {
-        "name": "Batteriproblem"
+        "name": "Samlet batteristatus"
       },
       "metering_check": {
         "name": "Målersjekk"

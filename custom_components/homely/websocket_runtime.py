@@ -17,6 +17,7 @@ from .runtime_state import (
     device_id_snapshot,
     record_websocket_event,
     update_runtime_websocket_state,
+    websocket_object_is_connected,
     websocket_is_connected,
 )
 
@@ -42,10 +43,7 @@ class ContextBuilder(Protocol):
 
 def update_websocket_token(websocket: Any, token: str) -> str:
     """Update websocket token without nudging healthy connections."""
-    try:
-        is_connected = bool(websocket.is_connected())
-    except Exception:
-        is_connected = False
+    is_connected = websocket_object_is_connected(websocket)
 
     reconnect_if_disconnected = not is_connected
 
