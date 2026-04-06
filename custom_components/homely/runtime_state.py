@@ -9,6 +9,10 @@ from typing import Any
 from homeassistant.util import dt as dt_util
 
 from .models import HomelyConfigEntry, HomelyRuntimeData
+from .websocket import (
+    WebSocketConnectionState,
+    normalize_websocket_status,
+)
 
 
 @dataclass(frozen=True)
@@ -18,26 +22,6 @@ class WebSocketStateSnapshot:
     connected: bool
     status: str
     reason: str | None
-
-
-@dataclass(frozen=True)
-class WebSocketConnectionState:
-    """Normalized websocket status used by sensors and diagnostics."""
-
-    connected: bool
-    reported_status: str
-    effective_status: str
-    reason: str | None
-    status_mismatch: bool
-
-
-WEBSOCKET_STATUS_OPTIONS = {
-    "not_initialized",
-    "connecting",
-    "connected",
-    "disconnected",
-    "unknown",
-}
 
 
 def current_runtime_data(entry: HomelyConfigEntry) -> HomelyRuntimeData | None:
@@ -59,14 +43,16 @@ def websocket_is_connected(runtime_data: HomelyRuntimeData) -> bool:
 
 
 def websocket_object_is_connected(websocket: Any | None) -> bool:
-    """Return whether a websocket object looks connected.
-
-    Socket.IO can report the namespace-level ``connected`` flag as false while the
-    underlying Engine.IO transport is still alive and actively delivering events.
-    Treat either signal as connected to avoid tearing down healthy sessions.
-    """
+    """Return whether a websocket object looks connected."""
     if websocket is None:
         return False
+
+    connection_state = getattr(websocket, "connection_state", None)
+    if callable(connection_state):
+        try:
+            return bool(connection_state().connected)
+        except Exception:
+            pass
 
     is_connected = getattr(websocket, "is_connected", None)
     if callable(is_connected):
@@ -77,44 +63,47 @@ def websocket_object_is_connected(websocket: Any | None) -> bool:
             pass
 
     socket = getattr(websocket, "socket", None)
-    if socket is None:
-        return False
+    if socket is not None:
+        try:
+            if bool(getattr(socket, "connected")):
+                return True
+        except Exception:
+            pass
 
-    try:
-        if bool(getattr(socket, "connected")):
-            return True
-    except Exception:
-        pass
+        engineio_client = getattr(socket, "eio", None)
+        try:
+            if str(getattr(engineio_client, "state", "")).lower() == "connected":
+                return True
+        except Exception:
+            pass
 
-    engineio_client = getattr(socket, "eio", None)
-    try:
-        return str(getattr(engineio_client, "state", "")).lower() == "connected"
-    except Exception:
-        return False
-
-
-def normalize_websocket_status(value: Any) -> str:
-    """Convert internal websocket labels to stable enum states."""
-    if not isinstance(value, str):
-        return "unknown"
-
-    normalized = value.strip().lower().replace(" ", "_")
-    return normalized if normalized in WEBSOCKET_STATUS_OPTIONS else "unknown"
+    return False
 
 
 def reported_websocket_status(runtime_data: HomelyRuntimeData) -> str:
     """Return the latest websocket status reported by runtime state."""
+    websocket = runtime_data.websocket
+    if websocket is not None:
+        reported_connection_status = getattr(
+            websocket,
+            "reported_connection_status",
+            None,
+        )
+        if callable(reported_connection_status):
+            try:
+                return normalize_websocket_status(reported_connection_status())
+            except Exception:
+                pass
+
     status = normalize_websocket_status(runtime_data.ws_status)
-    if status in {"connected", "disconnected", "connecting"}:
+    if (
+        status in {"connected", "disconnected", "connecting"}
+        or (status == "not_initialized" and not websocket_is_connected(runtime_data))
+    ):
         return status
 
-    websocket = runtime_data.websocket
     if websocket is None:
         return "not_initialized"
-
-    websocket_status = normalize_websocket_status(getattr(websocket, "status", None))
-    if websocket_status != "unknown":
-        return websocket_status
 
     return "connected" if websocket_is_connected(runtime_data) else "disconnected"
 
@@ -142,20 +131,39 @@ def websocket_connection_state(
     runtime_data: HomelyRuntimeData,
 ) -> WebSocketConnectionState:
     """Return a normalized websocket state for UI and diagnostics."""
-    reported_status = reported_websocket_status(runtime_data)
     websocket = runtime_data.websocket
-    connected = websocket_is_connected(runtime_data) if websocket is not None else False
-
     if websocket is None:
-        effective_status = "not_initialized"
-    elif connected:
-        effective_status = "connected"
-    elif reported_status in {"connecting", "not_initialized"}:
-        effective_status = reported_status
-    elif reported_status == "unknown":
-        effective_status = "disconnected"
-    else:
-        effective_status = "disconnected"
+        return WebSocketConnectionState(
+            connected=False,
+            reported_status="not_initialized",
+            effective_status="not_initialized",
+            reason=runtime_data.ws_status_reason,
+            status_mismatch=False,
+        )
+
+    connection_state = getattr(websocket, "connection_state", None)
+    if callable(connection_state):
+        try:
+            state = connection_state()
+            return WebSocketConnectionState(
+                connected=bool(state.connected),
+                reported_status=normalize_websocket_status(state.reported_status),
+                effective_status=normalize_websocket_status(state.effective_status),
+                reason=runtime_data.ws_status_reason or state.reason,
+                status_mismatch=bool(state.status_mismatch),
+            )
+        except Exception:
+            pass
+
+    reported_status = reported_websocket_status(runtime_data)
+    connected = websocket_is_connected(runtime_data)
+    effective_status = (
+        "connected"
+        if connected
+        else reported_status
+        if reported_status in {"connecting", "not_initialized"}
+        else "disconnected"
+    )
 
     return WebSocketConnectionState(
         connected=connected,

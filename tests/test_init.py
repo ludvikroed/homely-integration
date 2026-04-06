@@ -70,6 +70,7 @@ class _FakeHomelyWebSocket:
         self.status_reason = self.initial_reason
         self.connected = False
         self.update_token_calls: list[str] = []
+        self.sync_token_calls: list[str] = []
         self.request_reconnect_calls: list[str] = []
         self.disconnect = AsyncMock()
         type(self).instances.append(self)
@@ -101,6 +102,12 @@ class _FakeHomelyWebSocket:
         """Track token refreshes."""
         self.update_token_calls.append(token)
         self.token = token
+
+    def sync_token(self, token: str) -> str:
+        """Track token sync calls and mirror SDK reconnect semantics."""
+        self.sync_token_calls.append(token)
+        self.token = token
+        return "no_reconnect" if self.connected else "reconnect_if_disconnected"
 
     def request_reconnect(self, reason: str = "manual request") -> None:
         """Track reconnect requests."""
@@ -1496,7 +1503,7 @@ async def test_coordinator_update_method_refreshes_via_full_login_and_updates_we
         is_connected=lambda: False,
         status="Disconnected",
         status_reason="stale token",
-        update_token=MagicMock(),
+        sync_token=MagicMock(return_value="reconnect_if_disconnected"),
     )
     runtime_data.websocket = websocket
     new_tokens = {
@@ -1529,10 +1536,7 @@ async def test_coordinator_update_method_refreshes_via_full_login_and_updates_we
         previous_poll_at is None
         or runtime_data.last_successful_poll_at >= previous_poll_at
     )
-    websocket.update_token.assert_called_once_with(
-        "new-access-token",
-        reconnect_if_disconnected=True,
-    )
+    websocket.sync_token.assert_called_once_with("new-access-token")
 
 
 async def test_coordinator_update_method_refresh_fallback_non_auth_failure_uses_cache(
@@ -1766,7 +1770,7 @@ async def test_coordinator_update_method_refresh_response_missing_fields_falls_b
         is_connected=lambda: False,
         status="Disconnected",
         status_reason="stale token",
-        update_token=MagicMock(),
+        sync_token=MagicMock(return_value="reconnect_if_disconnected"),
     )
     runtime_data.websocket = websocket
     new_tokens = {
@@ -1794,10 +1798,7 @@ async def test_coordinator_update_method_refresh_response_missing_fields_falls_b
     assert result["alarmState"] == "ARMED_AWAY"
     assert runtime_data.access_token == "new-access-token"
     assert runtime_data.refresh_token == "new-refresh-token"
-    websocket.update_token.assert_called_once_with(
-        "new-access-token",
-        reconnect_if_disconnected=True,
-    )
+    websocket.sync_token.assert_called_once_with("new-access-token")
 
 
 async def test_coordinator_update_method_refresh_response_invalid_expires_uses_cache(
@@ -1940,7 +1941,7 @@ async def test_coordinator_update_method_refreshes_token_in_place(
         is_connected=lambda: False,
         status="Disconnected",
         status_reason="expired token",
-        update_token=MagicMock(),
+        sync_token=MagicMock(return_value="reconnect_if_disconnected"),
     )
     runtime_data.websocket = websocket
 
@@ -1965,10 +1966,7 @@ async def test_coordinator_update_method_refreshes_token_in_place(
     assert result["alarmState"] == "ARMED_AWAY"
     assert runtime_data.access_token == "refreshed-access-token"
     assert runtime_data.refresh_token == "refreshed-refresh-token"
-    websocket.update_token.assert_called_once_with(
-        "refreshed-access-token",
-        reconnect_if_disconnected=True,
-    )
+    websocket.sync_token.assert_called_once_with("refreshed-access-token")
 
 
 async def test_coordinator_update_method_refreshes_connected_websocket_without_reconnect(
@@ -1994,7 +1992,7 @@ async def test_coordinator_update_method_refreshes_connected_websocket_without_r
         is_connected=lambda: True,
         status="Connected",
         status_reason="ready",
-        update_token=MagicMock(),
+        sync_token=MagicMock(return_value="no_reconnect"),
     )
     runtime_data.websocket = websocket
 
@@ -2019,10 +2017,7 @@ async def test_coordinator_update_method_refreshes_connected_websocket_without_r
     assert result["alarmState"] == "ARMED_AWAY"
     assert runtime_data.access_token == "connected-access-token"
     assert runtime_data.refresh_token == "connected-refresh-token"
-    websocket.update_token.assert_called_once_with(
-        "connected-access-token",
-        reconnect_if_disconnected=False,
-    )
+    websocket.sync_token.assert_called_once_with("connected-access-token")
 
 
 async def test_coordinator_update_method_refreshes_engineio_connected_websocket_without_reconnect(
@@ -2052,7 +2047,7 @@ async def test_coordinator_update_method_refreshes_engineio_connected_websocket_
             connected=False,
             eio=SimpleNamespace(state="connected"),
         ),
-        update_token=MagicMock(),
+        sync_token=MagicMock(return_value="no_reconnect"),
     )
     runtime_data.websocket = websocket
 
@@ -2077,10 +2072,7 @@ async def test_coordinator_update_method_refreshes_engineio_connected_websocket_
     assert result["alarmState"] == "ARMED_AWAY"
     assert runtime_data.access_token == "engineio-access-token"
     assert runtime_data.refresh_token == "engineio-refresh-token"
-    websocket.update_token.assert_called_once_with(
-        "engineio-access-token",
-        reconnect_if_disconnected=False,
-    )
+    websocket.sync_token.assert_called_once_with("engineio-access-token")
 
 
 async def test_coordinator_update_method_refreshes_token_with_legacy_websocket_api(
@@ -2260,7 +2252,7 @@ async def test_coordinator_update_method_http_401_updates_connected_websocket_to
         is_connected=lambda: True,
         status="Connected",
         status_reason="ready",
-        update_token=MagicMock(),
+        sync_token=MagicMock(return_value="no_reconnect"),
     )
     runtime_data.websocket = websocket
 
@@ -2291,10 +2283,7 @@ async def test_coordinator_update_method_http_401_updates_connected_websocket_to
         result = await runtime_data.coordinator.update_method()
 
     assert result["alarmState"] == "ARMED_AWAY"
-    websocket.update_token.assert_called_once_with(
-        "fresh-access-token",
-        reconnect_if_disconnected=False,
-    )
+    websocket.sync_token.assert_called_once_with("fresh-access-token")
 
 
 async def test_coordinator_update_method_http_401_uses_cache_when_full_login_is_invalid(

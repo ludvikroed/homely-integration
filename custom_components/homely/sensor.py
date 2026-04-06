@@ -25,9 +25,10 @@ from .naming import (
     humanize_label,
 )
 from .runtime_state import (
-    normalize_websocket_status as _normalize_runtime_websocket_status,
     websocket_connection_state,
 )
+from .websocket import WEBSOCKET_STATUS_OPTIONS as SDK_WEBSOCKET_STATUS_OPTIONS
+from .websocket import normalize_websocket_status as _normalize_runtime_websocket_status
 from .sensors.discover import discover_device_sensors, _get_value_by_path
 
 PARALLEL_UPDATES = 0
@@ -36,11 +37,7 @@ FallbackDataGetter = Callable[[], dict[str, Any] | None]
 DIAGNOSTIC_ENTITY_CATEGORY = getattr(entity_helper, "EntityCategory").DIAGNOSTIC
 WEBSOCKET_STATUS_OPTIONS = [
     "disabled",
-    "not_initialized",
-    "connecting",
-    "connected",
-    "disconnected",
-    "unknown",
+    *SDK_WEBSOCKET_STATUS_OPTIONS,
 ]
 
 

@@ -11,7 +11,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import aiohttp
 
 from custom_components.homely.websocket import HomelyWebSocket
-from custom_components.homely.websocket_runtime import update_websocket_token
 
 
 class _FakeAsyncClient:
@@ -188,142 +187,96 @@ def test_websocket_update_token_ignores_empty_values():
     start_reconnect.assert_not_called()
 
 
-def test_update_websocket_token_does_not_nudge_connected_socket():
+def test_websocket_sync_token_does_not_nudge_connected_socket():
     """Connected sockets should keep their session and only store the new token."""
-    websocket = SimpleNamespace(
-        is_connected=lambda: True,
-        status="Connected",
-        update_token=MagicMock(),
+    ws = HomelyWebSocket(
+        entry_id="entry-1",
+        location_id="loc-1",
+        token="old-token",
+        on_data_update=lambda data: None,
     )
+    ws.socket = SimpleNamespace(connected=True)
 
-    result = update_websocket_token(websocket, "new-token")
+    with patch.object(ws, "_start_reconnect_loop") as start_reconnect:
+        result = ws.sync_token("new-token")
 
     assert result == "no_reconnect"
-    websocket.update_token.assert_called_once_with(
-        "new-token",
-        reconnect_if_disconnected=False,
-    )
+    assert ws.token == "new-token"
+    start_reconnect.assert_not_called()
 
 
-def test_update_websocket_token_requests_reconnect_when_disconnected():
+def test_websocket_sync_token_requests_reconnect_when_disconnected():
     """Disconnected sockets should pick up the new token and resume reconnecting."""
-    websocket = SimpleNamespace(
-        is_connected=lambda: False,
-        status="Disconnected",
-        update_token=MagicMock(),
+    ws = HomelyWebSocket(
+        entry_id="entry-1",
+        location_id="loc-1",
+        token="old-token",
+        on_data_update=lambda data: None,
     )
 
-    result = update_websocket_token(websocket, "new-token")
+    with patch.object(ws, "_start_reconnect_loop") as start_reconnect:
+        result = ws.sync_token("new-token")
 
     assert result == "reconnect_if_disconnected"
-    websocket.update_token.assert_called_once_with(
-        "new-token",
-        reconnect_if_disconnected=True,
-    )
+    assert ws.token == "new-token"
+    start_reconnect.assert_called_once_with("token changed while disconnected")
 
 
-def test_update_websocket_token_does_not_nudge_engineio_connected_socket():
+def test_websocket_sync_token_does_not_nudge_engineio_connected_socket():
     """An alive Engine.IO transport should not be treated as disconnected."""
-    websocket = SimpleNamespace(
-        is_connected=lambda: False,
-        status="Connected",
-        socket=SimpleNamespace(
-            connected=False,
-            eio=SimpleNamespace(state="connected"),
-        ),
-        update_token=MagicMock(),
+    ws = HomelyWebSocket(
+        entry_id="entry-1",
+        location_id="loc-1",
+        token="old-token",
+        on_data_update=lambda data: None,
+    )
+    ws.socket = SimpleNamespace(
+        connected=False,
+        eio=SimpleNamespace(state="connected"),
     )
 
-    result = update_websocket_token(websocket, "new-token")
+    with patch.object(ws, "_start_reconnect_loop") as start_reconnect:
+        result = ws.sync_token("new-token")
 
     assert result == "no_reconnect"
-    websocket.update_token.assert_called_once_with(
-        "new-token",
-        reconnect_if_disconnected=False,
+    assert ws.token == "new-token"
+    start_reconnect.assert_not_called()
+
+
+def test_websocket_sync_token_handles_broken_connection_probe():
+    """Token sync should still reconnect if connection checks fail."""
+    ws = HomelyWebSocket(
+        entry_id="entry-1",
+        location_id="loc-1",
+        token="old-token",
+        on_data_update=lambda data: None,
     )
+    ws.socket = _ExplodingConnected()
 
-
-def test_update_websocket_token_supports_legacy_clients_without_reconnect_kwarg():
-    """Legacy websocket clients should still accept token refreshes."""
-
-    class _LegacyWebSocket:
-        def __init__(self, connected: bool, status: str) -> None:
-            self._connected = connected
-            self.status = status
-            self.tokens: list[str] = []
-
-        def is_connected(self) -> bool:
-            return self._connected
-
-        def update_token(self, token: str, reconnect_if_disconnected=None) -> None:
-            if reconnect_if_disconnected is not None:
-                raise TypeError("unexpected keyword argument 'reconnect_if_disconnected'")
-            self.tokens.append(token)
-
-    disconnected = _LegacyWebSocket(False, "Disconnected")
-    connected = _LegacyWebSocket(True, "Connected")
-
-    disconnected_result = update_websocket_token(disconnected, "new-token")
-    connected_result = update_websocket_token(connected, "fresh-token")
-
-    assert disconnected_result == "legacy_reconnect"
-    assert disconnected.tokens == ["new-token"]
-    assert connected_result == "legacy_no_reconnect"
-    assert connected.tokens == ["fresh-token"]
-
-
-def test_update_websocket_token_reraises_unrelated_type_errors():
-    """Unexpected TypeError values should not be swallowed as legacy behavior."""
-    websocket = SimpleNamespace(
-        is_connected=lambda: False,
-        status="Disconnected",
-        update_token=MagicMock(side_effect=TypeError("boom")),
-    )
-
-    try:
-        update_websocket_token(websocket, "new-token")
-    except TypeError as err:
-        assert str(err) == "boom"
-    else:
-        raise AssertionError("Expected TypeError to be re-raised")
-
-
-def test_update_websocket_token_handles_broken_connection_probe():
-    """Token updates should still behave sensibly if the connection probe fails."""
-
-    def _raise_runtime_error() -> bool:
-        raise RuntimeError("boom")
-
-    websocket = SimpleNamespace(
-        is_connected=_raise_runtime_error,
-        status="Connecting",
-        update_token=MagicMock(),
-    )
-
-    result = update_websocket_token(websocket, "new-token")
+    with patch.object(ws, "_start_reconnect_loop") as start_reconnect:
+        result = ws.sync_token("new-token")
 
     assert result == "reconnect_if_disconnected"
-    websocket.update_token.assert_called_once_with(
-        "new-token",
-        reconnect_if_disconnected=True,
-    )
+    assert ws.token == "new-token"
+    start_reconnect.assert_called_once_with("token changed while disconnected")
 
 
-def test_update_websocket_token_requests_reconnect_for_stale_connecting_status():
+def test_websocket_sync_token_requests_reconnect_for_stale_connecting_status():
     """Disconnected sockets should still reconnect even if status says Connecting."""
-    websocket = SimpleNamespace(
-        is_connected=lambda: False,
-        status="Connecting",
-        update_token=MagicMock(),
+    ws = HomelyWebSocket(
+        entry_id="entry-1",
+        location_id="loc-1",
+        token="old-token",
+        on_data_update=lambda data: None,
     )
+    ws._status = "Connecting"
 
-    result = update_websocket_token(websocket, "new-token")
+    with patch.object(ws, "_start_reconnect_loop") as start_reconnect:
+        result = ws.sync_token("new-token")
 
     assert result == "reconnect_if_disconnected"
-    websocket.update_token.assert_called_once_with(
-        "new-token",
-        reconnect_if_disconnected=True,
-    )
+    assert ws.token == "new-token"
+    start_reconnect.assert_called_once_with("token changed while disconnected")
 
 
 def test_websocket_is_connected_uses_engineio_transport_state():
@@ -375,7 +328,7 @@ async def test_websocket_reconnect_loop_uses_progressive_backoff():
 
     with (
         patch.object(ws, "connect", AsyncMock(return_value=False)),
-        patch("custom_components.homely.websocket.asyncio.sleep", side_effect=_fake_sleep),
+        patch("homely.websocket.asyncio.sleep", side_effect=_fake_sleep),
     ):
         await ws._reconnect_loop()
 
@@ -587,7 +540,7 @@ def test_websocket_is_connected_handles_property_errors():
 
 
 async def test_websocket_reconnect_with_token_delegates_to_update_token():
-    """Explicit reconnect-with-token should request reconnect through update_token."""
+    """Explicit reconnect-with-token should delegate to sync_token."""
     ws = HomelyWebSocket(
         entry_id="entry-1",
         location_id="loc-1",
@@ -595,10 +548,10 @@ async def test_websocket_reconnect_with_token_delegates_to_update_token():
         on_data_update=lambda data: None,
     )
 
-    with patch.object(ws, "update_token") as update_token:
+    with patch.object(ws, "sync_token") as sync_token:
         await ws.reconnect_with_token("new-token")
 
-    update_token.assert_called_once_with("new-token", reconnect_if_disconnected=True)
+    sync_token.assert_called_once_with("new-token")
 
 
 def test_websocket_status_callback_failures_are_swallowed():

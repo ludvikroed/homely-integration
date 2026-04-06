@@ -66,7 +66,7 @@ async def test_system_health_info_summarizes_entries(hass):
         ),
         patch(
             "custom_components.homely.system_health._safe_sdk_version",
-            return_value="0.1.2",
+            return_value="0.1.3",
         ),
         patch(
             "custom_components.homely.system_health.system_health.async_check_can_reach_url",
@@ -76,7 +76,7 @@ async def test_system_health_info_summarizes_entries(hass):
         info = await system_health_info(hass)
 
     assert info["integration_version"] == "1.4.4-beta"
-    assert info["sdk_version"] == "0.1.2"
+    assert info["sdk_version"] == "0.1.3"
     assert await info["api_endpoint_reachable"] == "ok"
     assert info["configured_entries"] == 2
     assert info["loaded_entries"] == 2
@@ -116,7 +116,7 @@ async def test_system_health_info_surfaces_websocket_status_mismatches(hass):
         ),
         patch(
             "custom_components.homely.system_health._safe_sdk_version",
-            return_value="0.1.2",
+            return_value="0.1.3",
         ),
         patch(
             "custom_components.homely.system_health.system_health.async_check_can_reach_url",

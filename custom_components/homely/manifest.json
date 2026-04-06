@@ -9,6 +9,6 @@
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/ludvikroed/homely-integration/issues",
   "loggers": ["custom_components.homely", "homely"],
-  "requirements": ["python-homely==0.1.2"],
+  "requirements": ["python-homely==0.1.3"],
   "version": "1.4.6-beta"
 }

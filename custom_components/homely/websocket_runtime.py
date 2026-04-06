@@ -17,7 +17,6 @@ from .runtime_state import (
     device_id_snapshot,
     record_websocket_event,
     update_runtime_websocket_state,
-    websocket_object_is_connected,
     websocket_is_connected,
 )
 
@@ -39,30 +38,6 @@ class ContextBuilder(Protocol):
         location_id: str | int | None = None,
         device_id: str | int | None = None,
     ) -> str: ...
-
-
-def update_websocket_token(websocket: Any, token: str) -> str:
-    """Update websocket token without nudging healthy connections."""
-    is_connected = websocket_object_is_connected(websocket)
-
-    reconnect_if_disconnected = not is_connected
-
-    try:
-        websocket.update_token(
-            token,
-            reconnect_if_disconnected=reconnect_if_disconnected,
-        )
-    except TypeError as err:
-        if "reconnect_if_disconnected" not in str(err):
-            raise
-        websocket.update_token(token)
-        return (
-            "legacy_no_reconnect"
-            if not reconnect_if_disconnected
-            else "legacy_reconnect"
-        )
-
-    return "no_reconnect" if not reconnect_if_disconnected else "reconnect_if_disconnected"
 
 
 def build_device_topology_change_handler(

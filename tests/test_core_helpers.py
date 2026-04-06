@@ -34,6 +34,7 @@ from custom_components.homely.runtime_state import (
     websocket_state_snapshot,
 )
 from custom_components.homely.sensors import _as_float, _wh_to_kwh
+from custom_components.homely.websocket import HomelyWebSocket
 from custom_components.homely.ws_updates import (
     _normalize_event_type,
     apply_device_state_changes,
@@ -243,14 +244,17 @@ def test_runtime_state_connection_state_accepts_live_engineio_transport(location
         last_data=location_data,
         ws_status="Connected",
     )
-    runtime_data.websocket = SimpleNamespace(
-        is_connected=lambda: False,
-        status="Connected",
-        socket=SimpleNamespace(
-            connected=False,
-            eio=SimpleNamespace(state="connected"),
-        ),
+    websocket = HomelyWebSocket(
+        entry_id="entry-1",
+        location_id=LOCATION_ID,
+        token="token",
+        on_data_update=lambda _data: None,
     )
+    websocket.socket = SimpleNamespace(
+        connected=False,
+        eio=SimpleNamespace(state="connected"),
+    )
+    runtime_data.websocket = websocket
 
     assert websocket_object_is_connected(runtime_data.websocket) is True
     assert websocket_is_connected(runtime_data) is True

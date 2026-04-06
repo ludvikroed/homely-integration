@@ -20,7 +20,6 @@ from .runtime_state import (
     websocket_is_connected,
     websocket_state_context,
 )
-from .websocket_runtime import update_websocket_token
 
 _TRANSIENT_HTTP_STATUS = {429, 500, 502, 503, 504}
 
@@ -169,11 +168,14 @@ def build_async_update_data(
                 return
 
             try:
-                update_mode = update_websocket_token(ws, token)
-                if update_mode in {
-                    "reconnect_if_disconnected",
-                    "legacy_reconnect",
-                }:
+                sync_token = getattr(ws, "sync_token", None)
+                if callable(sync_token):
+                    update_mode = str(sync_token(token))
+                else:
+                    ws.update_token(token)
+                    update_mode = "legacy_no_reconnect"
+
+                if update_mode == "reconnect_if_disconnected":
                     logger.debug(
                         "Updated websocket token and allowed reconnect because websocket was disconnected entry_id=%s location_id=%s",
                         entry_id,
