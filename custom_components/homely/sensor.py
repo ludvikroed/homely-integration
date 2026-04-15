@@ -60,8 +60,14 @@ async def async_setup_entry(
     def _fallback_data_getter() -> dict[str, Any] | None:
         return runtime_data.last_data
 
+    websocket_enabled = bool(
+        entry.options.get(
+            CONF_ENABLE_WEBSOCKET,
+            entry.data.get(CONF_ENABLE_WEBSOCKET, DEFAULT_ENABLE_WEBSOCKET),
+        )
+    )
+
     entities: list[SensorEntity] = []
-    entities.append(HomelyWebSocketStatusSensor(coordinator, hass, entry, location_id))
     entities.append(
         HomelyRuntimeTimestampSensor(
             coordinator,
@@ -73,22 +79,26 @@ async def async_setup_entry(
             value_getter=lambda runtime_data: runtime_data.last_successful_poll_at,
         )
     )
-    entities.append(
-        HomelyRuntimeTimestampSensor(
-            coordinator,
-            entry,
-            location_id,
-            translation_key="last_websocket_message",
-            unique_suffix="last_websocket_message",
-            icon="mdi:message-outline",
-            value_getter=lambda runtime_data: runtime_data.last_websocket_event_at,
-            extra_attributes_getter=lambda runtime_data: (
-                {"event_type": runtime_data.last_websocket_event_type}
-                if runtime_data.last_websocket_event_type
-                else None
-            ),
+    if websocket_enabled:
+        entities.append(
+            HomelyWebSocketStatusSensor(coordinator, hass, entry, location_id)
         )
-    )
+        entities.append(
+            HomelyRuntimeTimestampSensor(
+                coordinator,
+                entry,
+                location_id,
+                translation_key="last_websocket_message",
+                unique_suffix="last_websocket_message",
+                icon="mdi:message-outline",
+                value_getter=lambda runtime_data: runtime_data.last_websocket_event_at,
+                extra_attributes_getter=lambda runtime_data: (
+                    {"event_type": runtime_data.last_websocket_event_type}
+                    if runtime_data.last_websocket_event_type
+                    else None
+                ),
+            )
+        )
 
     devices = data.get("devices", [])
     if not isinstance(devices, list):

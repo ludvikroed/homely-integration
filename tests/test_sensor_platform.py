@@ -447,7 +447,7 @@ async def test_sensor_async_setup_entry_creates_ws_status_and_device_sensors(
     hass, location_data
 ):
     """Sensor platform setup should create status sensor and discovered sensors."""
-    config_entry = build_config_entry()
+    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: True})
     config_entry.runtime_data = HomelyRuntimeData(
         coordinator=SimpleNamespace(data=location_data),
         access_token="access",
@@ -479,11 +479,35 @@ async def test_sensor_async_setup_entry_creates_ws_status_and_device_sensors(
     )
 
 
+async def test_sensor_async_setup_entry_omits_websocket_entities_when_disabled(
+    hass, location_data
+):
+    """WebSocket-only observability sensors should be omitted when disabled."""
+    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: False})
+    config_entry.runtime_data = HomelyRuntimeData(
+        coordinator=SimpleNamespace(data=location_data),
+        access_token="access",
+        refresh_token="refresh",
+        expires_at=0,
+        location_id=LOCATION_ID,
+        last_data=location_data,
+    )
+    collected = []
+
+    await async_setup_entry(hass, config_entry, collected.extend)
+
+    unique_ids = {entity.unique_id for entity in collected}
+    assert f"location_{LOCATION_ID}_last_successful_poll" in unique_ids
+    assert f"location_{LOCATION_ID}_websocket_status" not in unique_ids
+    assert f"location_{LOCATION_ID}_last_websocket_message" not in unique_ids
+    assert "70b9db72-5c00-4316-9ffa-ac7bf60fcb47_sensitivitylevel" in unique_ids
+
+
 async def test_sensor_async_setup_entry_handles_sparse_device_lists(
     hass, location_data
 ):
     """Sensor setup should ignore malformed device collections gracefully."""
-    config_entry = build_config_entry()
+    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: True})
     config_entry.runtime_data = HomelyRuntimeData(
         coordinator=SimpleNamespace(data={"name": "JF23", "devices": {}}),
         access_token="access",
@@ -497,8 +521,8 @@ async def test_sensor_async_setup_entry_handles_sparse_device_lists(
     await async_setup_entry(hass, config_entry, collected.extend)
 
     assert [entity.unique_id for entity in collected] == [
-        f"location_{LOCATION_ID}_websocket_status",
         f"location_{LOCATION_ID}_last_successful_poll",
+        f"location_{LOCATION_ID}_websocket_status",
         f"location_{LOCATION_ID}_last_websocket_message",
     ]
 
@@ -522,6 +546,23 @@ async def test_sensor_async_setup_entry_handles_sparse_device_lists(
     assert f"location_{LOCATION_ID}_last_websocket_message" in unique_ids
     assert "70b9db72-5c00-4316-9ffa-ac7bf60fcb47_sensitivitylevel" in unique_ids
     assert "70b9db72-5c00-4316-9ffa-ac7bf60fcb47_temperature" in unique_ids
+
+    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: False})
+    config_entry.runtime_data = HomelyRuntimeData(
+        coordinator=SimpleNamespace(data={"name": "JF23", "devices": {}}),
+        access_token="access",
+        refresh_token="refresh",
+        expires_at=0,
+        location_id=LOCATION_ID,
+        last_data={"name": "JF23", "devices": {}},
+    )
+    collected = []
+
+    await async_setup_entry(hass, config_entry, collected.extend)
+
+    assert [entity.unique_id for entity in collected] == [
+        f"location_{LOCATION_ID}_last_successful_poll",
+    ]
 
 
 async def test_websocket_status_sensor_registers_and_unregisters_listeners(
