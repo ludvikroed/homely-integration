@@ -365,6 +365,7 @@ async def async_init_websocket(
                     status == "Disconnected"
                     and previous_status != "Disconnected"
                     and reason != "manual disconnect"
+                    and current_ws is not None
                 ):
                     try:
                         current_ws.request_reconnect("status callback observed disconnect")
