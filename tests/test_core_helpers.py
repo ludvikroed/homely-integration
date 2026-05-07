@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from types import SimpleNamespace
 
 from custom_components.homely.__init__ import (
@@ -23,6 +24,7 @@ from custom_components.homely.models import get_entry_runtime_data
 from custom_components.homely.runtime_state import (
     reported_websocket_status,
     record_successful_poll,
+    record_websocket_watchdog_recovery,
     record_websocket_event,
     runtime_observability_snapshot,
     tracked_api_device_ids,
@@ -281,12 +283,18 @@ def test_runtime_state_record_helpers_update_observability_snapshot(location_dat
     assert has_snapshot is True
     assert len(device_ids) == len(location_data["devices"])
 
-    record_successful_poll(runtime_data, at=100.0)
+    now_monotonic = time.monotonic()
+    record_successful_poll(runtime_data, at=now_monotonic - 6)
     record_websocket_event(
         runtime_data,
         "device-state-changed",
         update_data_activity=True,
-        at=105.0,
+        at=now_monotonic - 1,
+    )
+    record_websocket_watchdog_recovery(
+        runtime_data,
+        "watchdog detected disconnected websocket without disconnect callback",
+        at=now_monotonic,
     )
 
     snapshot = runtime_observability_snapshot(runtime_data)
@@ -294,10 +302,16 @@ def test_runtime_state_record_helpers_update_observability_snapshot(location_dat
     assert snapshot["last_websocket_event_type"] == "device-state-changed"
     assert snapshot["last_successful_poll_age_seconds"] is not None
     assert snapshot["last_websocket_event_age_seconds"] is not None
+    assert (
+        snapshot["websocket_watchdog_last_reason"]
+        == "watchdog detected disconnected websocket without disconnect callback"
+    )
+    assert snapshot["websocket_watchdog_last_action_age_seconds"] is not None
+    assert snapshot["websocket_watchdog_recovery_count_30m"] == 1
     assert snapshot["cache_age_seconds"] is not None
     assert runtime_data.last_successful_poll_at is not None
     assert runtime_data.last_websocket_event_at is not None
-    assert runtime_data.last_data_activity_monotonic == 105.0
+    assert runtime_data.last_data_activity_monotonic == now_monotonic - 1
 
 
 def test_log_startup_device_payloads_handles_missing_devices(caplog):

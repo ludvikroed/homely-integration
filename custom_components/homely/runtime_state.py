@@ -14,6 +14,8 @@ from .websocket import (
     normalize_websocket_status,
 )
 
+WEBSOCKET_WATCHDOG_RECOVERY_WINDOW_SECONDS = 30 * 60
+
 
 @dataclass(frozen=True)
 class WebSocketStateSnapshot:
@@ -78,6 +80,26 @@ def websocket_object_is_connected(websocket: Any | None) -> bool:
             pass
 
     return False
+
+
+def websocket_reconnect_loop_active(runtime_data: HomelyRuntimeData) -> bool:
+    """Return whether the websocket already has an active reconnect loop."""
+    websocket = runtime_data.websocket
+    if websocket is None:
+        return False
+
+    reconnect_loop_active = getattr(websocket, "reconnect_loop_active", None)
+    if callable(reconnect_loop_active):
+        try:
+            return bool(reconnect_loop_active())
+        except Exception:
+            pass
+
+    reconnect_task = getattr(websocket, "_reconnect_task", None)
+    try:
+        return reconnect_task is not None and not reconnect_task.done()
+    except Exception:
+        return False
 
 
 def reported_websocket_status(runtime_data: HomelyRuntimeData) -> str:
@@ -270,6 +292,61 @@ def record_websocket_event(
         runtime_data.last_data_activity_monotonic = timestamp
 
 
+def _prune_watchdog_recovery_history(
+    runtime_data: HomelyRuntimeData,
+    *,
+    at: float,
+    window_seconds: int = WEBSOCKET_WATCHDOG_RECOVERY_WINDOW_SECONDS,
+) -> None:
+    """Discard watchdog recovery timestamps outside the current time window."""
+    cutoff = at - window_seconds
+    runtime_data.ws_watchdog_recovery_history_monotonic[:] = [
+        timestamp
+        for timestamp in runtime_data.ws_watchdog_recovery_history_monotonic
+        if timestamp >= cutoff
+    ]
+
+
+def websocket_watchdog_recovery_count(
+    runtime_data: HomelyRuntimeData,
+    *,
+    window_seconds: int = WEBSOCKET_WATCHDOG_RECOVERY_WINDOW_SECONDS,
+    at: float | None = None,
+) -> int:
+    """Return the count of watchdog-triggered recoveries in the active window."""
+    timestamp = monotonic() if at is None else at
+    _prune_watchdog_recovery_history(
+        runtime_data,
+        at=timestamp,
+        window_seconds=window_seconds,
+    )
+    return len(runtime_data.ws_watchdog_recovery_history_monotonic)
+
+
+def record_websocket_watchdog_recovery(
+    runtime_data: HomelyRuntimeData,
+    reason: str,
+    *,
+    at: float | None = None,
+    window_seconds: int = WEBSOCKET_WATCHDOG_RECOVERY_WINDOW_SECONDS,
+) -> int:
+    """Record a watchdog-triggered websocket recovery attempt."""
+    timestamp = monotonic() if at is None else at
+    _prune_watchdog_recovery_history(
+        runtime_data,
+        at=timestamp,
+        window_seconds=window_seconds,
+    )
+    runtime_data.ws_watchdog_recovery_history_monotonic.append(timestamp)
+    runtime_data.ws_watchdog_reconnect_monotonic = timestamp
+    runtime_data.ws_watchdog_last_reason = reason
+    runtime_data.ws_watchdog_last_action_at = dt_util.utcnow()
+    runtime_data.ws_status = "Disconnected"
+    runtime_data.ws_status_reason = reason
+    runtime_data.last_disconnect_reason = reason
+    return len(runtime_data.ws_watchdog_recovery_history_monotonic)
+
+
 def cache_age_seconds(runtime_data: HomelyRuntimeData) -> int | None:
     """Return age of the freshest cached Homely data."""
     return monotonic_age_seconds(runtime_data.last_data_activity_monotonic)
@@ -295,5 +372,12 @@ def runtime_observability_snapshot(runtime_data: HomelyRuntimeData) -> dict[str,
             runtime_data.last_websocket_event_monotonic
         ),
         "last_websocket_event_type": runtime_data.last_websocket_event_type,
+        "websocket_watchdog_last_reason": runtime_data.ws_watchdog_last_reason,
+        "websocket_watchdog_last_action_age_seconds": monotonic_age_seconds(
+            runtime_data.ws_watchdog_reconnect_monotonic
+        ),
+        "websocket_watchdog_recovery_count_30m": websocket_watchdog_recovery_count(
+            runtime_data
+        ),
         "cache_age_seconds": cache_age_seconds(runtime_data),
     }

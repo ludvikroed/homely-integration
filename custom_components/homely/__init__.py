@@ -61,6 +61,7 @@ from .websocket_runtime import (
     async_init_websocket,
     build_device_topology_change_handler,
     register_internet_available_listener,
+    register_websocket_health_watchdog,
     register_websocket_connected_poll_fallback,
 )
 from .ws_updates import apply_websocket_event_to_data
@@ -536,6 +537,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> bo
         except Exception:
             _LOGGER.debug(
                 "Could not register internet_available listener entry_id=%s location_id=%s",
+                entry_id,
+                location_id,
+            )
+        try:
+            watchdog_unsub = register_websocket_health_watchdog(
+                hass=hass,
+                entry=entry,
+                location_id=location_id,
+                logger=_LOGGER,
+                runtime_data_getter=_runtime_data,
+                coordinator=coordinator,
+                ctx=_ctx,
+            )
+            if watchdog_unsub is None:
+                raise RuntimeError("listener registration unavailable")
+            entry.async_on_unload(watchdog_unsub)
+        except Exception:
+            _LOGGER.debug(
+                "Could not register websocket watchdog entry_id=%s location_id=%s",
                 entry_id,
                 location_id,
             )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import logging
 import time
 from contextlib import ExitStack
@@ -190,6 +191,9 @@ async def _setup_loaded_entry(
                 AsyncMock(return_value=None),
             )
         )
+        stack.enter_context(
+            patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket)
+        )
         for extra_patch in extra_patches:
             stack.enter_context(extra_patch)
         assert await hass.config_entries.async_setup(config_entry.entry_id)
@@ -215,6 +219,9 @@ async def test_async_setup_entry_loads_runtime_data(
         location_response,
         location_data,
         updated_location_data,
+        extra_patches=(
+            patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),
+        ),
     )
 
     assert config_entry.state is ConfigEntryState.LOADED
@@ -829,6 +836,9 @@ async def test_coordinator_update_method_skips_polling_when_websocket_connected(
         location_response,
         location_data,
         updated_location_data,
+        extra_patches=(
+            patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),
+        ),
     )
     runtime_data = config_entry.runtime_data
     runtime_data.websocket = SimpleNamespace(
@@ -868,6 +878,9 @@ async def test_coordinator_update_method_forced_refresh_bypasses_websocket_skip(
         location_response,
         location_data,
         updated_location_data,
+        extra_patches=(
+            patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),
+        ),
     )
     runtime_data = config_entry.runtime_data
     runtime_data.websocket = SimpleNamespace(
@@ -910,6 +923,9 @@ async def test_coordinator_update_method_requests_websocket_reconnect_when_disco
         location_response,
         location_data,
         updated_location_data,
+        extra_patches=(
+            patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),
+        ),
     )
     runtime_data = config_entry.runtime_data
     websocket = SimpleNamespace(
@@ -955,6 +971,9 @@ async def test_coordinator_update_method_requests_reconnect_for_stale_connecting
         location_response,
         location_data,
         updated_location_data,
+        extra_patches=(
+            patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),
+        ),
     )
     runtime_data = config_entry.runtime_data
     websocket = SimpleNamespace(
@@ -999,6 +1018,9 @@ async def test_coordinator_update_method_does_not_reconnect_live_engineio_websoc
         location_response,
         location_data,
         updated_location_data,
+        extra_patches=(
+            patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),
+        ),
     )
     runtime_data = config_entry.runtime_data
     websocket = SimpleNamespace(
@@ -1067,7 +1089,7 @@ async def test_async_setup_entry_registers_periodic_refresh_when_websocket_polli
     location_data,
     updated_location_data,
 ):
-    """A 6-hour fallback refresh should be registered for websocket-backed entries."""
+    """Watchdog and 6-hour fallback refresh should be registered for websocket-backed entries."""
     tracked_intervals: list[timedelta] = []
 
     def _capture_interval(_hass, _action, interval):
@@ -1097,7 +1119,7 @@ async def test_async_setup_entry_registers_periodic_refresh_when_websocket_polli
         ),
     )
 
-    assert tracked_intervals == [timedelta(hours=6)]
+    assert tracked_intervals == [timedelta(minutes=1), timedelta(hours=6)]
 
 
 async def test_async_setup_entry_periodic_websocket_refresh_forces_api_poll(
@@ -1108,10 +1130,10 @@ async def test_async_setup_entry_periodic_websocket_refresh_forces_api_poll(
     updated_location_data,
 ):
     """Periodic websocket-backed refreshes should force an API poll once."""
-    periodic_callbacks = []
+    periodic_callbacks: list[tuple[timedelta, Callable[[object | None], None]]] = []
 
     def _capture_interval(_hass, action, _interval):
-        periodic_callbacks.append(action)
+        periodic_callbacks.append((_interval, action))
         return lambda: None
 
     _FakeHomelyWebSocket.reset()
@@ -1139,18 +1161,91 @@ async def test_async_setup_entry_periodic_websocket_refresh_forces_api_poll(
     )
 
     runtime_data = config_entry.runtime_data
-    assert len(periodic_callbacks) == 1
+    assert len(periodic_callbacks) == 2
     assert runtime_data.websocket is _FakeHomelyWebSocket.instances[0]
+    periodic_poll_callback = next(
+        action
+        for interval, action in periodic_callbacks
+        if interval == timedelta(hours=6)
+    )
 
     with patch(
         "custom_components.homely.get_data_with_status",
         AsyncMock(return_value=(updated_location_data, 200)),
     ) as get_data_with_status:
-        periodic_callbacks[0](None)
+        periodic_poll_callback(None)
         await hass.async_block_till_done()
 
     get_data_with_status.assert_awaited_once()
     assert runtime_data.force_api_refresh_once is False
+
+
+async def test_async_setup_entry_websocket_watchdog_requests_fast_reconnect(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """The websocket watchdog should recover silent disconnects before the next poll."""
+    periodic_callbacks: list[tuple[timedelta, Callable[[object | None], None]]] = []
+
+    def _capture_interval(_hass, action, interval):
+        periodic_callbacks.append((interval, action))
+        return lambda: None
+
+    _FakeHomelyWebSocket.reset()
+    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: True})
+
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+        extra_patches=(
+            patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),
+            patch(
+                "custom_components.homely.websocket_runtime.async_track_time_interval",
+                side_effect=_capture_interval,
+            ),
+        ),
+    )
+
+    runtime_data = config_entry.runtime_data
+    websocket = _FakeHomelyWebSocket.instances[0]
+    runtime_data.coordinator.async_update_listeners = MagicMock()
+    listener = MagicMock()
+    runtime_data.ws_status_listeners.append(listener)
+
+    websocket.connected = False
+    websocket.status = "Connected"
+    websocket.status_reason = None
+
+    watchdog_callback = next(
+        action
+        for interval, action in periodic_callbacks
+        if interval == timedelta(minutes=1)
+    )
+    watchdog_callback(None)
+    await hass.async_block_till_done()
+
+    reason = "watchdog detected disconnected websocket without disconnect callback"
+    assert websocket.request_reconnect_calls == [reason]
+    assert runtime_data.ws_status == "Disconnected"
+    assert runtime_data.ws_status_reason == reason
+    assert runtime_data.last_disconnect_reason == reason
+    assert runtime_data.ws_watchdog_last_reason == reason
+    assert runtime_data.coordinator.async_update_listeners.call_count == 1
+    listener.assert_called_once()
+
+    watchdog_callback(None)
+    await hass.async_block_till_done()
+    assert websocket.request_reconnect_calls == [reason]
+
+    assert await hass.config_entries.async_unload(config_entry.entry_id)
+    await hass.async_block_till_done()
 
 
 async def test_coordinator_update_method_uses_cached_data_on_transient_error(

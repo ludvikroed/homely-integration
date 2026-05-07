@@ -64,6 +64,10 @@ async def test_diagnostics_redact_sensitive_data(hass, location_data):
         diagnostics["runtime"]["observability"]["last_disconnect_reason"]
         == "network error: boom"
     )
+    assert (
+        diagnostics["runtime"]["observability"]["websocket_watchdog_recovery_count_30m"]
+        == 0
+    )
     assert diagnostics["runtime"]["observability"]["cache_age_seconds"] is not None
 
 

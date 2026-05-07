@@ -30,6 +30,11 @@ class HomelyRuntimeData:
     last_disconnect_reason: str | None = None
     ws_status_listeners: list[Callable[[], None]] = field(default_factory=list)
     ws_disconnect_refresh_monotonic: float = 0.0
+    ws_watchdog_reconnect_monotonic: float = 0.0
+    ws_watchdog_last_warning_monotonic: float = 0.0
+    ws_watchdog_last_reason: str | None = None
+    ws_watchdog_last_action_at: datetime | None = None
+    ws_watchdog_recovery_history_monotonic: list[float] = field(default_factory=list)
     last_successful_poll_monotonic: float = field(default_factory=monotonic)
     last_data_activity_monotonic: float = field(default_factory=monotonic)
     last_successful_poll_at: datetime | None = None

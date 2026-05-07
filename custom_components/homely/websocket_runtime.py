@@ -16,8 +16,11 @@ from .models import HomelyConfigEntry, HomelyRuntimeData
 from .runtime_state import (
     device_id_snapshot,
     record_websocket_event,
+    record_websocket_watchdog_recovery,
     update_runtime_websocket_state,
+    websocket_connection_state,
     websocket_is_connected,
+    websocket_reconnect_loop_active,
 )
 
 type RuntimeDataGetter = Callable[[], HomelyRuntimeData | None]
@@ -27,6 +30,10 @@ type RedactionHelper = Callable[[Any], Any]
 type WebSocketApplyCallable = Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]
 
 WEBSOCKET_CONNECTED_FALLBACK_POLL_INTERVAL = timedelta(hours=6)
+WEBSOCKET_HEALTH_WATCHDOG_INTERVAL = timedelta(minutes=1)
+WEBSOCKET_WATCHDOG_RECONNECT_DEBOUNCE_SECONDS = 90
+WEBSOCKET_WATCHDOG_WARNING_THRESHOLD = 3
+WEBSOCKET_WATCHDOG_WARNING_DEBOUNCE_SECONDS = 10 * 60
 
 
 class ContextBuilder(Protocol):
@@ -500,6 +507,121 @@ def register_internet_available_listener(
     except Exception:
         logger.debug(
             "Could not register internet_available listener entry_id=%s location_id=%s",
+            entry.entry_id,
+            location_id,
+        )
+        return None
+
+
+def register_websocket_health_watchdog(
+    *,
+    hass: HomeAssistant,
+    entry: HomelyConfigEntry,
+    location_id: str | int,
+    logger: logging.Logger,
+    runtime_data_getter: RuntimeDataGetter,
+    coordinator: DataUpdateCoordinator[dict[str, Any]],
+    ctx: ContextBuilder,
+) -> Any | None:
+    """Recover websocket sessions that die without a proper disconnect callback."""
+
+    def _notify_runtime_watchers(runtime_data: HomelyRuntimeData) -> None:
+        """Push immediate state updates to websocket listeners and coordinator entities."""
+        for listener in list(runtime_data.ws_status_listeners):
+            try:
+                listener()
+            except Exception as err:
+                logger.debug(
+                    "ws_status listener callback failed during watchdog update %s: %s",
+                    ctx(entry.entry_id, location_id),
+                    err,
+                )
+
+        try:
+            coordinator.async_update_listeners()
+        except Exception as err:
+            logger.debug(
+                "coordinator listener update failed during watchdog update %s: %s",
+                ctx(entry.entry_id, location_id),
+                err,
+            )
+
+    def _watchdog(_: Any) -> None:
+        """Request reconnects quickly when transport health dies silently."""
+        runtime_data = runtime_data_getter()
+        if runtime_data is None:
+            return
+
+        websocket = runtime_data.websocket
+        if websocket is None or websocket_is_connected(runtime_data):
+            return
+
+        websocket_state = websocket_connection_state(runtime_data)
+        if websocket_state.reason == "manual disconnect":
+            return
+        if websocket_state.effective_status == "connecting":
+            return
+        if websocket_reconnect_loop_active(runtime_data):
+            return
+
+        now_monotonic = time.monotonic()
+        if (
+            now_monotonic - runtime_data.ws_watchdog_reconnect_monotonic
+            < WEBSOCKET_WATCHDOG_RECONNECT_DEBOUNCE_SECONDS
+        ):
+            logger.debug(
+                "Skipping websocket watchdog reconnect due to debounce %s",
+                ctx(entry.entry_id, location_id),
+            )
+            return
+
+        reason = "watchdog detected disconnected websocket without disconnect callback"
+        try:
+            websocket.request_reconnect(reason)
+        except Exception as err:
+            logger.debug(
+                "WebSocket watchdog failed to request reconnect %s: %s",
+                ctx(entry.entry_id, location_id),
+                err,
+            )
+            return
+
+        recovery_count = record_websocket_watchdog_recovery(
+            runtime_data,
+            reason,
+            at=now_monotonic,
+        )
+        _notify_runtime_watchers(runtime_data)
+
+        logger.info(
+            "WebSocket watchdog requested reconnect %s reported_status=%s recoveries_30m=%s",
+            ctx(entry.entry_id, location_id),
+            websocket_state.reported_status,
+            recovery_count,
+        )
+        if (
+            recovery_count >= WEBSOCKET_WATCHDOG_WARNING_THRESHOLD
+            and (
+                now_monotonic - runtime_data.ws_watchdog_last_warning_monotonic
+                >= WEBSOCKET_WATCHDOG_WARNING_DEBOUNCE_SECONDS
+            )
+        ):
+            runtime_data.ws_watchdog_last_warning_monotonic = now_monotonic
+            logger.warning(
+                "WebSocket watchdog has requested reconnect %s times in the last 30 minutes %s",
+                recovery_count,
+                ctx(entry.entry_id, location_id),
+            )
+
+    try:
+        return async_track_time_interval(
+            hass,
+            _watchdog,
+            WEBSOCKET_HEALTH_WATCHDOG_INTERVAL,
+        )
+    except Exception:
+        logger.debug(
+            "Could not register websocket watchdog entry_id=%s location_id=%s",
             entry.entry_id,
             location_id,
         )
