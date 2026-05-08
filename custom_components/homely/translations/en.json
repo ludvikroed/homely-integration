@@ -172,6 +172,12 @@
       },
       "last_websocket_message": {
         "name": "Last received live update"
+      },
+      "ws_reconnect_count_30m": {
+        "name": "WebSocket reconnects (30 min)"
+      },
+      "last_ws_device_update": {
+        "name": "Last updated device"
       }
     }
   }

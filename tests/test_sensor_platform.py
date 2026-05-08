@@ -464,6 +464,8 @@ async def test_sensor_async_setup_entry_creates_ws_status_and_device_sensors(
     assert f"location_{LOCATION_ID}_websocket_status" in unique_ids
     assert f"location_{LOCATION_ID}_last_successful_poll" in unique_ids
     assert f"location_{LOCATION_ID}_last_websocket_message" in unique_ids
+    assert f"location_{LOCATION_ID}_ws_reconnect_count_30m" in unique_ids
+    assert f"location_{LOCATION_ID}_last_ws_device_update" in unique_ids
     assert "70b9db72-5c00-4316-9ffa-ac7bf60fcb47_sensitivitylevel" in unique_ids
     assert "70b9db72-5c00-4316-9ffa-ac7bf60fcb47_temperature" in unique_ids
     assert "6c120e85-e8d5-49ac-abc0-baa29f9243b7_soundvolume" in unique_ids
@@ -524,6 +526,8 @@ async def test_sensor_async_setup_entry_handles_sparse_device_lists(
         f"location_{LOCATION_ID}_last_successful_poll",
         f"location_{LOCATION_ID}_websocket_status",
         f"location_{LOCATION_ID}_last_websocket_message",
+        f"location_{LOCATION_ID}_ws_reconnect_count_30m",
+        f"location_{LOCATION_ID}_last_ws_device_update",
     ]
 
     config_entry.runtime_data = HomelyRuntimeData(
@@ -544,6 +548,8 @@ async def test_sensor_async_setup_entry_handles_sparse_device_lists(
     assert f"location_{LOCATION_ID}_websocket_status" in unique_ids
     assert f"location_{LOCATION_ID}_last_successful_poll" in unique_ids
     assert f"location_{LOCATION_ID}_last_websocket_message" in unique_ids
+    assert f"location_{LOCATION_ID}_ws_reconnect_count_30m" in unique_ids
+    assert f"location_{LOCATION_ID}_last_ws_device_update" in unique_ids
     assert "70b9db72-5c00-4316-9ffa-ac7bf60fcb47_sensitivitylevel" in unique_ids
     assert "70b9db72-5c00-4316-9ffa-ac7bf60fcb47_temperature" in unique_ids
 

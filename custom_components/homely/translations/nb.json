@@ -172,6 +172,12 @@
       },
       "last_websocket_message": {
         "name": "Siste WebSocket-oppdatering"
+      },
+      "ws_reconnect_count_30m": {
+        "name": "WebSocket-tilkoblinger (30 min)"
+      },
+      "last_ws_device_update": {
+        "name": "Sist oppdatert enhet"
       }
     }
   }

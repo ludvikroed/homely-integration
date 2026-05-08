@@ -26,6 +26,7 @@ from .naming import (
 )
 from .runtime_state import (
     websocket_connection_state,
+    websocket_watchdog_recovery_count,
 )
 from .websocket import WEBSOCKET_STATUS_OPTIONS as SDK_WEBSOCKET_STATUS_OPTIONS
 from .websocket import normalize_websocket_status as _normalize_runtime_websocket_status
@@ -77,6 +78,7 @@ async def async_setup_entry(
             unique_suffix="last_successful_poll",
             icon="mdi:clock-check-outline",
             value_getter=lambda runtime_data: runtime_data.last_successful_poll_at,
+            enabled_default=False,
         )
     )
     if websocket_enabled:
@@ -100,6 +102,32 @@ async def async_setup_entry(
                     if runtime_data.last_websocket_event_type
                     else None
                 ),
+                enabled_default=False,
+            )
+        )
+        entities.append(
+            HomelyRuntimeStateSensor(
+                coordinator,
+                entry,
+                location_id,
+                translation_key="ws_reconnect_count_30m",
+                unique_suffix="ws_reconnect_count_30m",
+                icon="mdi:reload-alert",
+                value_getter=lambda runtime_data: websocket_watchdog_recovery_count(
+                    runtime_data
+                ),
+            )
+        )
+        entities.append(
+            HomelyRuntimeStateSensor(
+                coordinator,
+                entry,
+                location_id,
+                translation_key="last_ws_device_update",
+                unique_suffix="last_ws_device_update",
+                icon="mdi:update",
+                value_getter=_get_last_ws_device_name,
+                extra_attributes_getter=_get_last_ws_device_attrs,
             )
         )
 
@@ -124,6 +152,89 @@ async def async_setup_entry(
                 )
 
     async_add_entities(entities)
+
+
+def _get_last_ws_device_name(runtime_data: Any) -> str | None:
+    """Return the name of the last device updated via websocket."""
+    if runtime_data.last_websocket_event_type != "device-state-changed":
+        return None
+    details = runtime_data.last_ws_event_details
+    if not isinstance(details, dict):
+        return None
+    device_id = details.get("device_id")
+    if not device_id:
+        return None
+    devices = (runtime_data.last_data or {}).get("devices") or []
+    for device in devices:
+        if isinstance(device, dict) and str(device.get("id")) == str(device_id):
+            return str(device.get("name") or device.get("modelName") or device_id)
+    return str(device_id)
+
+
+def _get_last_ws_device_attrs(runtime_data: Any) -> dict[str, Any] | None:
+    """Return attributes for the last websocket device update."""
+    if runtime_data.last_websocket_event_type != "device-state-changed":
+        return None
+    details = runtime_data.last_ws_event_details
+    if not isinstance(details, dict) or not details:
+        return None
+    return dict(details)
+
+
+class HomelyRuntimeStateSensor(CoordinatorEntity, SensorEntity):
+    """Generic runtime state sensor backed by location runtime metadata."""
+
+    def __init__(
+        self,
+        coordinator: DataUpdateCoordinator[dict[str, Any]],
+        entry: HomelyConfigEntry,
+        location_id: str,
+        *,
+        translation_key: str,
+        unique_suffix: str,
+        icon: str,
+        value_getter: Callable[[Any], Any],
+        extra_attributes_getter: Callable[[Any], dict[str, Any] | None] | None = None,
+        enabled_default: bool = False,
+    ) -> None:
+        super().__init__(coordinator)
+        self._attr_has_entity_name = True
+        self._runtime_data = get_entry_runtime_data(entry)
+        self._value_getter = value_getter
+        self._extra_attributes_getter = extra_attributes_getter
+        self._attr_translation_key = translation_key
+        self._attr_unique_id = f"location_{location_id}_{unique_suffix}"
+        self._attr_icon = icon
+        self._attr_entity_category = DIAGNOSTIC_ENTITY_CATEGORY
+        self._attr_entity_registry_enabled_default = enabled_default
+        location_name = str(
+            (self._runtime_data.last_data or {}).get("name", "Location")
+        )
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"location_{location_id}")},
+            name=location_name,
+            manufacturer="Homely",
+            model="Homely",
+            entry_type=DeviceEntryType.SERVICE,
+        )
+
+    @property
+    def native_value(self) -> Any:
+        """Return the current sensor value."""
+        try:
+            return self._value_getter(self._runtime_data)
+        except (AttributeError, ValueError):
+            return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Expose optional runtime metadata."""
+        if self._extra_attributes_getter is None:
+            return None
+        try:
+            return self._extra_attributes_getter(self._runtime_data)
+        except (AttributeError, ValueError):
+            return None
 
 
 class HomelySensor(CoordinatorEntity, SensorEntity):
@@ -389,6 +500,7 @@ class HomelyRuntimeTimestampSensor(CoordinatorEntity, SensorEntity):
         icon: str,
         value_getter: Callable[[Any], Any],
         extra_attributes_getter: Callable[[Any], dict[str, Any] | None] | None = None,
+        enabled_default: bool = True,
     ) -> None:
         super().__init__(coordinator)
         self._attr_has_entity_name = True
@@ -399,6 +511,7 @@ class HomelyRuntimeTimestampSensor(CoordinatorEntity, SensorEntity):
         self._attr_unique_id = f"location_{location_id}_{unique_suffix}"
         self._attr_icon = icon
         self._attr_entity_category = DIAGNOSTIC_ENTITY_CATEGORY
+        self._attr_entity_registry_enabled_default = enabled_default
         self._attr_device_class = SensorDeviceClass.TIMESTAMP
         location_name = str(
             (self._runtime_data.last_data or {}).get("name", "Location")
