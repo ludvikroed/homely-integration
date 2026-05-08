@@ -41,6 +41,7 @@ class HomelyRuntimeData:
     last_websocket_event_monotonic: float | None = None
     last_websocket_event_at: datetime | None = None
     last_websocket_event_type: str | None = None
+    last_ws_event_details: dict[str, Any] | None = None
     api_available: bool = True
     tracked_device_ids: set[str] = field(default_factory=set)
     topology_reload_pending: bool = False

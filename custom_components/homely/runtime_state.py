@@ -282,12 +282,14 @@ def record_websocket_event(
     *,
     update_data_activity: bool = False,
     at: float | None = None,
+    event_details: dict[str, Any] | None = None,
 ) -> None:
     """Record the most recent websocket event and optional data activity."""
     timestamp = monotonic() if at is None else at
     runtime_data.last_websocket_event_monotonic = timestamp
     runtime_data.last_websocket_event_at = dt_util.utcnow()
     runtime_data.last_websocket_event_type = event_type
+    runtime_data.last_ws_event_details = event_details
     if update_data_activity:
         runtime_data.last_data_activity_monotonic = timestamp
 

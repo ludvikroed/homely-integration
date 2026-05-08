@@ -18,6 +18,7 @@ from .runtime_state import (
     record_successful_poll,
     update_runtime_websocket_state,
     websocket_is_connected,
+    websocket_reconnect_loop_active,
     websocket_state_context,
 )
 
@@ -467,6 +468,7 @@ def build_async_update_data(
             enable_websocket
             and ws is not None
             and not ws_connected
+            and not websocket_reconnect_loop_active(runtime_data)
         ):
             try:
                 ws.request_reconnect("poll detected disconnected websocket")

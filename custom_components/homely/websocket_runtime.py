@@ -209,6 +209,7 @@ def build_websocket_data_handler(
                         runtime_data,
                         event_type,
                         update_data_activity=True,
+                        event_details={"alarm_state": result.get("alarm_state")},
                     )
                     coordinator.async_update_listeners()
                 else:
@@ -218,10 +219,20 @@ def build_websocket_data_handler(
             if event_type == "device-state-changed":
                 applied_changes = result.get("changes", [])
                 if applied_changes:
+                    first = applied_changes[0]
+                    details: dict[str, Any] = {
+                        "device_id": first.get("device_id"),
+                        "feature": first.get("feature"),
+                        "state_name": first.get("state_name"),
+                        "value": first.get("value"),
+                    }
+                    if len(applied_changes) > 1:
+                        details["change_count"] = len(applied_changes)
                     record_websocket_event(
                         runtime_data,
                         event_type,
                         update_data_activity=True,
+                        event_details=details,
                     )
                     for change in applied_changes:
                         logger.debug(

@@ -93,7 +93,10 @@ async def async_setup_entry(
                 icon="mdi:message-outline",
                 value_getter=lambda runtime_data: runtime_data.last_websocket_event_at,
                 extra_attributes_getter=lambda runtime_data: (
-                    {"event_type": runtime_data.last_websocket_event_type}
+                    {
+                        "event_type": runtime_data.last_websocket_event_type,
+                        **(runtime_data.last_ws_event_details or {}),
+                    }
                     if runtime_data.last_websocket_event_type
                     else None
                 ),
