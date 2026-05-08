@@ -86,6 +86,13 @@ def build_async_update_data(
         poll_started_at = time.monotonic()
         force_api_refresh_once = runtime_data.force_api_refresh_once
         runtime_data.force_api_refresh_once = False
+        ws_connected_at_poll_start = websocket_is_connected(runtime_data)
+        skip_rest_calls = (
+            enable_websocket
+            and ws_connected_at_poll_start
+            and not poll_when_websocket
+            and not force_api_refresh_once
+        )
 
         def _classify_refresh_failure(
             result: RefreshTokenResult | None,
@@ -345,7 +352,7 @@ def build_async_update_data(
             )
             return updated, retry_status_code, None
 
-        if time.time() >= expires_at:
+        if time.time() >= expires_at and not skip_rest_calls:
             logger.debug(
                 "Token expires soon; refreshing entry_id=%s location_id=%s",
                 entry_id,
