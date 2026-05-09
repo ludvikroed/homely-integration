@@ -212,7 +212,7 @@ def update_runtime_websocket_state(runtime_data: HomelyRuntimeData) -> None:
     runtime_data.ws_status = snapshot.status
     runtime_data.ws_status_reason = snapshot.reason
     if (
-        snapshot.status == "Disconnected"
+        snapshot.status.lower() == "disconnected"
         and snapshot.reason
         and snapshot.reason != "manual disconnect"
     ):

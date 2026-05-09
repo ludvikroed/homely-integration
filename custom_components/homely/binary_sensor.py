@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
-import homeassistant.helpers.entity as entity_helper
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
@@ -31,8 +31,8 @@ from .sensors.discover import discover_device_sensors, _get_value_by_path
 
 PARALLEL_UPDATES = 0
 SensorConfig = dict[str, Any]
-DIAGNOSTIC_ENTITY_CATEGORY = getattr(entity_helper, "EntityCategory").DIAGNOSTIC
-CONFIG_ENTITY_CATEGORY = getattr(entity_helper, "EntityCategory").CONFIG
+DIAGNOSTIC_ENTITY_CATEGORY = EntityCategory.DIAGNOSTIC
+CONFIG_ENTITY_CATEGORY = EntityCategory.CONFIG
 
 
 def _coerce_bool(value: Any) -> bool | None:
@@ -64,6 +64,9 @@ async def async_setup_entry(
     coordinator = runtime_data.coordinator
     data = coordinator.data or runtime_data.last_data or {}
 
+    def _last_data() -> dict[str, Any] | None:
+        return runtime_data.last_data
+
     entities: list[BinarySensorEntity] = []
 
     devices = data.get("devices", [])
@@ -76,8 +79,8 @@ async def async_setup_entry(
         discovered = discover_device_sensors(device)
         for sensor_config in discovered:
             if sensor_config["type"] == "binary_sensor":
-                entities.append(HomelyBinarySensor(coordinator, device, sensor_config))
-        entities.append(HomelyDeviceOnlineSensor(coordinator, device))
+                entities.append(HomelyBinarySensor(coordinator, device, sensor_config, _last_data))
+        entities.append(HomelyDeviceOnlineSensor(coordinator, device, _last_data))
     location_id = runtime_data.location_id
     location_name = (data or {}).get("name", "Location")
     entities.append(
@@ -98,8 +101,10 @@ class HomelyDeviceOnlineSensor(CoordinatorEntity, BinarySensorEntity):
         self,
         coordinator: DataUpdateCoordinator[dict[str, Any]],
         device: dict[str, Any],
+        fallback_data_getter: Any = None,
     ) -> None:
         super().__init__(coordinator)
+        self._fallback_data_getter = fallback_data_getter
         self._attr_has_entity_name = True
         self._device_id = str(device.get("id"))
         self._device_name = get_device_display_name(device)
@@ -122,8 +127,11 @@ class HomelyDeviceOnlineSensor(CoordinatorEntity, BinarySensorEntity):
         )
 
     def _get_current_device(self) -> dict[str, Any] | None:
-        """Return latest device payload from coordinator cache."""
-        return get_current_device(self.coordinator.data, self._device_id)
+        """Return latest device payload from coordinator or last-known cache."""
+        data = self.coordinator.data
+        if data is None and callable(self._fallback_data_getter):
+            data = self._fallback_data_getter()
+        return get_current_device(data, self._device_id)
 
     @property
     def available(self) -> bool:
@@ -148,8 +156,10 @@ class HomelyBinarySensor(CoordinatorEntity, BinarySensorEntity):
         coordinator: DataUpdateCoordinator[dict[str, Any]],
         device: dict[str, Any],
         sensor_config: SensorConfig,
+        fallback_data_getter: Any = None,
     ) -> None:
         super().__init__(coordinator)
+        self._fallback_data_getter = fallback_data_getter
         self._attr_has_entity_name = True
         self._device_id = str(device.get("id"))
         self._path = str(sensor_config["path"])
@@ -202,8 +212,11 @@ class HomelyBinarySensor(CoordinatorEntity, BinarySensorEntity):
         )
 
     def _get_current_device(self) -> dict[str, Any] | None:
-        """Return latest device payload from coordinator cache."""
-        return get_current_device(self.coordinator.data, self._device_id)
+        """Return latest device payload from coordinator or last-known cache."""
+        data = self.coordinator.data
+        if data is None and callable(self._fallback_data_getter):
+            data = self._fallback_data_getter()
+        return get_current_device(data, self._device_id)
 
     @property
     def available(self) -> bool:

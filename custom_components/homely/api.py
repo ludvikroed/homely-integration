@@ -6,8 +6,6 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 
-import aiohttp
-
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
@@ -49,23 +47,10 @@ def _set_last_refresh_token_result(result: RefreshTokenResult) -> RefreshTokenRe
     return result
 
 
-def _body_preview(body: str) -> str | None:
-    """Return a compact preview of an HTTP response body for logs."""
-    preview = body.replace("\n", " ").strip()
-    return preview[:200] or None
-
-
 def _payload_preview(payload: Any) -> str | None:
     """Return a compact preview of a parsed payload for diagnostics."""
     preview = repr(payload).strip()
     return preview[:200] or None
-
-
-def _refresh_token_failure_reason(status: int) -> str:
-    """Map refresh-token HTTP status to a stable failure reason."""
-    if status in (400, 401, 403):
-        return "invalid_refresh_token"
-    return "http_error"
 
 
 def describe_refresh_token_failure(result: RefreshTokenResult | None) -> str:
@@ -129,133 +114,41 @@ async def fetch_refresh_token_details(
 ) -> RefreshTokenResult:
     """Refresh access token and retain structured failure details for logs."""
     client = _client(hass)
-    sdk_fetch_refresh_token_details = getattr(client, "fetch_refresh_token_details", None)
-    if callable(sdk_fetch_refresh_token_details):
-        sdk_result = await sdk_fetch_refresh_token_details(refresh_token)
-        response_data = getattr(sdk_result, "raw", None)
+    sdk_result = await client.fetch_refresh_token_details(refresh_token)
+    response_data = sdk_result.raw
 
-        if response_data is None:
-            return _set_last_refresh_token_result(
-                RefreshTokenResult(
-                    response=None,
-                    reason=getattr(sdk_result, "reason", None),
-                    status=getattr(sdk_result, "status", None),
-                    detail=getattr(sdk_result, "detail", None),
-                    body_preview=getattr(sdk_result, "body_preview", None),
-                )
-            )
-
-        if not isinstance(response_data, dict):
-            return _set_last_refresh_token_result(
-                RefreshTokenResult(
-                    response=None,
-                    reason="invalid_payload",
-                    status=getattr(sdk_result, "status", None),
-                    detail=f"unexpected payload type={type(response_data).__name__}",
-                    body_preview=_payload_preview(response_data),
-                )
-            )
-
-        access_token = response_data.get("access_token")
-        expires_in = response_data.get("expires_in")
-        if not access_token or expires_in is None:
-            return _set_last_refresh_token_result(
-                RefreshTokenResult(
-                    response=None,
-                    reason="invalid_payload",
-                    status=getattr(sdk_result, "status", None),
-                    detail="missing access_token or expires_in",
-                    body_preview=_payload_preview(response_data),
-                )
-            )
-
-        try:
-            int(expires_in)
-        except (TypeError, ValueError):
-            return _set_last_refresh_token_result(
-                RefreshTokenResult(
-                    response=None,
-                    reason="invalid_payload",
-                    status=getattr(sdk_result, "status", None),
-                    detail=f"invalid_expires_in value={expires_in!r}",
-                    body_preview=_payload_preview(response_data),
-                )
-            )
-
-        return _set_last_refresh_token_result(
-            RefreshTokenResult(
-                response=response_data,
-                status=getattr(sdk_result, "status", None),
-            )
-        )
-
-    session = async_get_clientsession(hass)
-    url = f"{client.base_url}oauth/refresh-token"
-    payload = {"refresh_token": refresh_token}
-
-    try:
-        async with session.post(url, json=payload, timeout=client.timeout) as response:
-            if response.status not in (200, 201):
-                return _set_last_refresh_token_result(
-                    RefreshTokenResult(
-                        response=None,
-                        reason=_refresh_token_failure_reason(response.status),
-                        status=response.status,
-                        body_preview=_body_preview(await response.text()),
-                    )
-                )
-
-            try:
-                parsed = await response.json()
-            except (aiohttp.ContentTypeError, TypeError, ValueError) as err:
-                return _set_last_refresh_token_result(
-                    RefreshTokenResult(
-                        response=None,
-                        reason="invalid_json",
-                        status=response.status,
-                        detail=str(err),
-                        body_preview=_body_preview(await response.text()),
-                    )
-                )
-    except (aiohttp.ClientError, TimeoutError) as err:
+    if response_data is None:
         return _set_last_refresh_token_result(
             RefreshTokenResult(
                 response=None,
-                reason="cannot_connect",
-                detail=str(err),
+                reason=sdk_result.reason,
+                status=sdk_result.status,
+                detail=sdk_result.detail,
+                body_preview=sdk_result.body_preview,
             )
         )
 
-    if not parsed:
-        return _set_last_refresh_token_result(
-            RefreshTokenResult(
-                response=None,
-                reason="empty_response",
-                status=response.status,
-            )
-        )
-
-    if not isinstance(parsed, dict):
+    if not isinstance(response_data, dict):
         return _set_last_refresh_token_result(
             RefreshTokenResult(
                 response=None,
                 reason="invalid_payload",
-                status=response.status,
-                detail=f"unexpected payload type={type(parsed).__name__}",
-                body_preview=_payload_preview(parsed),
+                status=sdk_result.status,
+                detail=f"unexpected payload type={type(response_data).__name__}",
+                body_preview=_payload_preview(response_data),
             )
         )
 
-    access_token = parsed.get("access_token")
-    expires_in = parsed.get("expires_in")
+    access_token = response_data.get("access_token")
+    expires_in = response_data.get("expires_in")
     if not access_token or expires_in is None:
         return _set_last_refresh_token_result(
             RefreshTokenResult(
                 response=None,
                 reason="invalid_payload",
-                status=response.status,
+                status=sdk_result.status,
                 detail="missing access_token or expires_in",
-                body_preview=_payload_preview(parsed),
+                body_preview=_payload_preview(response_data),
             )
         )
 
@@ -266,16 +159,16 @@ async def fetch_refresh_token_details(
             RefreshTokenResult(
                 response=None,
                 reason="invalid_payload",
-                status=response.status,
+                status=sdk_result.status,
                 detail=f"invalid_expires_in value={expires_in!r}",
-                body_preview=_payload_preview(parsed),
+                body_preview=_payload_preview(response_data),
             )
         )
 
     return _set_last_refresh_token_result(
         RefreshTokenResult(
-            response=parsed,
-            status=response.status,
+            response=response_data,
+            status=sdk_result.status,
         )
     )
 

@@ -27,12 +27,12 @@ from custom_components.homely.config_flow import (
     _location_name,
     _location_options,
     _normalize_location_id,
-    _redact,
     fetch_token_with_reason,
     get_data,
     get_location_id,
 )
 from custom_components.homely.const import (
+    CONF_ENABLE_DEBUG_SENSORS,
     CONF_ENABLE_WEBSOCKET,
     CONF_HOME_ID,
     CONF_LOCATION_ID,
@@ -56,18 +56,7 @@ from tests.common import (
 
 
 def test_config_flow_helper_functions():
-    """Helper utilities should normalize and redact predictably."""
-    assert _redact(
-        {
-            CONF_USERNAME: USERNAME,
-            CONF_PASSWORD: PASSWORD,
-            "other": "value",
-        }
-    ) == {
-        CONF_USERNAME: "***",
-        CONF_PASSWORD: "***",
-        "other": "value",
-    }
+    """Helper utilities should normalize predictably."""
     assert _normalize_location_id(123) == "123"
     assert _normalize_location_id(None) is None
     assert _entry_home_id(SimpleNamespace(options={CONF_HOME_ID: "bad"}, data={})) == 0
@@ -821,6 +810,7 @@ async def test_options_flow_updates_advanced_settings(hass):
             CONF_SCAN_INTERVAL: 30,
             CONF_ENABLE_WEBSOCKET: True,
             CONF_POLL_WHEN_WEBSOCKET: False,
+            CONF_ENABLE_DEBUG_SENSORS: True,
         },
     )
 
@@ -829,6 +819,7 @@ async def test_options_flow_updates_advanced_settings(hass):
         CONF_SCAN_INTERVAL: 30,
         CONF_ENABLE_WEBSOCKET: True,
         CONF_POLL_WHEN_WEBSOCKET: False,
+        CONF_ENABLE_DEBUG_SENSORS: True,
     }
 
 

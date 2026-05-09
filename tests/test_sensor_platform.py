@@ -19,7 +19,7 @@ from custom_components.homely.sensor import (
     _normalize_websocket_status,
     async_setup_entry,
 )
-from custom_components.homely.const import CONF_ENABLE_WEBSOCKET
+from custom_components.homely.const import CONF_ENABLE_DEBUG_SENSORS, CONF_ENABLE_WEBSOCKET
 from custom_components.homely.sensors.discover import discover_device_sensors
 from tests.common import LOCATION_ID, build_config_entry
 
@@ -411,7 +411,9 @@ def test_websocket_status_sensor_reports_disabled_when_websocket_is_off(
 
 async def test_runtime_timestamp_sensors_use_runtime_data(hass, location_data):
     """Runtime timestamp sensors should expose the latest poll and websocket times."""
-    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: True})
+    config_entry = build_config_entry(
+        options={CONF_ENABLE_WEBSOCKET: True, CONF_ENABLE_DEBUG_SENSORS: True}
+    )
     last_poll_at = dt_util.utcnow()
     last_ws_at = last_poll_at + timedelta(seconds=5)
     runtime_data = HomelyRuntimeData(
@@ -447,7 +449,9 @@ async def test_sensor_async_setup_entry_creates_ws_status_and_device_sensors(
     hass, location_data
 ):
     """Sensor platform setup should create status sensor and discovered sensors."""
-    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: True})
+    config_entry = build_config_entry(
+        options={CONF_ENABLE_WEBSOCKET: True, CONF_ENABLE_DEBUG_SENSORS: True}
+    )
     config_entry.runtime_data = HomelyRuntimeData(
         coordinator=SimpleNamespace(data=location_data),
         access_token="access",
@@ -464,7 +468,6 @@ async def test_sensor_async_setup_entry_creates_ws_status_and_device_sensors(
     assert f"location_{LOCATION_ID}_websocket_status" in unique_ids
     assert f"location_{LOCATION_ID}_last_successful_poll" in unique_ids
     assert f"location_{LOCATION_ID}_last_websocket_message" in unique_ids
-    assert f"location_{LOCATION_ID}_ws_reconnect_count_30m" in unique_ids
     assert f"location_{LOCATION_ID}_last_ws_device_update" in unique_ids
     assert "70b9db72-5c00-4316-9ffa-ac7bf60fcb47_sensitivitylevel" in unique_ids
     assert "70b9db72-5c00-4316-9ffa-ac7bf60fcb47_temperature" in unique_ids
@@ -499,7 +502,7 @@ async def test_sensor_async_setup_entry_omits_websocket_entities_when_disabled(
     await async_setup_entry(hass, config_entry, collected.extend)
 
     unique_ids = {entity.unique_id for entity in collected}
-    assert f"location_{LOCATION_ID}_last_successful_poll" in unique_ids
+    assert f"location_{LOCATION_ID}_last_successful_poll" not in unique_ids
     assert f"location_{LOCATION_ID}_websocket_status" not in unique_ids
     assert f"location_{LOCATION_ID}_last_websocket_message" not in unique_ids
     assert "70b9db72-5c00-4316-9ffa-ac7bf60fcb47_sensitivitylevel" in unique_ids
@@ -509,7 +512,9 @@ async def test_sensor_async_setup_entry_handles_sparse_device_lists(
     hass, location_data
 ):
     """Sensor setup should ignore malformed device collections gracefully."""
-    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: True})
+    config_entry = build_config_entry(
+        options={CONF_ENABLE_WEBSOCKET: True, CONF_ENABLE_DEBUG_SENSORS: True}
+    )
     config_entry.runtime_data = HomelyRuntimeData(
         coordinator=SimpleNamespace(data={"name": "JF23", "devices": {}}),
         access_token="access",
@@ -526,7 +531,6 @@ async def test_sensor_async_setup_entry_handles_sparse_device_lists(
         f"location_{LOCATION_ID}_last_successful_poll",
         f"location_{LOCATION_ID}_websocket_status",
         f"location_{LOCATION_ID}_last_websocket_message",
-        f"location_{LOCATION_ID}_ws_reconnect_count_30m",
         f"location_{LOCATION_ID}_last_ws_device_update",
     ]
 
@@ -548,7 +552,6 @@ async def test_sensor_async_setup_entry_handles_sparse_device_lists(
     assert f"location_{LOCATION_ID}_websocket_status" in unique_ids
     assert f"location_{LOCATION_ID}_last_successful_poll" in unique_ids
     assert f"location_{LOCATION_ID}_last_websocket_message" in unique_ids
-    assert f"location_{LOCATION_ID}_ws_reconnect_count_30m" in unique_ids
     assert f"location_{LOCATION_ID}_last_ws_device_update" in unique_ids
     assert "70b9db72-5c00-4316-9ffa-ac7bf60fcb47_sensitivitylevel" in unique_ids
     assert "70b9db72-5c00-4316-9ffa-ac7bf60fcb47_temperature" in unique_ids
@@ -566,9 +569,7 @@ async def test_sensor_async_setup_entry_handles_sparse_device_lists(
 
     await async_setup_entry(hass, config_entry, collected.extend)
 
-    assert [entity.unique_id for entity in collected] == [
-        f"location_{LOCATION_ID}_last_successful_poll",
-    ]
+    assert [entity.unique_id for entity in collected] == []
 
 
 async def test_websocket_status_sensor_registers_and_unregisters_listeners(

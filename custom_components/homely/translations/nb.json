@@ -23,13 +23,6 @@
           "username": "E-postadresse",
           "password": "Passord"
         }
-      },
-      "reconfigure": {
-        "title": "Velg hjem",
-        "description": "Velg et annet hjem i Homely for denne integrasjonsoppføringen.",
-        "data": {
-          "location_id": "Hjem"
-        }
       }
     },
     "error": {
@@ -42,12 +35,7 @@
     },
     "abort": {
       "already_configured": "Dette hjemmet er allerede konfigurert",
-      "cannot_connect": "Kunne ikke koble til Homely akkurat nå. Sjekk internettforbindelsen og prøv igjen.",
-      "cannot_reconfigure": "Home Assistant klarte ikke å bytte denne oppføringen til det valgte hjemmet.",
-      "no_homes": "Fant ingen hjem på denne kontoen.",
-      "reauth_required": "Du må oppdatere e-postadresse og passord for Homely før du kan bytte hjem.",
-      "reauth_successful": "Påloggingen ble oppdatert",
-      "reconfigure_successful": "Oppsettet ble oppdatert"
+      "reauth_successful": "Påloggingen ble oppdatert"
     }
   },
   "options": {
@@ -58,13 +46,13 @@
         "data": {
           "scan_interval": "Vanlig API-pollingintervall (sekunder, minimum 30)",
           "enable_websocket": "Aktiver direkteoppdateringer via WebSocket",
-          "poll_when_websocket": "Fortsett vanlig API-polling også når direkteoppdateringer er aktive"
+          "poll_when_websocket": "Fortsett vanlig API-polling også når direkteoppdateringer er aktive",
+          "enable_debug_sensors": "Aktiver feilsøkingssensorer (siste polling, siste oppdatering, tilkoblingstellere)"
         }
       }
     },
     "error": {
       "invalid_scan_interval": "Oppdateringsintervallet må være 30 sekunder eller høyere.",
-      "no_homes": "Fant ingen hjem på denne kontoen.",
       "unknown": "Det oppstod en uventet feil"
     }
   },
@@ -172,9 +160,6 @@
       },
       "last_websocket_message": {
         "name": "Siste WebSocket-oppdatering"
-      },
-      "ws_reconnect_count_30m": {
-        "name": "WebSocket-tilkoblinger (30 min)"
       },
       "last_ws_device_update": {
         "name": "Sist oppdatert enhet"

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from homeassistant.components.sensor import SensorDeviceClass
+from homeassistant.components.binary_sensor import BinarySensorDeviceClass
+from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 
 SOUND_VOLUME_OPTIONS = ["muted", "low", "high"]
 LANGUAGE_OPTIONS = ["no", "en", "sv", "da"]
@@ -68,13 +69,15 @@ SENSORS: list[dict[str, Any]] = [
         "get_translation_key": lambda device: (
             "motion" if "motion" in device.get("modelName", "").lower() else "contact"
         ),
-        "device_class": "door",
+        "device_class": BinarySensorDeviceClass.DOOR,
         "device_suffix": "alarm",
         "get_name": lambda device: (
             "motion" if "motion" in device.get("modelName", "").lower() else "contact"
         ),
         "get_device_class": lambda device: (
-            "motion" if "motion" in device.get("modelName", "").lower() else "door"
+            BinarySensorDeviceClass.MOTION
+            if "motion" in device.get("modelName", "").lower()
+            else BinarySensorDeviceClass.DOOR
         ),
     },
     {
@@ -93,8 +96,8 @@ SENSORS: list[dict[str, Any]] = [
         "type": "binary_sensor",
         "name": "fire",
         "translation_key": "fire",
-        "device_class": "smoke",
-        "device_suffix": "alarm",
+        "device_class": BinarySensorDeviceClass.SMOKE,
+        "device_suffix": "fire",
     },
     {
         "path": "features.alarm.states.tamper.value",
@@ -102,7 +105,7 @@ SENSORS: list[dict[str, Any]] = [
         "type": "binary_sensor",
         "name": "tamper",
         "translation_key": "tamper",
-        "device_class": "tamper",
+        "device_class": BinarySensorDeviceClass.TAMPER,
         "device_suffix": "tamper",
     },
     {
@@ -111,7 +114,7 @@ SENSORS: list[dict[str, Any]] = [
         "type": "binary_sensor",
         "name": "flood",
         "translation_key": "flood",
-        "device_class": "moisture",
+        "device_class": BinarySensorDeviceClass.MOISTURE,
         "device_suffix": "flood",
     },
     # Battery sensors
@@ -121,7 +124,7 @@ SENSORS: list[dict[str, Any]] = [
         "type": "binary_sensor",
         "name": "battery_low",
         "translation_key": "battery_low",
-        "device_class": "battery",
+        "device_class": BinarySensorDeviceClass.BATTERY,
         "device_suffix": "battery_low",
         "entity_category": "diagnostic",
     },
@@ -144,7 +147,7 @@ SENSORS: list[dict[str, Any]] = [
         "type": "binary_sensor",
         "name": "door",
         "translation_key": "door",
-        "device_class": "door",
+        "device_class": BinarySensorDeviceClass.DOOR,
         "device_suffix": "door",
         # Home Assistant door binary_sensor expects "on" = open.
         "invert": True,
@@ -155,7 +158,7 @@ SENSORS: list[dict[str, Any]] = [
         "type": "binary_sensor",
         "name": "low_battery",
         "translation_key": "low_battery",
-        "device_class": "battery",
+        "device_class": BinarySensorDeviceClass.BATTERY,
         "device_suffix": "report_lowbat",
         "entity_category": "diagnostic",
     },
@@ -169,7 +172,7 @@ SENSORS: list[dict[str, Any]] = [
         "type": "binary_sensor",
         "name": "jammed",
         "translation_key": "jammed",
-        "device_class": "problem",
+        "device_class": BinarySensorDeviceClass.PROBLEM,
         "device_suffix": "jammed",
         "icon": "mdi:lock-alert",
     },
@@ -191,10 +194,10 @@ SENSORS: list[dict[str, Any]] = [
         "type": "sensor",
         "name": "temperature",
         "translation_key": "temperature",
-        "device_class": "temperature",
+        "device_class": SensorDeviceClass.TEMPERATURE,
         "unit": "°C",
         "device_suffix": "temperature",
-        "state_class": "measurement",
+        "state_class": SensorStateClass.MEASUREMENT,
     },
     # Lock info sensors
     {
@@ -228,7 +231,7 @@ SENSORS: list[dict[str, Any]] = [
         "type": "sensor",
         "name": "battery_voltage",
         "translation_key": "battery_voltage",
-        "device_class": "voltage",
+        "device_class": SensorDeviceClass.VOLTAGE,
         "unit": "V",
         "device_suffix": "battery_voltage",
         "entity_category": "diagnostic",
@@ -277,10 +280,10 @@ SENSORS: list[dict[str, Any]] = [
         "type": "sensor",
         "name": "consumption",
         "translation_key": "consumption",
-        "device_class": "energy",
+        "device_class": SensorDeviceClass.ENERGY,
         "unit": "kWh",
         "device_suffix": "consumption",
-        "state_class": "total_increasing",
+        "state_class": SensorStateClass.TOTAL_INCREASING,
         "transform_value": _wh_to_kwh,
     },
     {
@@ -289,10 +292,10 @@ SENSORS: list[dict[str, Any]] = [
         "type": "sensor",
         "name": "production",
         "translation_key": "production",
-        "device_class": "energy",
+        "device_class": SensorDeviceClass.ENERGY,
         "unit": "kWh",
         "device_suffix": "production",
-        "state_class": "total_increasing",
+        "state_class": SensorStateClass.TOTAL_INCREASING,
         "transform_value": _wh_to_kwh,
     },
     {
@@ -301,9 +304,9 @@ SENSORS: list[dict[str, Any]] = [
         "type": "sensor",
         "name": "demand",
         "translation_key": "demand",
-        "device_class": "power",
+        "device_class": SensorDeviceClass.POWER,
         "unit": "W",
         "device_suffix": "demand",
-        "state_class": "measurement",
+        "state_class": SensorStateClass.MEASUREMENT,
     },
 ]

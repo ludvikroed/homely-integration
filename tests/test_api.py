@@ -297,11 +297,7 @@ async def test_fetch_refresh_token_tracks_last_result_for_current_task(hass):
 
 def test_refresh_helper_formatting_and_reason_mapping():
     """Helper utilities should normalize previews and failure descriptions."""
-    assert api._body_preview("\n hello\nworld \n") == "hello world"
-    assert api._body_preview("   ") is None
     assert api._payload_preview({"a": 1}).startswith("{'a': 1}")
-    assert api._refresh_token_failure_reason(401) == "invalid_refresh_token"
-    assert api._refresh_token_failure_reason(500) == "http_error"
     assert api.describe_refresh_token_failure(None) == "reason=unknown"
     assert api.describe_refresh_token_failure(
         api.RefreshTokenResult(response={"access_token": "token"}, status=200)
@@ -353,47 +349,6 @@ async def test_fetch_refresh_token_details_supports_sdk_payload_validation(hass)
         "expires_in": 1800,
     }
     assert success.status == 200
-
-
-async def test_fetch_refresh_token_details_http_fallback_validates_payload_type(hass):
-    """Compatibility HTTP fallback should still reject unusable payloads."""
-    fallback_client = SimpleNamespace(base_url="https://api.example/", timeout=5)
-    session = _FakeSession(
-        post_response=_FakeResponse(status=200, json_data=["bad"])
-    )
-
-    with (
-        patch("custom_components.homely.api._client", return_value=fallback_client),
-        patch(
-            "custom_components.homely.api.async_get_clientsession",
-            return_value=session,
-        ),
-    ):
-        result = await api.fetch_refresh_token_details(hass, "refresh")
-
-    assert result.response is None
-    assert result.reason == "invalid_payload"
-    assert result.detail == "unexpected payload type=list"
-    assert result.body_preview == "['bad']"
-
-
-async def test_fetch_refresh_token_details_http_fallback_surfaces_network_errors(hass):
-    """Compatibility HTTP fallback should keep useful connection failure details."""
-    fallback_client = SimpleNamespace(base_url="https://api.example/", timeout=5)
-    session = _FakeSession(post_exc=aiohttp.ClientError("boom"))
-
-    with (
-        patch("custom_components.homely.api._client", return_value=fallback_client),
-        patch(
-            "custom_components.homely.api.async_get_clientsession",
-            return_value=session,
-        ),
-    ):
-        result = await api.fetch_refresh_token_details(hass, "refresh")
-
-    assert result.response is None
-    assert result.reason == "cannot_connect"
-    assert result.detail == "boom"
 
 
 async def test_get_location_id_handles_failure_status_and_network_error(hass):

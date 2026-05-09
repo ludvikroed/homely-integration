@@ -116,10 +116,11 @@ def apply_websocket_event_to_data(
         alarm_state = payload.get("state")
         if alarm_state is None:
             alarm_state = payload.get("alarmState")
-        alarm_state_dict = ensure_alarm_root(data_dict)
-        alarm_state_dict["value"] = alarm_state
-        data_dict["alarmState"] = alarm_state
-        result["updated"] = True
+        if alarm_state is not None:
+            alarm_state_dict = ensure_alarm_root(data_dict)
+            alarm_state_dict["value"] = alarm_state
+            data_dict["alarmState"] = alarm_state
+        result["updated"] = alarm_state is not None
         result["alarm_state"] = alarm_state
         return result
 

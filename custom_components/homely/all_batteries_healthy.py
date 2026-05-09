@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
-import homeassistant.helpers.entity as entity_helper
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
 )
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
     DataUpdateCoordinator,
@@ -18,7 +18,7 @@ from homeassistant.helpers.update_coordinator import (
 from .const import DOMAIN
 from .entity_ids import battery_problem_unique_id
 
-DIAGNOSTIC_ENTITY_CATEGORY = getattr(entity_helper, "EntityCategory").DIAGNOSTIC
+DIAGNOSTIC_ENTITY_CATEGORY = EntityCategory.DIAGNOSTIC
 
 
 def _is_true(value: Any) -> bool:
@@ -55,6 +55,11 @@ class HomelyAllBatteriesHealthySensor(CoordinatorEntity, BinarySensorEntity):
             model="Homely",
             entry_type=DeviceEntryType.SERVICE,
         )
+
+    @property
+    def available(self) -> bool:
+        """Return False when coordinator has no data."""
+        return super().available and isinstance(self.coordinator.data, dict)
 
     @property
     def is_on(self) -> bool:

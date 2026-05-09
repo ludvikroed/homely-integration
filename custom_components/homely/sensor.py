@@ -5,17 +5,24 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-import homeassistant.helpers.entity as entity_helper
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
     DataUpdateCoordinator,
 )
 
-from .const import CONF_ENABLE_WEBSOCKET, DEFAULT_ENABLE_WEBSOCKET, DOMAIN
+from .const import (
+    CONF_ENABLE_DEBUG_SENSORS,
+    CONF_ENABLE_WEBSOCKET,
+    DEFAULT_ENABLE_DEBUG_SENSORS,
+    DEFAULT_ENABLE_WEBSOCKET,
+    DOMAIN,
+)
 from .device_state import get_current_device, is_device_available
 from .models import HomelyConfigEntry, get_entry_runtime_data
 from .naming import (
@@ -26,7 +33,6 @@ from .naming import (
 )
 from .runtime_state import (
     websocket_connection_state,
-    websocket_watchdog_recovery_count,
 )
 from .websocket import WEBSOCKET_STATUS_OPTIONS as SDK_WEBSOCKET_STATUS_OPTIONS
 from .websocket import normalize_websocket_status as _normalize_runtime_websocket_status
@@ -35,7 +41,7 @@ from .sensors.discover import discover_device_sensors, _get_value_by_path
 PARALLEL_UPDATES = 0
 SensorConfig = dict[str, Any]
 FallbackDataGetter = Callable[[], dict[str, Any] | None]
-DIAGNOSTIC_ENTITY_CATEGORY = getattr(entity_helper, "EntityCategory").DIAGNOSTIC
+DIAGNOSTIC_ENTITY_CATEGORY = EntityCategory.DIAGNOSTIC
 WEBSOCKET_STATUS_OPTIONS = [
     "disabled",
     *SDK_WEBSOCKET_STATUS_OPTIONS,
@@ -67,69 +73,75 @@ async def async_setup_entry(
             entry.data.get(CONF_ENABLE_WEBSOCKET, DEFAULT_ENABLE_WEBSOCKET),
         )
     )
-
-    entities: list[SensorEntity] = []
-    entities.append(
-        HomelyRuntimeTimestampSensor(
-            coordinator,
-            entry,
-            location_id,
-            translation_key="last_successful_poll",
-            unique_suffix="last_successful_poll",
-            icon="mdi:clock-check-outline",
-            value_getter=lambda runtime_data: runtime_data.last_successful_poll_at,
-            enabled_default=False,
+    enable_debug_sensors = bool(
+        entry.options.get(
+            CONF_ENABLE_DEBUG_SENSORS,
+            entry.data.get(CONF_ENABLE_DEBUG_SENSORS, DEFAULT_ENABLE_DEBUG_SENSORS),
         )
     )
-    if websocket_enabled:
-        entities.append(
-            HomelyWebSocketStatusSensor(coordinator, hass, entry, location_id)
-        )
+
+    _DEBUG_SENSOR_SUFFIXES = [
+        "last_successful_poll",
+        "last_websocket_message",
+        "last_ws_device_update",
+    ]
+    if not enable_debug_sensors:
+        entity_registry = er.async_get(hass)
+        for suffix in _DEBUG_SENSOR_SUFFIXES:
+            unique_id = f"location_{location_id}_{suffix}"
+            entity_id = entity_registry.async_get_entity_id("sensor", DOMAIN, unique_id)
+            if entity_id:
+                entity_registry.async_remove(entity_id)
+
+    entities: list[SensorEntity] = []
+    if enable_debug_sensors:
         entities.append(
             HomelyRuntimeTimestampSensor(
                 coordinator,
                 entry,
                 location_id,
-                translation_key="last_websocket_message",
-                unique_suffix="last_websocket_message",
-                icon="mdi:message-outline",
-                value_getter=lambda runtime_data: runtime_data.last_websocket_event_at,
-                extra_attributes_getter=lambda runtime_data: (
-                    {
-                        "event_type": runtime_data.last_websocket_event_type,
-                        **(runtime_data.last_ws_event_details or {}),
-                    }
-                    if runtime_data.last_websocket_event_type
-                    else None
-                ),
-                enabled_default=False,
+                translation_key="last_successful_poll",
+                unique_suffix="last_successful_poll",
+                icon="mdi:clock-check-outline",
+                value_getter=lambda runtime_data: runtime_data.last_successful_poll_at,
             )
         )
+    if websocket_enabled:
         entities.append(
-            HomelyRuntimeStateSensor(
-                coordinator,
-                entry,
-                location_id,
-                translation_key="ws_reconnect_count_30m",
-                unique_suffix="ws_reconnect_count_30m",
-                icon="mdi:reload-alert",
-                value_getter=lambda runtime_data: websocket_watchdog_recovery_count(
-                    runtime_data
-                ),
-            )
+            HomelyWebSocketStatusSensor(coordinator, hass, entry, location_id)
         )
-        entities.append(
-            HomelyRuntimeStateSensor(
-                coordinator,
-                entry,
-                location_id,
-                translation_key="last_ws_device_update",
-                unique_suffix="last_ws_device_update",
-                icon="mdi:update",
-                value_getter=_get_last_ws_device_name,
-                extra_attributes_getter=_get_last_ws_device_attrs,
+        if enable_debug_sensors:
+            entities.append(
+                HomelyRuntimeTimestampSensor(
+                    coordinator,
+                    entry,
+                    location_id,
+                    translation_key="last_websocket_message",
+                    unique_suffix="last_websocket_message",
+                    icon="mdi:message-outline",
+                    value_getter=lambda runtime_data: runtime_data.last_websocket_event_at,
+                    extra_attributes_getter=lambda runtime_data: (
+                        {
+                            "event_type": runtime_data.last_websocket_event_type,
+                            **(runtime_data.last_ws_event_details or {}),
+                        }
+                        if runtime_data.last_websocket_event_type
+                        else None
+                    ),
+                )
             )
-        )
+            entities.append(
+                HomelyRuntimeStateSensor(
+                    coordinator,
+                    entry,
+                    location_id,
+                    translation_key="last_ws_device_update",
+                    unique_suffix="last_ws_device_update",
+                    icon="mdi:update",
+                    value_getter=_get_last_ws_device_name,
+                    extra_attributes_getter=_get_last_ws_device_attrs,
+                )
+            )
 
     devices = data.get("devices", [])
     if not isinstance(devices, list):

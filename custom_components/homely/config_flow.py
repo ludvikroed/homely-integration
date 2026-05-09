@@ -16,6 +16,7 @@ from homely.client import HomelyClient
 
 from .const import (
     CONF_PENDING_IMPORT_LOCATIONS,
+    CONF_ENABLE_DEBUG_SENSORS,
     CONF_ENABLE_WEBSOCKET,
     CONF_HOME_ID,
     CONF_LOCATION_ID,
@@ -23,6 +24,7 @@ from .const import (
     CONF_POLL_WHEN_WEBSOCKET,
     CONF_SCAN_INTERVAL,
     CONF_USERNAME,
+    DEFAULT_ENABLE_DEBUG_SENSORS,
     DEFAULT_ENABLE_WEBSOCKET,
     DEFAULT_HOME_ID,
     DEFAULT_POLL_WHEN_WEBSOCKET,
@@ -39,16 +41,6 @@ def _all_homes_label(hass: HomeAssistant | None) -> str:
     if isinstance(language, str) and language.lower().startswith("nb"):
         return "Legg til alle hjem"
     return "Add all homes"
-
-
-def _redact(data: dict[str, Any]) -> dict[str, Any]:
-    """Redact sensitive keys before logging."""
-    redacted = dict(data)
-    if CONF_USERNAME in redacted:
-        redacted[CONF_USERNAME] = "***"
-    if CONF_PASSWORD in redacted:
-        redacted[CONF_PASSWORD] = "***"
-    return redacted
 
 
 def _normalize_location_id(location_id: Any) -> str | None:
@@ -593,6 +585,7 @@ class HomelyOptionsFlow(config_entries.OptionsFlow):
         scan_interval: int,
         enable_websocket: bool,
         poll_when_websocket: bool,
+        enable_debug_sensors: bool,
     ) -> vol.Schema:
         """Build options schema with supplied defaults."""
         from homeassistant.helpers import selector
@@ -616,6 +609,10 @@ class HomelyOptionsFlow(config_entries.OptionsFlow):
                 vol.Optional(
                     CONF_POLL_WHEN_WEBSOCKET,
                     default=poll_when_websocket,
+                ): selector.BooleanSelector(),
+                vol.Optional(
+                    CONF_ENABLE_DEBUG_SENSORS,
+                    default=enable_debug_sensors,
                 ): selector.BooleanSelector(),
             }
         )
@@ -647,6 +644,15 @@ class HomelyOptionsFlow(config_entries.OptionsFlow):
                 ),
             )
         )
+        enable_debug_sensors = bool(
+            self.config_entry.options.get(
+                CONF_ENABLE_DEBUG_SENSORS,
+                self.config_entry.data.get(
+                    CONF_ENABLE_DEBUG_SENSORS,
+                    DEFAULT_ENABLE_DEBUG_SENSORS,
+                ),
+            )
+        )
 
         if user_input is not None:
             errors: dict[str, str] = {}
@@ -666,6 +672,9 @@ class HomelyOptionsFlow(config_entries.OptionsFlow):
             poll_when_websocket = bool(
                 user_input.get(CONF_POLL_WHEN_WEBSOCKET, poll_when_websocket)
             )
+            enable_debug_sensors = bool(
+                user_input.get(CONF_ENABLE_DEBUG_SENSORS, enable_debug_sensors)
+            )
 
             if errors:
                 return self.async_show_form(
@@ -674,6 +683,7 @@ class HomelyOptionsFlow(config_entries.OptionsFlow):
                         scan_interval,
                         enable_websocket,
                         poll_when_websocket,
+                        enable_debug_sensors,
                     ),
                     errors=errors,
                 )
@@ -684,6 +694,7 @@ class HomelyOptionsFlow(config_entries.OptionsFlow):
                     CONF_SCAN_INTERVAL: scan_interval,
                     CONF_ENABLE_WEBSOCKET: enable_websocket,
                     CONF_POLL_WHEN_WEBSOCKET: poll_when_websocket,
+                    CONF_ENABLE_DEBUG_SENSORS: enable_debug_sensors,
                 },
             )
 
@@ -693,5 +704,6 @@ class HomelyOptionsFlow(config_entries.OptionsFlow):
                 scan_interval,
                 enable_websocket,
                 poll_when_websocket,
+                enable_debug_sensors,
             ),
         )
