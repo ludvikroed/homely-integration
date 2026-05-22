@@ -115,7 +115,7 @@ async def fetch_refresh_token_details(
     """Refresh access token and retain structured failure details for logs."""
     client = _client(hass)
     sdk_result = await client.fetch_refresh_token_details(refresh_token)
-    response_data = sdk_result.raw
+    response_data: object | None = sdk_result.raw
 
     if response_data is None:
         return _set_last_refresh_token_result(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from homeassistant.components.binary_sensor import (
@@ -101,7 +102,7 @@ class HomelyDeviceOnlineSensor(CoordinatorEntity, BinarySensorEntity):
         self,
         coordinator: DataUpdateCoordinator[dict[str, Any]],
         device: dict[str, Any],
-        fallback_data_getter: Any = None,
+        fallback_data_getter: Callable[[], dict[str, Any] | None] | None = None,
     ) -> None:
         super().__init__(coordinator)
         self._fallback_data_getter = fallback_data_getter
@@ -128,8 +129,8 @@ class HomelyDeviceOnlineSensor(CoordinatorEntity, BinarySensorEntity):
 
     def _get_current_device(self) -> dict[str, Any] | None:
         """Return latest device payload from coordinator or last-known cache."""
-        data = self.coordinator.data
-        if data is None and callable(self._fallback_data_getter):
+        data: dict[str, Any] | None = self.coordinator.data
+        if data is None and self._fallback_data_getter is not None:
             data = self._fallback_data_getter()
         return get_current_device(data, self._device_id)
 
@@ -156,7 +157,7 @@ class HomelyBinarySensor(CoordinatorEntity, BinarySensorEntity):
         coordinator: DataUpdateCoordinator[dict[str, Any]],
         device: dict[str, Any],
         sensor_config: SensorConfig,
-        fallback_data_getter: Any = None,
+        fallback_data_getter: Callable[[], dict[str, Any] | None] | None = None,
     ) -> None:
         super().__init__(coordinator)
         self._fallback_data_getter = fallback_data_getter
@@ -213,8 +214,8 @@ class HomelyBinarySensor(CoordinatorEntity, BinarySensorEntity):
 
     def _get_current_device(self) -> dict[str, Any] | None:
         """Return latest device payload from coordinator or last-known cache."""
-        data = self.coordinator.data
-        if data is None and callable(self._fallback_data_getter):
+        data: dict[str, Any] | None = self.coordinator.data
+        if data is None and self._fallback_data_getter is not None:
             data = self._fallback_data_getter()
         return get_current_device(data, self._device_id)
 

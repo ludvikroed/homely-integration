@@ -1,7 +1,55 @@
 from .client import BASE_URL as BASE_URL, REQUEST_TIMEOUT as REQUEST_TIMEOUT
 from .client import HomelyClient as HomelyClient
 from .client import auth_header_value as auth_header_value
-from .websocket import HomelyWebSocket as HomelyWebSocket
-from .websocket import WEBSOCKET_STATUS_OPTIONS as WEBSOCKET_STATUS_OPTIONS
-from .websocket import WebSocketConnectionState as WebSocketConnectionState
-from .websocket import normalize_websocket_status as normalize_websocket_status
+
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
+
+WEBSOCKET_STATUS_OPTIONS: tuple[str, str, str, str, str]
+
+@dataclass(frozen=True)
+class WebSocketConnectionState:
+    connected: bool
+    reported_status: str
+    effective_status: str
+    reason: str | None
+    status_mismatch: bool
+
+def normalize_websocket_status(value: Any) -> str: ...
+
+class HomelyWebSocket:
+    WEBSOCKET_URL: str
+    context_id: str | None
+    entry_id: str | None
+    location_id: str | int
+    token: str
+    socket: Any | None
+
+    def __init__(
+        self,
+        location_id: str | int,
+        token: str,
+        on_data_update: Callable[[dict[str, Any]], None],
+        status_update_callback: Callable[[str, str | None], None] | None = ...,
+        context_id: str | None = ...,
+        entry_id: str | None = ...,
+    ) -> None: ...
+    @property
+    def websocket_url(self) -> str: ...
+    @property
+    def status(self) -> str: ...
+    @property
+    def status_reason(self) -> str | None: ...
+    async def connect(self, from_reconnect_loop: bool = ...) -> bool: ...
+    async def connect_or_raise(self) -> None: ...
+    async def disconnect(self) -> None: ...
+    async def close(self) -> None: ...
+    async def reconnect_with_token(self, token: str) -> None: ...
+    def is_connected(self) -> bool: ...
+    def reported_connection_status(self) -> str: ...
+    def connection_state(self) -> WebSocketConnectionState: ...
+    def sync_token(self, token: str) -> str: ...
+    def update_token(self, token: str, reconnect_if_disconnected: bool = ...) -> None: ...
+    def set_token(self, token: str, reconnect_if_disconnected: bool = ...) -> None: ...
+    def request_reconnect(self, reason: str = ...) -> None: ...
