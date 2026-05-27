@@ -8,7 +8,7 @@ from collections.abc import Callable
 from datetime import timedelta
 from typing import Any, Protocol
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
@@ -337,6 +337,7 @@ async def async_init_websocket(
         def _status_callback(status: str, reason: str | None) -> None:
             """Propagate websocket status changes back to runtime listeners."""
 
+            @callback
             def _dispatch_status_update() -> None:
                 runtime = runtime_data_getter()
                 current_ws = _current_websocket()
@@ -484,6 +485,7 @@ def register_internet_available_listener(
 ) -> Any | None:
     """Register an internet recovery hook that nudges websocket reconnects."""
 
+    @callback
     def _internet_available(event: Any) -> None:
         try:
             runtime_data = runtime_data_getter()
@@ -558,6 +560,7 @@ def register_websocket_health_watchdog(
                 err,
             )
 
+    @callback
     def _watchdog(_: Any) -> None:
         """Request reconnects quickly when transport health dies silently."""
         runtime_data = runtime_data_getter()
@@ -668,6 +671,7 @@ def register_websocket_connected_poll_fallback(
                 err,
             )
 
+    @callback
     def _periodic_refresh(_: Any) -> None:
         """Request a forced refresh when websocket-backed polling is suppressed."""
         runtime_data = runtime_data_getter()

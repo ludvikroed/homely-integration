@@ -353,6 +353,46 @@ def build_async_update_data(
             )
             return updated, retry_status_code, None
 
+        if time.time() >= expires_at and skip_rest_calls:
+            try:
+                refresh_response = await fetch_refresh_token(hass, refresh_token)
+                if refresh_response:
+                    new_access_token = refresh_response.get("access_token")
+                    new_refresh_token_val = (
+                        refresh_response.get("refresh_token") or refresh_token
+                    )
+                    new_expires_in = refresh_response.get("expires_in")
+                    if new_access_token and new_expires_in:
+                        try:
+                            new_expires_in_seconds = int(new_expires_in)
+                        except (TypeError, ValueError):
+                            pass
+                        else:
+                            runtime_data.access_token = new_access_token
+                            runtime_data.refresh_token = new_refresh_token_val
+                            runtime_data.expires_at = (
+                                time.time() + new_expires_in_seconds - 60
+                            )
+                            access_token = new_access_token
+                            _sync_websocket_token(new_access_token)
+                            logger.debug(
+                                "Token refreshed for active websocket "
+                                "entry_id=%s location_id=%s "
+                                "access_expires_in_s=%s",
+                                entry_id,
+                                location_id,
+                                new_expires_in_seconds,
+                            )
+            except Exception as err:
+                logger.debug(
+                    "Background token refresh for active websocket failed; "
+                    "websocket will refresh token on next reconnect "
+                    "entry_id=%s location_id=%s: %s",
+                    entry_id,
+                    location_id,
+                    err,
+                )
+
         if time.time() >= expires_at and not skip_rest_calls:
             logger.debug(
                 "Token expires soon; refreshing entry_id=%s location_id=%s",
