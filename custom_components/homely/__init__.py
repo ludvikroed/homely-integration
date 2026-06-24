@@ -565,6 +565,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> bo
         update_method=async_update_data,
         update_interval=timedelta(seconds=scan_interval),
     )
+    # Only claim the REST API is reachable when this setup actually got fresh
+    # data from a live poll. When we fell back to stored/empty data (e.g. the
+    # /home endpoint returning HTTP 439), seed False so the "Cloud API
+    # connection" sensor reports the outage immediately instead of defaulting
+    # to "connected" until the first failing poll runs.
+    initial_api_available = bool(data) and not seed_without_poll
     runtime_data = HomelyRuntimeData(
         coordinator=coordinator,
         access_token=access_token_str,
@@ -574,6 +580,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> bo
         last_data=data,
         tracked_device_ids=_device_id_snapshot(data),
         partner_code=partner_code,
+        api_available=initial_api_available,
     )
     record_successful_poll(runtime_data)
     entry.runtime_data = runtime_data

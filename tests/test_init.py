@@ -1221,6 +1221,9 @@ async def test_async_setup_entry_loads_without_initial_poll_when_api_broken(
     # No usable data yet: entities are seeded empty and the alarm panel reports unknown.
     assert runtime_data.coordinator.data == {}
     assert runtime_data.coordinator.data is runtime_data.last_data
+    # The initial poll failed, so the API is not confirmed reachable: the
+    # "Cloud API connection" sensor must read disconnected from the start.
+    assert runtime_data.api_available is False
 
     # A websocket alarm event populates alarm state without any API poll.
     ws = _FakeHomelyWebSocket.instances[0]
