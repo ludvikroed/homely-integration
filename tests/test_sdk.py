@@ -25,10 +25,18 @@ from custom_components.homely.websocket import HomelyWebSocket as CompatibilityW
 class _FakeResponse:
     """Simple async HTTP response stub."""
 
-    def __init__(self, *, status: int, json_data=None, text_data: str = "") -> None:
+    def __init__(
+        self,
+        *,
+        status: int,
+        json_data=None,
+        text_data: str = "",
+        headers: dict[str, str] | None = None,
+    ) -> None:
         self.status = status
         self._json_data = json_data
         self._text_data = text_data
+        self.headers = headers or {}
 
     async def __aenter__(self):
         return self
@@ -69,7 +77,7 @@ async def test_sdk_exports_public_client_and_websocket_symbols():
     """The reusable package should expose the core client surface."""
     assert auth_header_value("token") == "Bearer token"
     assert CompatibilityWebSocket is HomelyWebSocket
-    assert __version__ == "0.1.7"
+    assert __version__ == "0.1.8"
 
 
 async def test_manifest_runtime_dependency_matches_tested_sdk_version():

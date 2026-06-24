@@ -97,6 +97,9 @@
       },
       "online": {
         "name": "Tilkoblet"
+      },
+      "api_connection": {
+        "name": "Sky-API tilkobling"
       }
     },
     "sensor": {

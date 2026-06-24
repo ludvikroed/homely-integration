@@ -21,11 +21,13 @@ class _FakeResponse:
         json_data=None,
         text_data: str = "",
         json_exc: Exception | None = None,
+        headers: dict[str, str] | None = None,
     ) -> None:
         self.status = status
         self._json_data = json_data
         self._text_data = text_data
         self._json_exc = json_exc
+        self.headers = headers or {}
 
     async def __aenter__(self):
         return self

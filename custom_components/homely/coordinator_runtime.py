@@ -562,16 +562,46 @@ def build_async_update_data(
                     return cached_data
 
             if not updated:
+                if enable_websocket and websocket_is_connected(runtime_data):
+                    # The REST API is failing but the websocket is connected and
+                    # keeps alarm/device state current. Keep entities alive on
+                    # websocket-maintained data instead of marking them
+                    # unavailable. last_data may still be empty until the first
+                    # websocket event arrives, in which case the alarm panel
+                    # simply reports an unknown state.
+                    _mark_api_unavailable(
+                        "Polling API request failed with status="
+                        f"{status_code}; continuing with websocket-maintained data"
+                    )
+                    update_runtime_websocket_state(runtime_data)
+                    logger.debug(
+                        "Polling kept websocket-maintained data after API failure "
+                        "entry_id=%s location_id=%s status=%s",
+                        entry_id,
+                        location_id,
+                        status_code,
+                    )
+                    return (
+                        runtime_data.last_data
+                        if isinstance(runtime_data.last_data, dict)
+                        else {}
+                    )
                 if (
                     status_code in _TRANSIENT_HTTP_STATUS
                     and isinstance(runtime_data.last_data, dict)
-                    and runtime_data.last_data
                 ):
+                    if runtime_data.last_data:
+                        _mark_api_unavailable(
+                            "Polling API request failed with transient status="
+                            f"{status_code}; continuing with cached data"
+                        )
+                        return runtime_data.last_data
                     _mark_api_unavailable(
-                        "Polling API request failed with transient status="
-                        f"{status_code}; continuing with cached data"
+                        f"Polling API request failed with transient status={status_code}; no cached data available"
                     )
-                    return runtime_data.last_data
+                    raise UpdateFailed(
+                        f"Rate limited (status={status_code}); no cached data yet"
+                    )
                 if status_code in (401, 403):
                     cached_data = _use_cached_data(
                         "Homely API still rejected credentials after retrying stored credentials; using cached data"

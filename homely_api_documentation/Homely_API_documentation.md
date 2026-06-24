@@ -1,5 +1,6 @@
 # Homely API Documentation
 
+Also available on https://sdk.iotiliti.cloud/docs#/ but updated and might be slightly different
 Provided by Homely (kundeservice@homely.no) on 02.10.2025.
 
 ## Table of Contents

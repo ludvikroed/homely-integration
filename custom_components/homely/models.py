@@ -46,6 +46,7 @@ class HomelyRuntimeData:
     tracked_device_ids: set[str] = field(default_factory=set)
     topology_reload_pending: bool = False
     force_api_refresh_once: bool = False
+    partner_code: int | str | None = None
 
 
 type HomelyConfigEntry = ConfigEntry[HomelyRuntimeData]

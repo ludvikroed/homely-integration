@@ -231,6 +231,11 @@ class HomelyRuntimeStateSensor(CoordinatorEntity, SensorEntity):
         )
 
     @property
+    def available(self) -> bool:
+        """Runtime metadata stays available regardless of API poll success."""
+        return True
+
+    @property
     def native_value(self) -> Any:
         """Return the current sensor value."""
         try:
@@ -423,7 +428,9 @@ class HomelyWebSocketStatusSensor(CoordinatorEntity, SensorEntity):
         self._attr_unique_id = f"location_{location_id}_websocket_status"
         self._attr_icon = "mdi:web"
         self._attr_entity_category = DIAGNOSTIC_ENTITY_CATEGORY
-        self._attr_entity_registry_enabled_default = False
+        # Enabled by default: this is the primary live-update health signal and
+        # must be visible in websocket-only mode (REST polling down).
+        self._attr_entity_registry_enabled_default = True
         self._attr_device_class = SensorDeviceClass.ENUM
         self._attr_options = WEBSOCKET_STATUS_OPTIONS
 
@@ -435,6 +442,16 @@ class HomelyWebSocketStatusSensor(CoordinatorEntity, SensorEntity):
             entry_type=DeviceEntryType.SERVICE,
         )
         self._status_listener: Any = None
+
+    @property
+    def available(self) -> bool:
+        """Always available: reports websocket health regardless of API polling.
+
+        This diagnostic must keep reporting "disconnected"/"connecting" exactly
+        when the REST poll is failing, so it must not inherit the coordinator's
+        last_update_success availability.
+        """
+        return True
 
     async def async_added_to_hass(self) -> None:
         """Register for immediate websocket status callbacks."""
@@ -535,6 +552,11 @@ class HomelyRuntimeTimestampSensor(CoordinatorEntity, SensorEntity):
             model="Homely",
             entry_type=DeviceEntryType.SERVICE,
         )
+
+    @property
+    def available(self) -> bool:
+        """Runtime metadata stays available regardless of API poll success."""
+        return True
 
     @property
     def native_value(self) -> Any:

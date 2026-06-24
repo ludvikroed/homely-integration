@@ -61,10 +61,12 @@ class _FakeHomelyWebSocket:
         on_data_update,
         status_update_callback=None,
         entry_id=None,
+        partner_code=None,
     ) -> None:
         self.entry_id = entry_id
         self.location_id = location_id
         self.token = token
+        self.partner_code = partner_code
         self.on_data_update = on_data_update
         self.status_update_callback = status_update_callback
         self.status = self.initial_status
@@ -174,12 +176,6 @@ async def _setup_loaded_entry(
         )
         stack.enter_context(
             patch(
-                "custom_components.homely.get_data",
-                AsyncMock(return_value=location_data),
-            )
-        )
-        stack.enter_context(
-            patch(
                 "custom_components.homely.get_data_with_status",
                 AsyncMock(return_value=(updated_location_data, 200)),
             )
@@ -270,12 +266,6 @@ async def test_async_setup_entry_reenables_legacy_integration_disabled_error_cod
         )
         stack.enter_context(
             patch(
-                "custom_components.homely.get_data",
-                AsyncMock(return_value=location_data),
-            )
-        )
-        stack.enter_context(
-            patch(
                 "custom_components.homely.get_data_with_status",
                 AsyncMock(return_value=(updated_location_data, 200)),
             )
@@ -326,12 +316,6 @@ async def test_async_setup_entry_keeps_user_disabled_error_code_sensor_disabled(
             patch(
                 "custom_components.homely.get_location_id",
                 AsyncMock(return_value=location_response),
-            )
-        )
-        stack.enter_context(
-            patch(
-                "custom_components.homely.get_data",
-                AsyncMock(return_value=location_data),
             )
         )
         stack.enter_context(
@@ -655,8 +639,8 @@ async def test_async_setup_entry_missing_location_payload_raises_not_ready(
             AsyncMock(return_value=location_response),
         ),
         patch(
-            "custom_components.homely.get_data",
-            AsyncMock(return_value=None),
+            "custom_components.homely.get_data_with_status",
+            AsyncMock(return_value=(None, 500)),
         ),
     ):
         try:
@@ -1120,6 +1104,174 @@ async def test_async_setup_entry_registers_periodic_refresh_when_websocket_polli
     )
 
     assert tracked_intervals == [timedelta(minutes=1), timedelta(hours=6)]
+
+
+async def test_async_setup_entry_websocket_primary_skips_initial_poll_with_cached_snapshot(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+):
+    """WebSocket-primary entries with a cached snapshot must not poll /home on restart."""
+    from homeassistant.helpers.storage import Store
+
+    _FakeHomelyWebSocket.reset()
+
+    # Seed the per-location store as if a previous run had polled successfully.
+    store: Store = Store(hass, 1, f"homely.{LOCATION_ID}")
+    await store.async_save(location_data)
+
+    config_entry = build_config_entry(
+        options={
+            CONF_ENABLE_WEBSOCKET: True,
+            CONF_POLL_WHEN_WEBSOCKET: False,
+        }
+    )
+    config_entry.add_to_hass(hass)
+
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch(
+                "custom_components.homely.fetch_token_with_reason",
+                AsyncMock(return_value=(token_response, None)),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "custom_components.homely.get_location_id",
+                AsyncMock(return_value=location_response),
+            )
+        )
+        get_data_with_status = stack.enter_context(
+            patch(
+                "custom_components.homely.get_data_with_status",
+                AsyncMock(return_value=({}, 429)),
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                hass.config_entries,
+                "async_forward_entry_setups",
+                AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket)
+        )
+        assert await hass.config_entries.async_setup(config_entry.entry_id)
+        await hass.async_block_till_done()
+
+    # No /home poll happened during setup; entities are seeded straight from cache.
+    get_data_with_status.assert_not_awaited()
+    runtime_data = config_entry.runtime_data
+    assert runtime_data.last_data["devices"]
+    assert runtime_data.coordinator.data == runtime_data.last_data
+
+
+async def test_async_setup_entry_loads_without_initial_poll_when_api_broken(
+    hass,
+    token_response,
+    location_response,
+):
+    """A broken /home API must not block setup when the websocket can carry alarm state."""
+    _FakeHomelyWebSocket.reset()
+
+    config_entry = build_config_entry(
+        options={
+            CONF_ENABLE_WEBSOCKET: True,
+            CONF_POLL_WHEN_WEBSOCKET: True,
+        }
+    )
+    config_entry.add_to_hass(hass)
+
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch(
+                "custom_components.homely.fetch_token_with_reason",
+                AsyncMock(return_value=(token_response, None)),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "custom_components.homely.get_location_id",
+                AsyncMock(return_value=location_response),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "custom_components.homely.get_data_with_status",
+                AsyncMock(return_value=(None, 500)),
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                hass.config_entries,
+                "async_forward_entry_setups",
+                AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket)
+        )
+        assert await hass.config_entries.async_setup(config_entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert config_entry.state is ConfigEntryState.LOADED
+    runtime_data = config_entry.runtime_data
+    # No usable data yet: entities are seeded empty and the alarm panel reports unknown.
+    assert runtime_data.coordinator.data == {}
+    assert runtime_data.coordinator.data is runtime_data.last_data
+
+    # A websocket alarm event populates alarm state without any API poll.
+    ws = _FakeHomelyWebSocket.instances[0]
+    ws.on_data_update(
+        {"type": "alarm-state-changed", "data": {"alarmState": "ARMED_AWAY"}}
+    )
+    assert runtime_data.coordinator.data["alarmState"] == "ARMED_AWAY"
+
+
+async def test_coordinator_poll_failure_keeps_data_when_websocket_connected(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """A failing /home poll must not drop entities while the websocket is connected."""
+    _FakeHomelyWebSocket.reset()
+    config_entry = build_config_entry(
+        options={
+            CONF_ENABLE_WEBSOCKET: True,
+            CONF_POLL_WHEN_WEBSOCKET: True,
+        }
+    )
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+        extra_patches=(
+            patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),
+        ),
+    )
+
+    runtime_data = config_entry.runtime_data
+    coordinator = runtime_data.coordinator
+    ws = _FakeHomelyWebSocket.instances[0]
+    ws.connected = True
+    baseline = coordinator.data
+
+    with patch(
+        "custom_components.homely.get_data_with_status",
+        AsyncMock(return_value=(None, 500)),
+    ):
+        await coordinator.async_refresh()
+
+    assert coordinator.last_update_success is True
+    assert coordinator.data == baseline
+    assert runtime_data.api_available is False
 
 
 async def test_async_setup_entry_periodic_websocket_refresh_forces_api_poll(

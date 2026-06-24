@@ -14,13 +14,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceEntry
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from .api import (
     clear_last_refresh_token_result,
     fetch_refresh_token,
     fetch_token_with_reason,
     get_last_refresh_token_result,
-    get_data,
     get_data_with_status,
     get_location_id,
 )
@@ -332,6 +332,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> bo
     if not location_response:
         raise ConfigEntryNotReady("Failed to fetch Homely locations")
     location_id = None
+    partner_code: int | str | None = None
     configured_location_id = entry.data.get(CONF_LOCATION_ID)
     if configured_location_id is not None:
         configured_location_id = str(configured_location_id)
@@ -342,6 +343,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> bo
                 and str(candidate_location_id) == configured_location_id
             ):
                 location_id = candidate_location_id
+                partner_code = location_item.get("partnerCode")
                 break
         if location_id is None:
             raise ConfigEntryNotReady(
@@ -358,6 +360,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> bo
         try:
             location_item = location_response[home_id]
             location_id = location_item["locationId"]
+            partner_code = location_item.get("partnerCode")
         except (KeyError, IndexError, TypeError) as err:
             _LOGGER.debug(
                 "Failed to find location_id for home_id=%s entry_id=%s: %s",
@@ -394,18 +397,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> bo
             normalized_location_id,
         )
 
-    data = await get_data(hass, access_token_str, location_id)
-    if not data:
-        raise ConfigEntryNotReady("Failed to fetch Homely location data")
-    initial_alarm_state = _get_alarm_state(data)
-    if initial_alarm_state is not None:
-        _set_alarm_state(data, initial_alarm_state)
-    _log_startup_device_payloads(data, entry_id, location_id)
-
-    def _runtime_data() -> HomelyRuntimeData | None:
-        """Return runtime data only while the entry is still loaded."""
-        return current_runtime_data(entry)
-
     scan_interval = int(
         entry.options.get(
             CONF_SCAN_INTERVAL,
@@ -422,6 +413,96 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> bo
             entry.data.get(CONF_POLL_WHEN_WEBSOCKET, DEFAULT_POLL_WHEN_WEBSOCKET),
         )
     )
+    # WebSocket-primary mode: websocket enabled and polling suppressed while it is
+    # connected. In this mode a cached snapshot is enough to build entities, so we
+    # can skip the rate-limit-prone initial /home poll on every restart and let the
+    # websocket carry live state.
+    websocket_primary = bool(enable_websocket) and not poll_when_websocket
+
+    store: Store = Store(hass, 1, f"homely.{normalized_location_id}")
+    stored_data: dict[str, Any] | None = await store.async_load()
+    if not isinstance(stored_data, dict):
+        stored_data = None
+
+    stored_has_devices = bool(
+        stored_data
+        and isinstance(stored_data.get("devices"), list)
+        and stored_data.get("devices")
+    )
+    # Only skip the initial poll once we have a usable cached topology. The first
+    # successful poll ever still has to happen to seed that cache.
+    bootstrap_from_cache = websocket_primary and stored_has_devices
+
+    if bootstrap_from_cache:
+        assert stored_data is not None  # narrowed by stored_has_devices
+        _LOGGER.info(
+            "WebSocket-primary mode with cached snapshot; skipping initial API poll "
+            "to avoid rate limits and relying on websocket for live data "
+            "entry_id=%s location_id=%s device_count=%s",
+            entry_id,
+            location_id,
+            len(stored_data["devices"]),
+        )
+        data: dict[str, Any] | None = stored_data
+        initial_fetch_status: int | None = None
+        seed_without_poll = True
+    else:
+        data, initial_fetch_status = await get_data_with_status(
+            hass, access_token_str, location_id
+        )
+        seed_without_poll = False
+    initial_rate_limited = initial_fetch_status == 429
+    if not data:
+        # The initial /home poll returned no usable data. This happens when
+        # Homely rate limits us, or when the REST API is temporarily broken
+        # while the websocket still works. Degrade gracefully instead of
+        # refusing to load: prefer a cached snapshot, otherwise still load
+        # when the websocket can carry live alarm state.
+        if stored_data:
+            _LOGGER.warning(
+                "Initial Homely API poll failed (status=%s); using stored data "
+                "from previous run entry_id=%s location_id=%s",
+                initial_fetch_status,
+                entry_id,
+                location_id,
+            )
+            data = stored_data
+            seed_without_poll = True
+            initial_rate_limited = False
+        elif enable_websocket:
+            _LOGGER.warning(
+                "Initial Homely API poll failed (status=%s) and no stored data is "
+                "available; loading with websocket-only data and relying on the "
+                "websocket for live alarm state. Per-device sensors stay "
+                "unavailable until the API recovers entry_id=%s location_id=%s",
+                initial_fetch_status,
+                entry_id,
+                location_id,
+            )
+            data = {}
+            seed_without_poll = True
+            initial_rate_limited = False
+        elif initial_rate_limited:
+            _LOGGER.warning(
+                "Rate limited during initial setup and no stored data; "
+                "entities unavailable until first successful poll "
+                "entry_id=%s location_id=%s",
+                entry_id,
+                location_id,
+            )
+            data = {}
+        else:
+            raise ConfigEntryNotReady("Failed to fetch Homely location data")
+    else:
+        initial_alarm_state = _get_alarm_state(data)
+        if initial_alarm_state is not None:
+            _set_alarm_state(data, initial_alarm_state)
+        _log_startup_device_payloads(data, entry_id, location_id)
+        await store.async_save(data)
+
+    def _runtime_data() -> HomelyRuntimeData | None:
+        """Return runtime data only while the entry is still loaded."""
+        return current_runtime_data(entry)
 
     _LOGGER.debug(
         "Configured polling entry_id=%s location_id=%s scan_interval=%ss websocket=%s",
@@ -492,9 +573,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> bo
         location_id=normalized_location_id,
         last_data=data,
         tracked_device_ids=_device_id_snapshot(data),
+        partner_code=partner_code,
     )
     record_successful_poll(runtime_data)
     entry.runtime_data = runtime_data
+
+    def _save_on_successful_update() -> None:
+        if coordinator.last_update_success and runtime_data.last_data:
+            hass.async_create_task(store.async_save(runtime_data.last_data))
+
+    entry.async_on_unload(coordinator.async_add_listener(_save_on_successful_update))
 
     if enable_websocket:
         hass.async_create_task(
@@ -586,7 +674,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> bo
             location_id,
         )
 
-    await coordinator.async_config_entry_first_refresh()
+    if seed_without_poll:
+        # Publish whatever data we have (cached snapshot or empty) to entities
+        # without polling. The websocket then carries live updates; the
+        # coordinator only wakes to refresh tokens and falls back to polling if
+        # the websocket cannot connect or the API recovers.
+        coordinator.async_set_updated_data(data)
+        device_count = (
+            len(data["devices"])
+            if isinstance(data, dict) and isinstance(data.get("devices"), list)
+            else 0
+        )
+        _LOGGER.debug(
+            "Seeded coordinator without initial poll entry_id=%s location_id=%s "
+            "device_count=%s",
+            entry_id,
+            location_id,
+            device_count,
+        )
+    elif initial_rate_limited:
+        _LOGGER.warning(
+            "Skipping initial coordinator refresh due to rate limit; "
+            "coordinator will fetch data on first scheduled poll entry_id=%s location_id=%s",
+            entry_id,
+            location_id,
+        )
+    else:
+        await coordinator.async_config_entry_first_refresh()
     _reenable_legacy_error_code_entities(hass, entry)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     _schedule_pending_location_imports(hass, entry)

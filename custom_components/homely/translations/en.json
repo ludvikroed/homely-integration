@@ -97,6 +97,9 @@
       },
       "online": {
         "name": "Online"
+      },
+      "api_connection": {
+        "name": "Cloud API connection"
       }
     },
     "sensor": {

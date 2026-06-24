@@ -369,7 +369,7 @@ def test_websocket_status_sensor_uses_runtime_data(hass, location_data):
         "reported_status": "connected",
         "last_disconnect_reason": "network error: boom",
     }
-    assert entity.entity_registry_enabled_default is False
+    assert entity.entity_registry_enabled_default is True
     assert "connected" in entity.options
 
     runtime_data.ws_status = ""

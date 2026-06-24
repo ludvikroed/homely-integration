@@ -267,6 +267,13 @@ def build_websocket_data_handler(
                             str(device_id) if device_id is not None else None,
                         ),
                     )
+                    if not runtime_data.last_data and not runtime_data.force_api_refresh_once:
+                        runtime_data.force_api_refresh_once = True
+                        hass.async_create_task(coordinator.async_request_refresh())
+                        logger.debug(
+                            "Requested immediate API refresh to build initial state %s",
+                            ctx(entry.entry_id, location_id),
+                        )
                     coordinator.async_update_listeners()
                 return
 
@@ -435,6 +442,7 @@ async def async_init_websocket(
             token=runtime_data.access_token,
             on_data_update=on_websocket_data,
             status_update_callback=_status_callback,
+            partner_code=runtime_data.partner_code,
         )
         websocket_holder["websocket"] = ws
 

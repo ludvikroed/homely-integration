@@ -19,6 +19,7 @@ from custom_components.homely.all_batteries_healthy import (
     HomelyAllBatteriesHealthySensor,
     _is_true,
 )
+from custom_components.homely.binary_sensor import HomelyApiConnectionSensor
 from custom_components.homely.lock import (
     PARALLEL_UPDATES as LOCK_PARALLEL_UPDATES,
     HomelyLock,
@@ -242,6 +243,51 @@ async def test_lock_async_setup_entry_and_fallback_fields(hass, location_data):
         pass
     else:
         raise AssertionError("Expected HomeAssistantError")
+
+
+def test_api_connection_sensor_tracks_api_available_flag():
+    """Cloud API connection sensor mirrors runtime api_available and stays available."""
+    coordinator = MagicMock()
+    coordinator.last_update_success = False  # poll failing
+    runtime_data = MagicMock()
+    runtime_data.api_available = True
+
+    entity = HomelyApiConnectionSensor(
+        coordinator, runtime_data, "JF23", LOCATION_ID
+    )
+
+    # CONNECTIVITY: on = reachable. Must report even while the poll fails.
+    assert entity.available is True
+    assert entity.is_on is True
+
+    runtime_data.api_available = False
+    assert entity.available is True
+    assert entity.is_on is False
+    assert entity.device_info["entry_type"] is DeviceEntryType.SERVICE
+
+
+def test_all_batteries_healthy_sensor_unavailable_when_api_polling_down(location_data):
+    """Aggregate battery sensor goes unavailable in websocket-only mode.
+
+    Battery state only comes from the REST poll; when polling is down the
+    aggregate must not report a stale/empty "all healthy".
+    """
+    coordinator = MagicMock()
+    coordinator.data = location_data
+    coordinator.last_update_success = True
+
+    api_available = {"value": True}
+    entity = HomelyAllBatteriesHealthySensor(
+        coordinator,
+        "JF23",
+        LOCATION_ID,
+        api_available_getter=lambda: api_available["value"],
+    )
+
+    assert entity.available is True
+
+    api_available["value"] = False
+    assert entity.available is False
 
 
 def test_all_batteries_healthy_sensor_aggregates_battery_problems(location_data):
