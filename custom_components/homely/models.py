@@ -29,9 +29,14 @@ class HomelyRuntimeData:
     ws_status_reason: str | None = None
     last_disconnect_reason: str | None = None
     ws_status_listeners: list[Callable[[], None]] = field(default_factory=list)
-    ws_disconnect_refresh_monotonic: float = 0.0
-    ws_watchdog_reconnect_monotonic: float = 0.0
-    ws_watchdog_last_warning_monotonic: float = 0.0
+    # "Last time X happened" debounce timestamps. Default to -inf (never), not
+    # 0.0: a `monotonic() - ts < threshold` debounce treats 0.0 as "happened at
+    # boot", which falsely fires when the machine's uptime is below the
+    # threshold (e.g. a fresh CI runner or an appliance starting HA right after
+    # boot), wrongly suppressing the first reconnect/refresh/warning.
+    ws_disconnect_refresh_monotonic: float = float("-inf")
+    ws_watchdog_reconnect_monotonic: float = float("-inf")
+    ws_watchdog_last_warning_monotonic: float = float("-inf")
     ws_watchdog_last_reason: str | None = None
     ws_watchdog_last_action_at: datetime | None = None
     ws_watchdog_recovery_history_monotonic: list[float] = field(default_factory=list)
