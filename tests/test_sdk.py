@@ -77,7 +77,7 @@ async def test_sdk_exports_public_client_and_websocket_symbols():
     """The reusable package should expose the core client surface."""
     assert auth_header_value("token") == "Bearer token"
     assert CompatibilityWebSocket is HomelyWebSocket
-    assert __version__ == "0.1.8"
+    assert __version__ == "0.1.9"
 
 
 async def test_manifest_runtime_dependency_matches_tested_sdk_version():

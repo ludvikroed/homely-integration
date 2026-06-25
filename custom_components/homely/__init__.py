@@ -419,7 +419,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> bo
     # websocket carry live state.
     websocket_primary = bool(enable_websocket) and not poll_when_websocket
 
-    store: Store = Store(hass, 1, f"homely.{normalized_location_id}")
+    store: Store[dict[str, Any]] = Store(hass, 1, f"homely.{normalized_location_id}")
     stored_data: dict[str, Any] | None = await store.async_load()
     if not isinstance(stored_data, dict):
         stored_data = None

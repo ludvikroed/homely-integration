@@ -9,6 +9,6 @@
   "iot_class": "cloud_push",
   "issue_tracker": "https://github.com/ludvikroed/homely-integration/issues",
   "loggers": ["custom_components.homely", "homely"],
-  "requirements": ["python-homely==0.1.8"],
+  "requirements": ["python-homely==0.1.9"],
   "version": "1.4.2"
 }
