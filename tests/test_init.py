@@ -1431,6 +1431,90 @@ async def test_coordinator_update_method_uses_cached_data_on_transient_error(
     assert result == runtime_data.last_data
 
 
+def test_poll_backoff_schedule_advances_and_resets():
+    """Backoff should grow through the schedule, cap, and reset cleanly."""
+    from custom_components.homely.coordinator_runtime import (
+        _POLL_BACKOFF_SCHEDULE_SECONDS,
+        _reset_poll_backoff,
+        _schedule_poll_backoff,
+    )
+
+    runtime = SimpleNamespace(
+        poll_backoff_level=0,
+        poll_backoff_until_monotonic=float("-inf"),
+    )
+
+    delays = [
+        _schedule_poll_backoff(runtime, now=1000.0)
+        for _ in range(len(_POLL_BACKOFF_SCHEDULE_SECONDS) + 2)
+    ]
+
+    assert delays[: len(_POLL_BACKOFF_SCHEDULE_SECONDS)] == list(
+        _POLL_BACKOFF_SCHEDULE_SECONDS
+    )
+    # Caps at the final (6 hour) delay instead of growing unbounded.
+    assert delays[-1] == _POLL_BACKOFF_SCHEDULE_SECONDS[-1]
+    assert (
+        runtime.poll_backoff_until_monotonic
+        == 1000.0 + _POLL_BACKOFF_SCHEDULE_SECONDS[-1]
+    )
+
+    _reset_poll_backoff(runtime)
+    assert runtime.poll_backoff_level == 0
+    assert runtime.poll_backoff_until_monotonic == float("-inf")
+
+
+async def test_coordinator_backs_off_polling_after_failure_while_websocket_connected(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """A failed poll while the websocket is healthy should back off the next poll."""
+    _FakeHomelyWebSocket.reset()
+    config_entry = build_config_entry(
+        options={CONF_ENABLE_WEBSOCKET: True, CONF_POLL_WHEN_WEBSOCKET: True}
+    )
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+        extra_patches=(
+            patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),
+        ),
+    )
+    runtime_data = config_entry.runtime_data
+    websocket = _FakeHomelyWebSocket.instances[0]
+    websocket.connected = True  # healthy ws carries live data
+
+    getter = AsyncMock(return_value=(None, 429))
+    with patch("custom_components.homely.get_data_with_status", getter):
+        first = await runtime_data.coordinator.update_method()
+        # Backoff window is now in the future, so the next poll skips the API.
+        second = await runtime_data.coordinator.update_method()
+
+    assert first == runtime_data.last_data
+    assert second == runtime_data.last_data
+    assert runtime_data.poll_backoff_level == 1  # only the first failure advanced it
+    assert getter.await_count == 1  # the second poll did not hit the API
+
+    # A forced refresh bypasses the backoff; a success resets it.
+    runtime_data.force_api_refresh_once = True
+    with patch(
+        "custom_components.homely.get_data_with_status",
+        AsyncMock(return_value=(updated_location_data, 200)),
+    ):
+        recovered = await runtime_data.coordinator.update_method()
+
+    assert recovered["alarmState"] == "ARMED_AWAY"
+    assert runtime_data.poll_backoff_level == 0
+    assert runtime_data.poll_backoff_until_monotonic == float("-inf")
+
+
 async def test_coordinator_update_method_logs_unavailable_once_and_back_once(
     hass,
     token_response,

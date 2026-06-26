@@ -48,6 +48,11 @@ class HomelyRuntimeData:
     last_websocket_event_type: str | None = None
     last_ws_event_details: dict[str, Any] | None = None
     api_available: bool = True
+    # Exponential backoff for REST polling while the websocket carries live
+    # data. Avoids hammering a rate-limited/broken API (HTTP 429/439) every
+    # scan interval. -inf means "no backoff active".
+    poll_backoff_until_monotonic: float = float("-inf")
+    poll_backoff_level: int = 0
     tracked_device_ids: set[str] = field(default_factory=set)
     topology_reload_pending: bool = False
     force_api_refresh_once: bool = False

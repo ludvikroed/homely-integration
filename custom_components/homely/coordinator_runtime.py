@@ -24,6 +24,29 @@ from .runtime_state import (
 
 _TRANSIENT_HTTP_STATUS = {429, 500, 502, 503, 504}
 
+# Exponential backoff for REST polling while the websocket is healthy and
+# carries live data. When the API keeps failing (e.g. HTTP 429 rate limit or
+# the broken 439 endpoint) there is no point polling every scan interval, so we
+# back off up to a 6 hour safety poll and reset on the first success.
+_POLL_BACKOFF_SCHEDULE_SECONDS = (60, 300, 900, 1800, 3600, 21600)
+
+
+def _schedule_poll_backoff(runtime_data: HomelyRuntimeData, *, now: float) -> int:
+    """Advance the poll backoff and return the chosen delay in seconds."""
+    level = runtime_data.poll_backoff_level
+    delay = _POLL_BACKOFF_SCHEDULE_SECONDS[
+        min(level, len(_POLL_BACKOFF_SCHEDULE_SECONDS) - 1)
+    ]
+    runtime_data.poll_backoff_until_monotonic = now + delay
+    runtime_data.poll_backoff_level = level + 1
+    return delay
+
+
+def _reset_poll_backoff(runtime_data: HomelyRuntimeData) -> None:
+    """Clear poll backoff after a successful poll."""
+    runtime_data.poll_backoff_level = 0
+    runtime_data.poll_backoff_until_monotonic = float("-inf")
+
 type RuntimeDataGetter = Callable[[], HomelyRuntimeData | None]
 type RefreshTokenCallable = Callable[[HomeAssistant, str], Awaitable[dict[str, Any] | None]]
 type TokenWithReasonCallable = Callable[
@@ -540,6 +563,25 @@ def build_async_update_data(
                 location_id,
             )
             return runtime_data.last_data
+
+        if (
+            enable_websocket
+            and ws_connected
+            and not force_api_refresh_once
+            and time.monotonic() < runtime_data.poll_backoff_until_monotonic
+        ):
+            update_runtime_websocket_state(runtime_data)
+            retry_in_s = max(
+                0, int(runtime_data.poll_backoff_until_monotonic - time.monotonic())
+            )
+            logger.debug(
+                "Polling backed off after repeated API failure; websocket carries "
+                "live data entry_id=%s location_id=%s retry_in_s=%s",
+                entry_id,
+                location_id,
+                retry_in_s,
+            )
+            return runtime_data.last_data
         if force_api_refresh_once:
             logger.debug(
                 "Bypassing websocket polling skip due to forced API refresh "
@@ -574,12 +616,16 @@ def build_async_update_data(
                         f"{status_code}; continuing with websocket-maintained data"
                     )
                     update_runtime_websocket_state(runtime_data)
+                    backoff_delay = _schedule_poll_backoff(
+                        runtime_data, now=time.monotonic()
+                    )
                     logger.debug(
                         "Polling kept websocket-maintained data after API failure "
-                        "entry_id=%s location_id=%s status=%s",
+                        "entry_id=%s location_id=%s status=%s next_poll_in_s=%s",
                         entry_id,
                         location_id,
                         status_code,
+                        backoff_delay,
                     )
                     return (
                         runtime_data.last_data
@@ -620,6 +666,7 @@ def build_async_update_data(
                 raise UpdateFailed("Failed to fetch data from API")
 
             _mark_api_available()
+            _reset_poll_backoff(runtime_data)
             record_successful_poll(runtime_data)
             elapsed_ms = int((time.monotonic() - poll_started_at) * 1000)
             devices = updated.get("devices")
