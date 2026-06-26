@@ -14,7 +14,9 @@ A unofficial Home Assistant integration that connects your Homely alarm system t
 
 ## ⚠️ Integration is currently partially broken
 
-After Homely updated their systems around 08/06 the API stopped working. This integration relies on the API at startup to get the data it needs to create all devices. After that, the integration can work with just live updates (WebSocket). WebSocket still works today. The integration now provides alarm status by relying on live updates. This means it must receive one update from the alarm before it can show status. **Turn your alarm on and off to see the status.**
+Around 08/06 Homely's API stopped working. The integration needs it at startup to create devices, but after that runs on live updates (WebSocket), which still work — so alarm status keeps updating.
+
+The last alarm status is saved and restored on restart, so it shows right away. It's only blank on the very first setup before any event — then **turn your alarm on and off once to populate it.** If the alarm changes while Home Assistant is off, the status updates on the next event.
 
 ## Installation & Setup
 

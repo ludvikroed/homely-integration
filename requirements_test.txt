@@ -1,7 +1,10 @@
 pytest
 pytest-asyncio
 pytest-cov
-pytest-homeassistant-custom-component
+# Pinned: this pulls in Home Assistant. Leaving it unpinned makes CI install
+# whatever is latest, including HA betas (e.g. 2026.7.0b1 via 0.13.341), which
+# caused flaky/spurious failures. 0.13.340 -> HA 2026.6.4 (stable).
+pytest-homeassistant-custom-component==0.13.340
 mypy
 ruff
 python-homely==0.1.9
