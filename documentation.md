@@ -93,6 +93,25 @@ The integration only allows deleting Homely devices that are no longer present i
 - `Enable WebSocket = off`:
   Polling-only mode.
 
+## API outage and WebSocket-only mode
+
+Around 08/06 Homely's `/home` REST endpoint started returning errors (HTTP 439, sometimes 429 rate limits). That endpoint is the only source of full device and battery data, so while it is down the integration runs on the WebSocket alone.
+
+**Alarm status without the API:**
+
+- Alarm state is delivered by the WebSocket as `alarm-state-changed` events, so it keeps updating even while the REST API is broken.
+- The last alarm state is saved to disk and restored on restart, so after a Home Assistant restart it shows the **last known status right away** — you do not need to wait for a new event.
+- It is only blank (`unknown`) on the very first setup, before any alarm event has been received. In that case, arm or disarm the alarm once to populate it.
+- The WebSocket only sends *changes* (no initial snapshot). If the alarm changes while Home Assistant is off, the shown value can be briefly out of date until the next alarm event corrects it.
+
+**What is limited while the API is down:**
+
+- `Battery status` becomes **unavailable** instead of reporting a (possibly stale) "no problem", because battery data only comes from the REST poll.
+- Per-device sensors that rely on polled data may be unavailable until the API recovers. Devices are created from the API at startup, so a fresh install during the outage may have no per-device entities.
+- The **Cloud API connection** sensor shows whether REST polling is reaching Homely (`Connected` / `Disconnected`), and the **WebSocket status** sensor shows the live-update link.
+
+**Polling backoff:** when the REST poll keeps failing while the WebSocket is healthy, polling backs off exponentially (1m, 5m, 15m, 30m, 1h, then a 6h safety poll) instead of hammering the failing API every interval. It resets to the normal interval on the first successful poll, and a manual refresh bypasses the backoff.
+
 ## Contributing
 
 Contributions are very welcome, and I really appreciate everyone who takes the time to help improve this integration.
