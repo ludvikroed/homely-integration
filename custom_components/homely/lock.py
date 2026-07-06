@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from homeassistant.components.lock import LockEntity
@@ -76,6 +77,9 @@ async def async_setup_entry(
     coordinator = runtime_data.coordinator
     data = coordinator.data or runtime_data.last_data or {}
 
+    def _fallback_data_getter() -> dict[str, Any] | None:
+        return runtime_data.last_data
+
     entities: list[LockEntity] = []
     devices = data.get("devices", [])
     if not isinstance(devices, list):
@@ -85,7 +89,9 @@ async def async_setup_entry(
         if not isinstance(device, dict):
             continue
         if _is_lock_device(device):
-            entities.append(HomelyLock(coordinator, device))
+            entities.append(
+                HomelyLock(coordinator, device, fallback_data_getter=_fallback_data_getter)
+            )
 
     async_add_entities(entities)
 
@@ -97,8 +103,10 @@ class HomelyLock(CoordinatorEntity, LockEntity):
         self,
         coordinator: DataUpdateCoordinator[dict[str, Any]],
         device: dict[str, Any],
+        fallback_data_getter: Callable[[], dict[str, Any] | None] | None = None,
     ) -> None:
         super().__init__(coordinator)
+        self._fallback_data_getter = fallback_data_getter
         self._attr_has_entity_name = True
         self._device_id = str(device.get("id"))
         self._device_name = get_device_display_name(device)
@@ -119,8 +127,11 @@ class HomelyLock(CoordinatorEntity, LockEntity):
         )
 
     def _get_current_device(self) -> dict[str, Any] | None:
-        """Return latest device payload from coordinator cache."""
-        return get_current_device(self.coordinator.data, self._device_id)
+        """Return latest device payload from coordinator or last-known cache."""
+        data: dict[str, Any] | None = self.coordinator.data
+        if data is None and self._fallback_data_getter is not None:
+            data = self._fallback_data_getter()
+        return get_current_device(data, self._device_id)
 
     @property
     def available(self) -> bool:

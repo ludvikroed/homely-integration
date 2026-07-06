@@ -48,25 +48,11 @@ def get_device_display_name(device: Mapping[str, Any]) -> str:
     return _clean_text(device.get("name")) or f"Homely device {device.get('id')}"
 
 
-def _get_entity_base_name(device: Mapping[str, Any]) -> str:
-    """Return entity base name without room/floor prefix."""
-    return get_device_display_name(device)
-
-
 def humanize_label(label: str | None) -> str:
     """Return a title-cased label from API keys."""
     if not label:
         return "Sensor"
     return str(label).replace("_", " ").strip().title()
-
-
-def build_entity_name(device: Mapping[str, Any], label: str | None) -> str:
-    """Compose entity display name while avoiding duplicate words."""
-    base_name = _get_entity_base_name(device)
-    suffix = humanize_label(label)
-    if suffix.casefold() in base_name.casefold():
-        return base_name
-    return f"{base_name} {suffix}"
 
 
 def _slug_tokens(value: str | None) -> list[str]:

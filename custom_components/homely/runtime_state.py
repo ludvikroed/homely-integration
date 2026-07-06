@@ -220,8 +220,13 @@ def update_runtime_websocket_state(runtime_data: HomelyRuntimeData) -> None:
 
 
 def cached_data_grace_seconds(scan_interval: int) -> int:
-    """Return grace period for cached polling data when websocket is unavailable."""
-    return max(60, min(scan_interval, 300))
+    """Return grace period for cached polling data when websocket is unavailable.
+
+    Must exceed the scan interval: cache age is roughly one scan interval by
+    the time a failed poll evaluates it, so a smaller grace would mark
+    entities unavailable after a single transient failure.
+    """
+    return max(300, scan_interval * 2)
 
 
 def tracked_api_device_ids(

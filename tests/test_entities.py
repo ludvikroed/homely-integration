@@ -93,7 +93,7 @@ def test_location_level_entities_use_service_device_type(hass, location_data):
     alarm_entity = HomelyAlarmPanel(coordinator, LOCATION_ID)
     battery_entity = HomelyAllBatteriesHealthySensor(coordinator, "JF23", LOCATION_ID)
     websocket_entity = HomelyWebSocketStatusSensor(
-        coordinator, hass, config_entry, LOCATION_ID
+        coordinator, config_entry, LOCATION_ID
     )
 
     assert alarm_entity.device_info["entry_type"] is DeviceEntryType.SERVICE

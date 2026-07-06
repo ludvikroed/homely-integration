@@ -35,7 +35,10 @@
     },
     "abort": {
       "already_configured": "This location is already configured",
-      "reauth_successful": "Re-authentication was successful"
+      "invalid_auth": "Incorrect username or password.",
+      "invalid_location": "The selected location is not valid for this account.",
+      "reauth_successful": "Re-authentication was successful",
+      "unknown": "Unexpected error occurred"
     }
   },
   "options": {

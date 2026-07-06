@@ -9,10 +9,7 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from homely.client import (
-    HomelyClient,
-    auth_header_value,
-)
+from homely.client import HomelyClient
 
 _LAST_REFRESH_TOKEN_RESULT: ContextVar["RefreshTokenResult | None"] = ContextVar(
     "homely_last_refresh_token_result",
@@ -75,14 +72,6 @@ def _client(hass: HomeAssistant) -> HomelyClient:
     return HomelyClient(async_get_clientsession(hass))
 
 
-def _auth_header_value(token: str | None) -> str:
-    """Return normalized Authorization header value.
-
-    Kept as a compatibility alias while the integration migrates to the SDK.
-    """
-    return auth_header_value(token)
-
-
 async def fetch_token_with_reason(
     hass: HomeAssistant,
     username: str,
@@ -90,14 +79,6 @@ async def fetch_token_with_reason(
 ) -> tuple[dict[str, Any] | None, str | None]:
     """Fetch access token and return optional reason key on failure."""
     return await _client(hass).fetch_token_with_reason(username, password)
-
-
-async def fetch_token(
-    hass: HomeAssistant, username: str, password: str
-) -> dict[str, Any] | None:
-    """Fetch access token from API."""
-    response, _reason = await fetch_token_with_reason(hass, username, password)
-    return response
 
 
 async def fetch_refresh_token(
@@ -178,14 +159,6 @@ async def get_location_id(
 ) -> list[dict[str, Any]] | None:
     """Get available locations from API."""
     return await _client(hass).get_locations(token)
-
-
-async def get_data(
-    hass: HomeAssistant, token: str, location_id: str | int
-) -> dict[str, Any] | None:
-    """Get location data from API."""
-    data, _status = await get_data_with_status(hass, token, location_id)
-    return data
 
 
 async def get_data_with_status(

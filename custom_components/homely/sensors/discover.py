@@ -25,6 +25,21 @@ def _get_value_by_path(obj: DevicePayload, path: str) -> Any:
     return value
 
 
+def _path_exists(obj: DevicePayload, path: str) -> bool:
+    """Return whether a dot-notation path exists, even when its value is None.
+
+    A state key present with a null value still means the device supports the
+    feature; the entity should exist and report unknown until data arrives.
+    """
+    keys = path.split(".")
+    value: Any = obj
+    for key in keys[:-1]:
+        if not isinstance(value, dict):
+            return False
+        value = value.get(key)
+    return isinstance(value, dict) and keys[-1] in value
+
+
 def _resolve_path_and_value(
     device: DevicePayload,
     sensor_config: SensorConfig,
@@ -35,13 +50,12 @@ def _resolve_path_and_value(
         for candidate_path in configured_paths:
             if not isinstance(candidate_path, str):
                 continue
-            value = _get_value_by_path(device, candidate_path)
-            if value is not None:
-                return candidate_path, value
+            if _path_exists(device, candidate_path):
+                return candidate_path, _get_value_by_path(device, candidate_path)
         return None, None
 
     path = sensor_config.get("path")
-    if not isinstance(path, str):
+    if not isinstance(path, str) or not _path_exists(device, path):
         return None, None
     return path, _get_value_by_path(device, path)
 
@@ -80,7 +94,7 @@ def discover_device_sensors(device: DevicePayload) -> list[SensorConfig]:
         }
         matched_path, value = _resolve_path_and_value(device, sensor_config_with_device)
 
-        if matched_path is not None and value is not None:
+        if matched_path is not None:
             transformed_value = _transform_value(sensor_config_with_device, value)
             get_name = sensor_config.get("get_name")
             if callable(get_name):

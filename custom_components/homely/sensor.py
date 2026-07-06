@@ -35,7 +35,6 @@ from .runtime_state import (
     websocket_connection_state,
 )
 from .websocket import WEBSOCKET_STATUS_OPTIONS as SDK_WEBSOCKET_STATUS_OPTIONS
-from .websocket import normalize_websocket_status as _normalize_runtime_websocket_status
 from .sensors.discover import discover_device_sensors, _get_value_by_path
 
 PARALLEL_UPDATES = 0
@@ -46,11 +45,6 @@ WEBSOCKET_STATUS_OPTIONS = [
     "disabled",
     *SDK_WEBSOCKET_STATUS_OPTIONS,
 ]
-
-
-def _normalize_websocket_status(value: Any) -> str:
-    """Convert internal websocket status labels to stable enum states."""
-    return _normalize_runtime_websocket_status(value)
 
 
 async def async_setup_entry(
@@ -108,7 +102,7 @@ async def async_setup_entry(
         )
     if websocket_enabled:
         entities.append(
-            HomelyWebSocketStatusSensor(coordinator, hass, entry, location_id)
+            HomelyWebSocketStatusSensor(coordinator, entry, location_id)
         )
         if enable_debug_sensors:
             entities.append(
@@ -271,9 +265,6 @@ class HomelySensor(CoordinatorEntity, SensorEntity):
         self._transform_value = sensor_config.get("transform_value")
         self._transform_device_value = sensor_config.get("transform_device_value")
         self._unit = sensor_config.get("unit")
-        self._resolve_unit_from_device_value = sensor_config.get(
-            "resolve_unit_from_device_value"
-        )
         configured_options = sensor_config.get("options")
         self._options = (
             [str(option) for option in configured_options]
@@ -307,7 +298,7 @@ class HomelySensor(CoordinatorEntity, SensorEntity):
         if device_class:
             self._attr_device_class = device_class
 
-        if self._unit and not callable(self._resolve_unit_from_device_value):
+        if self._unit:
             self._attr_native_unit_of_measurement = self._unit
 
         if sensor_config.get("state_class"):
@@ -341,23 +332,6 @@ class HomelySensor(CoordinatorEntity, SensorEntity):
     def available(self) -> bool:
         """Return whether the backing Homely device is available."""
         return super().available and is_device_available(self._get_current_device())
-
-    @property
-    def native_unit_of_measurement(self) -> str | None:
-        """Return the current unit of measurement."""
-        if not callable(self._resolve_unit_from_device_value):
-            return self._unit
-
-        device = self._get_current_device()
-        if not device:
-            return None
-
-        value = _get_value_by_path(device, self._path)
-        try:
-            resolved_unit = self._resolve_unit_from_device_value(device, value)
-        except (TypeError, ValueError):
-            return self._unit
-        return resolved_unit if isinstance(resolved_unit, str) else None
 
     @property
     def native_value(self) -> Any:
@@ -405,7 +379,6 @@ class HomelyWebSocketStatusSensor(CoordinatorEntity, SensorEntity):
     def __init__(
         self,
         coordinator: DataUpdateCoordinator[dict[str, Any]],
-        hass: HomeAssistant,
         entry: HomelyConfigEntry,
         location_id: str,
     ) -> None:

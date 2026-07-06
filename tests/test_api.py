@@ -66,12 +66,6 @@ class _FakeSession:
         return self._get_response
 
 
-async def test_auth_header_value_normalizes_bearer_prefix():
-    """Tokens should always be returned as bearer values."""
-    assert api._auth_header_value("abc") == "Bearer abc"
-    assert api._auth_header_value(" Bearer abc ") == "Bearer abc"
-
-
 async def test_fetch_token_with_reason_success(hass):
     """Token fetch should return payload on success."""
     session = _FakeSession(
@@ -127,17 +121,6 @@ async def test_fetch_token_with_reason_network_error(hass):
 
     assert response is None
     assert reason == "cannot_connect"
-
-
-async def test_fetch_token_wrapper_returns_payload_only(hass):
-    """fetch_token should unwrap the reason tuple."""
-    with patch(
-        "custom_components.homely.api.fetch_token_with_reason",
-        AsyncMock(return_value=({"access_token": "token"}, None)),
-    ):
-        response = await api.fetch_token(hass, "user", "pass")
-
-    assert response == {"access_token": "token"}
 
 
 async def test_fetch_refresh_token_and_locations(hass):
@@ -410,13 +393,3 @@ async def test_get_data_with_status_success(hass):
     assert data == {"name": "JF23"}
     assert status == 200
 
-
-async def test_get_data_wrapper_returns_only_payload(hass):
-    """get_data should unwrap the helper status tuple."""
-    with patch(
-        "custom_components.homely.api.get_data_with_status",
-        return_value=({"name": "JF23"}, 200),
-    ):
-        data = await api.get_data(hass, "token", "loc-1")
-
-    assert data == {"name": "JF23"}

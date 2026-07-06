@@ -143,11 +143,11 @@ def test_debug_redaction_and_device_snapshot_cover_defensive_branches():
     assert _device_id_snapshot({"devices": {}}) == set()
 
 
-def test_cached_data_grace_seconds_stays_short_when_websocket_is_down():
-    """Cached polling data should expire quickly without websocket connectivity."""
-    assert _cached_data_grace_seconds(30) == 60
-    assert _cached_data_grace_seconds(120) == 120
-    assert _cached_data_grace_seconds(600) == 300
+def test_cached_data_grace_seconds_exceeds_scan_interval():
+    """Grace must exceed the scan interval so one missed poll survives."""
+    assert _cached_data_grace_seconds(30) == 300
+    assert _cached_data_grace_seconds(120) == 300
+    assert _cached_data_grace_seconds(600) == 1200
 
 
 async def _setup_loaded_entry(
@@ -1795,7 +1795,7 @@ async def test_coordinator_update_method_refresh_invalid_auth_with_stale_cache_r
     runtime_data = config_entry.runtime_data
     runtime_data.expires_at = 0
     runtime_data.websocket = None
-    runtime_data.last_data_activity_monotonic = time.monotonic() - 301
+    runtime_data.last_data_activity_monotonic = time.monotonic() - 400
 
     with (
         patch(
@@ -1981,7 +1981,7 @@ async def test_coordinator_update_method_marks_stale_cached_data_unavailable(
     runtime_data = config_entry.runtime_data
     runtime_data.expires_at = 0
     runtime_data.websocket = None
-    runtime_data.last_data_activity_monotonic = time.monotonic() - 301
+    runtime_data.last_data_activity_monotonic = time.monotonic() - 400
 
     with (
         patch(
@@ -2022,7 +2022,7 @@ async def test_coordinator_update_method_invalid_refresh_payload_and_stale_cache
     runtime_data = config_entry.runtime_data
     runtime_data.expires_at = 0
     runtime_data.websocket = None
-    runtime_data.last_data_activity_monotonic = time.monotonic() - 301
+    runtime_data.last_data_activity_monotonic = time.monotonic() - 400
 
     with (
         patch(
@@ -3396,3 +3396,136 @@ async def test_async_setup_entry_internet_available_callback_does_not_depend_on_
     await hass.async_block_till_done()
 
     assert "internet_available event" in ws.request_reconnect_calls
+
+
+async def test_coordinator_update_method_reloads_when_devices_appear_after_empty_setup(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Setups that started without devices must reload when the first poll brings them."""
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+    # Simulate a websocket-only/empty bootstrap where platforms saw no devices.
+    runtime_data.tracked_device_ids = set()
+
+    with patch.object(
+        hass.config_entries,
+        "async_reload",
+        AsyncMock(return_value=True),
+    ) as async_reload:
+        with patch(
+            "custom_components.homely.get_data_with_status",
+            AsyncMock(return_value=(updated_location_data, 200)),
+        ):
+            await runtime_data.coordinator.update_method()
+            await hass.async_block_till_done()
+
+    async_reload.assert_awaited_once_with(config_entry.entry_id)
+    assert runtime_data.tracked_device_ids
+
+
+async def test_seeded_setup_does_not_fake_a_successful_poll(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+):
+    """Cache-seeded setups must leave last-successful-poll unset until a real poll."""
+    from homeassistant.helpers.storage import Store
+
+    _FakeHomelyWebSocket.reset()
+
+    store: Store = Store(hass, 1, f"homely.{LOCATION_ID}")
+    await store.async_save(location_data)
+
+    config_entry = build_config_entry(
+        options={
+            CONF_ENABLE_WEBSOCKET: True,
+            CONF_POLL_WHEN_WEBSOCKET: False,
+        }
+    )
+    config_entry.add_to_hass(hass)
+
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch(
+                "custom_components.homely.fetch_token_with_reason",
+                AsyncMock(return_value=(token_response, None)),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "custom_components.homely.get_location_id",
+                AsyncMock(return_value=location_response),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "custom_components.homely.get_data_with_status",
+                AsyncMock(return_value=({}, 429)),
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                hass.config_entries,
+                "async_forward_entry_setups",
+                AsyncMock(return_value=None),
+            )
+        )
+        stack.enter_context(
+            patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket)
+        )
+        assert await hass.config_entries.async_setup(config_entry.entry_id)
+        await hass.async_block_till_done()
+
+    runtime_data = config_entry.runtime_data
+    assert runtime_data.last_successful_poll_at is None
+    assert runtime_data.last_successful_poll_monotonic is None
+    # Cache grace still works from the data-activity baseline.
+    assert runtime_data.last_data_activity_monotonic > 0
+
+
+async def test_coordinator_listener_uses_delayed_store_save(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Successful-update listener must delay-save instead of writing per event."""
+    from homeassistant.helpers.storage import Store
+
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+
+    with (
+        patch.object(Store, "async_delay_save") as delay_save,
+        patch.object(Store, "async_save", AsyncMock()) as immediate_save,
+    ):
+        runtime_data.coordinator.async_update_listeners()
+        await hass.async_block_till_done()
+
+    assert delay_save.call_count == 1
+    immediate_save.assert_not_awaited()
+    # The delayed-save callback must return the freshest runtime data.
+    data_func = delay_save.call_args.args[0]
+    assert data_func() is runtime_data.last_data

@@ -40,7 +40,8 @@ class HomelyRuntimeData:
     ws_watchdog_last_reason: str | None = None
     ws_watchdog_last_action_at: datetime | None = None
     ws_watchdog_recovery_history_monotonic: list[float] = field(default_factory=list)
-    last_successful_poll_monotonic: float = field(default_factory=monotonic)
+    # None until a poll actually succeeds; seeded setups must not fake one.
+    last_successful_poll_monotonic: float | None = None
     last_data_activity_monotonic: float = field(default_factory=monotonic)
     last_successful_poll_at: datetime | None = None
     last_websocket_event_monotonic: float | None = None

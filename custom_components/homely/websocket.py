@@ -1,6 +1,6 @@
 """Compatibility re-export for the reusable Homely SDK websocket client."""
 
-from homely import (
+from homely.websocket import (
     WEBSOCKET_STATUS_OPTIONS,
     HomelyWebSocket,
     WebSocketConnectionState,

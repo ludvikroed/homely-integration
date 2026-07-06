@@ -23,13 +23,6 @@
           "username": "Homely Email",
           "password": "Homely password"
         }
-      },
-      "reconfigure": {
-        "title": "Choose location",
-        "description": "Select a different Homely location for this integration entry.",
-        "data": {
-          "location_id": "Location"
-        }
       }
     },
     "error": {
@@ -42,12 +35,10 @@
     },
     "abort": {
       "already_configured": "This location is already configured",
-      "cannot_connect": "Could not connect to Homely right now. Check internet connection and try again.",
-      "cannot_reconfigure": "Home Assistant could not switch this entry to the selected location.",
-      "no_homes": "No homes were found on this account.",
-      "reauth_required": "Your Homely credentials must be updated before changing location.",
+      "invalid_auth": "Incorrect username or password.",
+      "invalid_location": "The selected location is not valid for this account.",
       "reauth_successful": "Re-authentication was successful",
-      "reconfigure_successful": "Reconfiguration was successful"
+      "unknown": "Unexpected error occurred"
     }
   },
   "options": {
@@ -58,13 +49,13 @@
         "data": {
           "scan_interval": "Regular API polling interval (seconds, minimum 30)",
           "enable_websocket": "Enable live updates via WebSocket",
-          "poll_when_websocket": "Continue regular API polling while live updates are active"
+          "poll_when_websocket": "Continue regular API polling while live updates are active",
+          "enable_debug_sensors": "Enable debug sensors (last poll, last update, reconnect count)"
         }
       }
     },
     "error": {
       "invalid_scan_interval": "Scan interval must be 30 seconds or higher.",
-      "no_homes": "No homes were found on this account.",
       "unknown": "Unexpected error occurred"
     }
   },
@@ -175,6 +166,9 @@
       },
       "last_websocket_message": {
         "name": "Last received live update"
+      },
+      "last_ws_device_update": {
+        "name": "Last updated device"
       }
     }
   }

@@ -16,7 +16,6 @@ from custom_components.homely.sensor import (
     HomelySensor,
     HomelyRuntimeTimestampSensor,
     HomelyWebSocketStatusSensor,
-    _normalize_websocket_status,
     async_setup_entry,
 )
 from custom_components.homely.const import CONF_ENABLE_DEBUG_SENSORS, CONF_ENABLE_WEBSOCKET
@@ -29,13 +28,6 @@ DIAGNOSTIC_ENTITY_CATEGORY = getattr(entity_helper, "EntityCategory").DIAGNOSTIC
 def test_sensor_platform_declares_parallel_updates():
     """Coordinator-driven sensor platform should set PARALLEL_UPDATES to 0."""
     assert PARALLEL_UPDATES == 0
-
-
-def test_websocket_status_normalization_handles_unknown_values():
-    """Websocket status normalization should stay stable for odd inputs."""
-    assert _normalize_websocket_status(None) == "unknown"
-    assert _normalize_websocket_status(" Connected ") == "connected"
-    assert _normalize_websocket_status("not a real status") == "unknown"
 
 
 def test_sensor_entity_reads_transformed_values(location_data):
@@ -262,48 +254,6 @@ def test_sensor_entity_handles_device_aware_transform_and_unit_errors(location_d
     )
     assert transform_entity.native_value == 21.8
 
-    resolved_unit_entity = HomelySensor(
-        coordinator,
-        motion_device,
-        {
-            "path": "features.temperature.states.temperature.value",
-            "name": "temperature",
-            "device_suffix": "temperature_unit_ok",
-            "unit": "fallback",
-            "resolve_unit_from_device_value": lambda device, value: (
-                "custom-unit" if device["modelName"] and value else "fallback"
-            ),
-        },
-    )
-    assert resolved_unit_entity.native_unit_of_measurement == "custom-unit"
-
-    fallback_unit_entity = HomelySensor(
-        coordinator,
-        motion_device,
-        {
-            "path": "features.temperature.states.temperature.value",
-            "name": "temperature",
-            "device_suffix": "temperature_unit_fallback",
-            "unit": "fallback",
-            "resolve_unit_from_device_value": lambda _device, _value: (
-                _ for _ in ()
-            ).throw(ValueError("bad unit")),
-        },
-    )
-    assert fallback_unit_entity.native_unit_of_measurement == "fallback"
-
-    invalid_unit_entity = HomelySensor(
-        coordinator,
-        motion_device,
-        {
-            "path": "features.temperature.states.temperature.value",
-            "name": "temperature",
-            "device_suffix": "temperature_unit_invalid",
-            "unit": "fallback",
-            "resolve_unit_from_device_value": lambda _device, _value: 123,
-        },
-    )
-    assert invalid_unit_entity.native_unit_of_measurement is None
 
 
 def test_sensor_entity_becomes_unavailable_when_device_is_offline(location_data):
@@ -359,9 +309,7 @@ def test_websocket_status_sensor_uses_runtime_data(hass, location_data):
     )
     config_entry.runtime_data = runtime_data
 
-    entity = HomelyWebSocketStatusSensor(
-        runtime_data.coordinator, hass, config_entry, LOCATION_ID
-    )
+    entity = HomelyWebSocketStatusSensor(runtime_data.coordinator, config_entry, LOCATION_ID)
     runtime_data.websocket = SimpleNamespace(is_connected=lambda: False)
     assert entity.native_value == "disconnected"
     assert entity.extra_state_attributes == {
@@ -401,9 +349,7 @@ def test_websocket_status_sensor_reports_disabled_when_websocket_is_off(
     )
     config_entry.runtime_data = runtime_data
 
-    entity = HomelyWebSocketStatusSensor(
-        runtime_data.coordinator, hass, config_entry, LOCATION_ID
-    )
+    entity = HomelyWebSocketStatusSensor(runtime_data.coordinator, config_entry, LOCATION_ID)
 
     assert entity.native_value == "disabled"
     assert "disabled" in entity.options
@@ -586,9 +532,7 @@ async def test_websocket_status_sensor_registers_and_unregisters_listeners(
         last_data=location_data,
     )
     config_entry.runtime_data = runtime_data
-    entity = HomelyWebSocketStatusSensor(
-        runtime_data.coordinator, hass, config_entry, LOCATION_ID
-    )
+    entity = HomelyWebSocketStatusSensor(runtime_data.coordinator, config_entry, LOCATION_ID)
 
     with (
         patch.object(
@@ -621,9 +565,7 @@ async def test_websocket_status_sensor_listener_triggers_state_update(
         last_data=location_data,
     )
     config_entry.runtime_data = runtime_data
-    entity = HomelyWebSocketStatusSensor(
-        runtime_data.coordinator, hass, config_entry, LOCATION_ID
-    )
+    entity = HomelyWebSocketStatusSensor(runtime_data.coordinator, config_entry, LOCATION_ID)
     entity.hass = hass
     entity.entity_id = "sensor.test"
 
@@ -653,9 +595,7 @@ async def test_websocket_status_sensor_handles_missing_listener_storage(
         last_data=location_data,
     )
     config_entry.runtime_data = runtime_data
-    entity = HomelyWebSocketStatusSensor(
-        runtime_data.coordinator, hass, config_entry, LOCATION_ID
-    )
+    entity = HomelyWebSocketStatusSensor(runtime_data.coordinator, config_entry, LOCATION_ID)
     entity._runtime_data = SimpleNamespace(ws_status="Connected")
 
     with (
@@ -684,9 +624,7 @@ def test_websocket_status_sensor_handles_unknown_runtime_state(hass, location_da
         last_data=location_data,
     )
     config_entry.runtime_data = runtime_data
-    entity = HomelyWebSocketStatusSensor(
-        runtime_data.coordinator, hass, config_entry, LOCATION_ID
-    )
+    entity = HomelyWebSocketStatusSensor(runtime_data.coordinator, config_entry, LOCATION_ID)
 
     entity._runtime_data = SimpleNamespace()
     assert entity.native_value == "unknown"

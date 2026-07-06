@@ -168,15 +168,6 @@ async def get_location_id(
     return await _get_client(hass).get_locations(token)
 
 
-async def get_data(
-    hass: HomeAssistant,
-    token: str,
-    location_id: str | int,
-) -> dict[str, Any] | None:
-    """Fetch location data through the SDK client."""
-    return await _get_client(hass).get_home_data(token, location_id)
-
-
 async def _fetch_locations_for_credentials(
     hass: HomeAssistant,
     username: str,

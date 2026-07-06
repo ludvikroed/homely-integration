@@ -28,7 +28,6 @@ from custom_components.homely.config_flow import (
     _location_options,
     _normalize_location_id,
     fetch_token_with_reason,
-    get_data,
     get_location_id,
 )
 from custom_components.homely.const import (
@@ -197,20 +196,16 @@ async def test_config_flow_sdk_wrappers_delegate_through_client(hass):
             return_value=({"access_token": "token"}, None)
         ),
         get_locations=AsyncMock(return_value=[{"locationId": LOCATION_ID}]),
-        get_home_data=AsyncMock(return_value={"name": "JF23"}),
     )
 
     with patch("custom_components.homely.config_flow._get_client", return_value=client):
         token_response = await fetch_token_with_reason(hass, USERNAME, PASSWORD)
         locations = await get_location_id(hass, "token")
-        location_data = await get_data(hass, "token", LOCATION_ID)
 
     assert token_response == ({"access_token": "token"}, None)
     assert locations == [{"locationId": LOCATION_ID}]
-    assert location_data == {"name": "JF23"}
     client.fetch_token_with_reason.assert_awaited_once_with(USERNAME, PASSWORD)
     client.get_locations.assert_awaited_once_with("token")
-    client.get_home_data.assert_awaited_once_with("token", LOCATION_ID)
 
 
 async def test_user_flow_shows_initial_form(hass):

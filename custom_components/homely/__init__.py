@@ -582,12 +582,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> bo
         partner_code=partner_code,
         api_available=initial_api_available,
     )
-    record_successful_poll(runtime_data)
+    if initial_api_available:
+        # Only claim a successful poll when one actually happened. When seeding
+        # from cache the data-activity baseline (set by the dataclass default)
+        # keeps the cache-grace logic working, but the poll timestamps stay
+        # unset so diagnostics don't report a poll that never ran.
+        record_successful_poll(runtime_data)
     entry.runtime_data = runtime_data
 
     def _save_on_successful_update() -> None:
+        # Delay the write: this listener fires for every websocket event, and
+        # an immediate save per event would hammer .storage (flash wear).
         if coordinator.last_update_success and runtime_data.last_data:
-            hass.async_create_task(store.async_save(runtime_data.last_data))
+            store.async_delay_save(lambda: runtime_data.last_data, 60)
 
     entry.async_on_unload(coordinator.async_add_listener(_save_on_successful_update))
 

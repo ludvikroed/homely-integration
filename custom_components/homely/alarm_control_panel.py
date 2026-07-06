@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from homeassistant.components.alarm_control_panel import AlarmControlPanelEntity
@@ -52,7 +53,19 @@ async def async_setup_entry(
     runtime_data = get_entry_runtime_data(entry)
     coordinator = runtime_data.coordinator
     location_id = runtime_data.location_id
-    async_add_entities([HomelyAlarmPanel(coordinator, location_id)])
+
+    def _fallback_data_getter() -> dict[str, Any] | None:
+        return runtime_data.last_data
+
+    async_add_entities(
+        [
+            HomelyAlarmPanel(
+                coordinator,
+                location_id,
+                fallback_data_getter=_fallback_data_getter,
+            )
+        ]
+    )
 
 
 class HomelyAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
@@ -62,8 +75,10 @@ class HomelyAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
         self,
         coordinator: DataUpdateCoordinator[dict[str, Any]],
         location_id: str,
+        fallback_data_getter: Callable[[], dict[str, Any] | None] | None = None,
     ) -> None:
         super().__init__(coordinator)
+        self._fallback_data_getter = fallback_data_getter
         self._attr_has_entity_name = True
         self._location_id = location_id
         self._last_unknown_state: str | None = None
@@ -83,7 +98,11 @@ class HomelyAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
     @property
     def alarm_state(self) -> AlarmControlPanelState | None:
         """Return the mapped alarm state."""
-        data = self.coordinator.data or {}
+        data: Any = self.coordinator.data
+        if not data and self._fallback_data_getter is not None:
+            data = self._fallback_data_getter()
+        if not isinstance(data, dict):
+            data = {}
 
         # Top-level alarmState is present in polling responses and updated by websocket helpers.
         api_state = data.get("alarmState")

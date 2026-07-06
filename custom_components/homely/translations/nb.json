@@ -35,7 +35,10 @@
     },
     "abort": {
       "already_configured": "Dette hjemmet er allerede konfigurert",
-      "reauth_successful": "Påloggingen ble oppdatert"
+      "invalid_auth": "Feil brukernavn eller passord.",
+      "invalid_location": "Det valgte hjemmet er ikke gyldig for denne kontoen.",
+      "reauth_successful": "Påloggingen ble oppdatert",
+      "unknown": "En uventet feil oppstod"
     }
   },
   "options": {

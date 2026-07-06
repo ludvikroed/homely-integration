@@ -86,10 +86,10 @@ def build_device_topology_change_handler(
 
         updated_ids = device_id_snapshot(updated_data)
         previous_ids = runtime_data.tracked_device_ids
-        if not previous_ids:
-            runtime_data.tracked_device_ids = updated_ids
-            return
-
+        # An empty previous snapshot means setup ran without any devices (e.g.
+        # websocket-only fallback with no cached data), so the platforms were
+        # set up empty. The first poll that brings devices must still trigger
+        # a reload, otherwise device entities are never created.
         if updated_ids == previous_ids:
             return
 

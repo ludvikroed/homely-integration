@@ -244,3 +244,27 @@ def test_apply_device_state_changes_skips_bad_change_items_and_keeps_last_update
         ]
         == "2026-03-18T08:15:00Z"
     )
+
+
+def test_discover_device_sensors_creates_entity_for_null_state_value(location_data):
+    """A state key present with a null value still means the feature exists."""
+    device = deepcopy(location_data["devices"][0])
+    device["features"]["temperature"]["states"]["temperature"]["value"] = None
+
+    discovered = discover_device_sensors(device)
+    temperature = [
+        config for config in discovered if config["name"] == "temperature"
+    ]
+    assert len(temperature) == 1
+    assert temperature[0]["value"] is None
+
+
+def test_discover_device_sensors_skips_missing_value_key(location_data):
+    """A state dict without a value key must not create an entity."""
+    device = deepcopy(location_data["devices"][0])
+    del device["features"]["temperature"]["states"]["temperature"]["value"]
+
+    discovered = discover_device_sensors(device)
+    assert not [
+        config for config in discovered if config["name"] == "temperature"
+    ]

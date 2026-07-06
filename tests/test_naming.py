@@ -37,8 +37,6 @@ def test_humanize_entity_name_and_object_id():
 
     assert naming.humanize_label("battery_low") == "Battery Low"
     assert naming.humanize_label(None) == "Sensor"
-    assert naming.build_entity_name(device, "door") == "Front Door"
-    assert naming.build_entity_name(device, "battery_low") == "Front Door Battery Low"
     assert naming.build_suggested_object_id(device, "door") == "floor_1_front_door"
     assert naming.build_suggested_object_id(unknown_device, None) is None
 
