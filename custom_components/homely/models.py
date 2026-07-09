@@ -44,6 +44,10 @@ class HomelyRuntimeData:
     last_successful_poll_monotonic: float | None = None
     last_data_activity_monotonic: float = field(default_factory=monotonic)
     last_successful_poll_at: datetime | None = None
+    last_api_poll_status: str = "not_run"
+    last_api_poll_status_code: int | None = None
+    last_api_poll_detail: str | None = None
+    last_api_poll_at: datetime | None = None
     last_websocket_event_monotonic: float | None = None
     last_websocket_event_at: datetime | None = None
     last_websocket_event_type: str | None = None

@@ -6,7 +6,7 @@ import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from custom_components.homely.const import CONF_ENABLE_WEBSOCKET, CONF_LOCATION_ID
+from custom_components.homely.const import CONF_LOCATION_ID
 from custom_components.homely.models import HomelyRuntimeData
 from custom_components.homely.system_health import async_register, system_health_info
 from tests.common import LOCATION_ID, SECOND_LOCATION_ID, build_config_entry, copy_location_data
@@ -14,10 +14,7 @@ from tests.common import LOCATION_ID, SECOND_LOCATION_ID, build_config_entry, co
 
 async def test_system_health_info_summarizes_entries(hass):
     """System health should expose useful aggregate runtime information."""
-    entry_one = build_config_entry(
-        options={CONF_ENABLE_WEBSOCKET: True},
-        unique_id=LOCATION_ID,
-    )
+    entry_one = build_config_entry(unique_id=LOCATION_ID)
     entry_one.add_to_hass(hass)
     data_one = copy_location_data()
     data_one["name"] = "JF23"
@@ -38,7 +35,7 @@ async def test_system_health_info_summarizes_entries(hass):
 
     entry_two = build_config_entry(
         data_overrides={CONF_LOCATION_ID: SECOND_LOCATION_ID},
-        options={CONF_ENABLE_WEBSOCKET: False},
+        options={"enable_websocket": False},
         unique_id=SECOND_LOCATION_ID,
     )
     entry_two.add_to_hass(hass)
@@ -83,19 +80,16 @@ async def test_system_health_info_summarizes_entries(hass):
     assert info["loaded_entry_titles"] == "JF23, Cabin"
     assert info["total_devices"] == 3
     assert info["entries_with_api_available"] == 1
-    assert info["entries_with_live_updates_enabled"] == 1
+    assert info["entries_with_live_updates_enabled"] == 2
     assert info["entries_with_live_updates_connected"] == 1
-    assert info["live_update_states"] == "JF23: connected; Cabin: disabled"
+    assert info["live_update_states"] == "JF23: connected; Cabin: not_initialized"
     assert info["oldest_cached_data_age_seconds"] is not None
     assert info["oldest_successful_api_poll_age_seconds"] is not None
 
 
 async def test_system_health_info_surfaces_websocket_status_mismatches(hass):
     """System health should explain mismatches between reported and actual state."""
-    entry = build_config_entry(
-        options={CONF_ENABLE_WEBSOCKET: True},
-        unique_id=LOCATION_ID,
-    )
+    entry = build_config_entry(unique_id=LOCATION_ID)
     entry.add_to_hass(hass)
     runtime_data = HomelyRuntimeData(
         coordinator=SimpleNamespace(data=copy_location_data()),

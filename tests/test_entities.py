@@ -19,7 +19,6 @@ from custom_components.homely.all_batteries_healthy import (
     HomelyAllBatteriesHealthySensor,
     _is_true,
 )
-from custom_components.homely.binary_sensor import HomelyApiConnectionSensor
 from custom_components.homely.lock import (
     PARALLEL_UPDATES as LOCK_PARALLEL_UPDATES,
     HomelyLock,
@@ -28,7 +27,11 @@ from custom_components.homely.lock import (
     _is_lock_device,
 )
 from custom_components.homely.models import HomelyRuntimeData
-from custom_components.homely.sensor import HomelySensor, HomelyWebSocketStatusSensor
+from custom_components.homely.sensor import (
+    HomelyApiPollStatusSensor,
+    HomelySensor,
+    HomelyWebSocketStatusSensor,
+)
 from custom_components.homely.sensors.discover import discover_device_sensors
 from tests.common import LOCATION_ID, build_config_entry
 
@@ -245,24 +248,41 @@ async def test_lock_async_setup_entry_and_fallback_fields(hass, location_data):
         raise AssertionError("Expected HomeAssistantError")
 
 
-def test_api_connection_sensor_tracks_api_available_flag():
-    """Cloud API connection sensor mirrors runtime api_available and stays available."""
+def test_api_connection_sensor_reports_last_poll_status():
+    """Cloud API sensor reports the latest poll status and details."""
     coordinator = MagicMock()
     coordinator.last_update_success = False  # poll failing
     runtime_data = MagicMock()
     runtime_data.api_available = True
+    runtime_data.last_api_poll_status = "success"
+    runtime_data.last_api_poll_status_code = 200
+    runtime_data.last_api_poll_detail = None
+    runtime_data.last_api_poll_at = None
 
-    entity = HomelyApiConnectionSensor(
-        coordinator, runtime_data, "JF23", LOCATION_ID
+    entry = build_config_entry()
+    entry.runtime_data = runtime_data
+    runtime_data.last_data = {"name": "JF23"}
+    entity = HomelyApiPollStatusSensor(
+        coordinator,
+        entry,
+        LOCATION_ID,
     )
 
-    # CONNECTIVITY: on = reachable. Must report even while the poll fails.
     assert entity.available is True
-    assert entity.is_on is True
+    assert entity.native_value == "success"
 
     runtime_data.api_available = False
+    runtime_data.last_api_poll_status = "failed"
+    runtime_data.last_api_poll_status_code = 503
+    runtime_data.last_api_poll_detail = "Polling API request failed"
     assert entity.available is True
-    assert entity.is_on is False
+    assert entity.native_value == "failed_503"
+    assert "failed_503" in entity.options
+    assert entity.extra_state_attributes == {
+        "api_available": False,
+        "status_code": 503,
+        "detail": "Polling API request failed",
+    }
     assert entity.device_info["entry_type"] is DeviceEntryType.SERVICE
 
 

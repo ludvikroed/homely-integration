@@ -8,16 +8,11 @@ from typing import Any
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.homely.const import (
-    CONF_ENABLE_WEBSOCKET,
-    CONF_HOME_ID,
+    CONF_ENABLE_DEBUG_SENSORS,
     CONF_LOCATION_ID,
     CONF_PASSWORD,
-    CONF_POLL_WHEN_WEBSOCKET,
-    CONF_SCAN_INTERVAL,
     CONF_USERNAME,
-    DEFAULT_HOME_ID,
-    DEFAULT_POLL_WHEN_WEBSOCKET,
-    DEFAULT_SCAN_INTERVAL,
+    DEFAULT_ENABLE_DEBUG_SENSORS,
     DOMAIN,
 )
 
@@ -248,10 +243,7 @@ def build_config_entry(
     default_options: dict[str, Any] = {}
     if include_default_options:
         default_options = {
-            CONF_HOME_ID: DEFAULT_HOME_ID,
-            CONF_SCAN_INTERVAL: DEFAULT_SCAN_INTERVAL,
-            CONF_ENABLE_WEBSOCKET: False,
-            CONF_POLL_WHEN_WEBSOCKET: DEFAULT_POLL_WHEN_WEBSOCKET,
+            CONF_ENABLE_DEBUG_SENSORS: DEFAULT_ENABLE_DEBUG_SENSORS,
         }
     if options is not None:
         default_options.update(options)

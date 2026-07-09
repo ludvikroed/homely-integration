@@ -183,7 +183,6 @@ async def test_binary_sensor_async_setup_entry_handles_sparse_device_lists(
 
     assert [entity.unique_id for entity in collected] == [
         f"location_{LOCATION_ID}_any_battery_problem",
-        f"location_{LOCATION_ID}_api_connection",
     ]
 
     config_entry.runtime_data = HomelyRuntimeData(

@@ -5,11 +5,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, PropertyMock, patch
 
-import pytest
-
 from homeassistant import config_entries
 from homeassistant.config_entries import SOURCE_REAUTH, SOURCE_USER
-from homeassistant.data_entry_flow import InvalidData
 from homeassistant.data_entry_flow import FlowResultType
 
 from homely import HomelyClient
@@ -32,16 +29,11 @@ from custom_components.homely.config_flow import (
 )
 from custom_components.homely.const import (
     CONF_ENABLE_DEBUG_SENSORS,
-    CONF_ENABLE_WEBSOCKET,
     CONF_HOME_ID,
     CONF_LOCATION_ID,
     CONF_PENDING_IMPORT_LOCATIONS,
     CONF_PASSWORD,
-    CONF_POLL_WHEN_WEBSOCKET,
-    CONF_SCAN_INTERVAL,
     CONF_USERNAME,
-    DEFAULT_ENABLE_WEBSOCKET,
-    DEFAULT_POLL_WHEN_WEBSOCKET,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
 )
@@ -254,9 +246,7 @@ async def test_user_flow_single_location_creates_entry_with_default_options(
         CONF_LOCATION_ID: LOCATION_ID,
     }
     assert result["options"] == {
-        CONF_SCAN_INTERVAL: DEFAULT_SCAN_INTERVAL,
-        CONF_ENABLE_WEBSOCKET: DEFAULT_ENABLE_WEBSOCKET,
-        CONF_POLL_WHEN_WEBSOCKET: DEFAULT_POLL_WHEN_WEBSOCKET,
+        CONF_ENABLE_DEBUG_SENSORS: False,
     }
 
 
@@ -791,7 +781,7 @@ async def test_reauth_surfaces_invalid_auth_errors(hass):
 
 
 async def test_options_flow_updates_advanced_settings(hass):
-    """Options flow should only manage runtime-tuning settings."""
+    """Options flow should only manage optional diagnostics."""
     entry = build_config_entry()
     entry.add_to_hass(hass)
 
@@ -802,43 +792,37 @@ async def test_options_flow_updates_advanced_settings(hass):
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         user_input={
-            CONF_SCAN_INTERVAL: 30,
-            CONF_ENABLE_WEBSOCKET: True,
-            CONF_POLL_WHEN_WEBSOCKET: False,
             CONF_ENABLE_DEBUG_SENSORS: True,
         },
     )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"] == {
-        CONF_SCAN_INTERVAL: 30,
-        CONF_ENABLE_WEBSOCKET: True,
-        CONF_POLL_WHEN_WEBSOCKET: False,
         CONF_ENABLE_DEBUG_SENSORS: True,
     }
 
 
-async def test_options_flow_rejects_invalid_scan_interval(hass):
-    """Options flow schema should reject invalid scan intervals early."""
+async def test_options_flow_ignores_removed_polling_fields(hass):
+    """Removed polling/websocket fields should no longer be persisted."""
     entry = build_config_entry()
     entry.add_to_hass(hass)
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
-    with pytest.raises(InvalidData):
-        await hass.config_entries.options.async_configure(
-            result["flow_id"],
-            user_input={
-                CONF_SCAN_INTERVAL: 5,
-                CONF_ENABLE_WEBSOCKET: True,
-                CONF_POLL_WHEN_WEBSOCKET: True,
-            },
-        )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_ENABLE_DEBUG_SENSORS: False,
+        },
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"] == {CONF_ENABLE_DEBUG_SENSORS: False}
 
 
-async def test_options_flow_manual_step_shows_errors_and_coerces_defaults(hass):
-    """Direct options step handling should return a form on invalid values."""
+async def test_options_flow_manual_step_uses_existing_debug_default(hass):
+    """Direct options step handling should keep the current debug default."""
     entry = build_config_entry(
-        options={CONF_SCAN_INTERVAL: "bad"},
+        options={CONF_ENABLE_DEBUG_SENSORS: True},
     )
     entry.add_to_hass(hass)
 
@@ -848,16 +832,10 @@ async def test_options_flow_manual_step_shows_errors_and_coerces_defaults(hass):
     with patch.object(
         HomelyOptionsFlow, "config_entry", new_callable=PropertyMock, return_value=entry
     ):
-        result = await flow.async_step_init(
-            {
-                CONF_SCAN_INTERVAL: 5,
-                CONF_ENABLE_WEBSOCKET: True,
-                CONF_POLL_WHEN_WEBSOCKET: False,
-            }
-        )
+        result = await flow.async_step_init()
 
     assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {CONF_SCAN_INTERVAL: "invalid_scan_interval"}
+    assert result["step_id"] == "init"
 
 
 def test_config_flow_does_not_expose_reconfigure_step():

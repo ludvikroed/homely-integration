@@ -18,7 +18,7 @@ from custom_components.homely.sensor import (
     HomelyWebSocketStatusSensor,
     async_setup_entry,
 )
-from custom_components.homely.const import CONF_ENABLE_DEBUG_SENSORS, CONF_ENABLE_WEBSOCKET
+from custom_components.homely.const import CONF_ENABLE_DEBUG_SENSORS
 from custom_components.homely.sensors.discover import discover_device_sensors
 from tests.common import LOCATION_ID, build_config_entry
 
@@ -295,7 +295,7 @@ def test_sensor_entity_ignores_config_category(location_data):
 
 def test_websocket_status_sensor_uses_runtime_data(hass, location_data):
     """WebSocket status sensor should read status and reason from runtime state."""
-    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: True})
+    config_entry = build_config_entry()
     runtime_data = HomelyRuntimeData(
         coordinator=SimpleNamespace(data=location_data),
         access_token="access",
@@ -331,12 +331,12 @@ def test_websocket_status_sensor_uses_runtime_data(hass, location_data):
     }
 
 
-def test_websocket_status_sensor_reports_disabled_when_websocket_is_off(
+def test_websocket_status_sensor_ignores_legacy_disabled_option(
     hass,
     location_data,
 ):
-    """Status sensor should expose Disabled when websocket support is turned off."""
-    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: False})
+    """Status sensor should always report runtime websocket state."""
+    config_entry = build_config_entry(options={"enable_websocket": False})
     runtime_data = HomelyRuntimeData(
         coordinator=SimpleNamespace(data=location_data),
         access_token="access",
@@ -351,14 +351,14 @@ def test_websocket_status_sensor_reports_disabled_when_websocket_is_off(
 
     entity = HomelyWebSocketStatusSensor(runtime_data.coordinator, config_entry, LOCATION_ID)
 
-    assert entity.native_value == "disabled"
-    assert "disabled" in entity.options
+    assert entity.native_value == "not_initialized"
+    assert "disabled" not in entity.options
 
 
 async def test_runtime_timestamp_sensors_use_runtime_data(hass, location_data):
     """Runtime timestamp sensors should expose the latest poll and websocket times."""
     config_entry = build_config_entry(
-        options={CONF_ENABLE_WEBSOCKET: True, CONF_ENABLE_DEBUG_SENSORS: True}
+        options={CONF_ENABLE_DEBUG_SENSORS: True}
     )
     last_poll_at = dt_util.utcnow()
     last_ws_at = last_poll_at + timedelta(seconds=5)
@@ -396,7 +396,7 @@ async def test_sensor_async_setup_entry_creates_ws_status_and_device_sensors(
 ):
     """Sensor platform setup should create status sensor and discovered sensors."""
     config_entry = build_config_entry(
-        options={CONF_ENABLE_WEBSOCKET: True, CONF_ENABLE_DEBUG_SENSORS: True}
+        options={CONF_ENABLE_DEBUG_SENSORS: True}
     )
     config_entry.runtime_data = HomelyRuntimeData(
         coordinator=SimpleNamespace(data=location_data),
@@ -412,6 +412,7 @@ async def test_sensor_async_setup_entry_creates_ws_status_and_device_sensors(
 
     unique_ids = {entity.unique_id for entity in collected}
     assert f"location_{LOCATION_ID}_websocket_status" in unique_ids
+    assert f"location_{LOCATION_ID}_api_connection" in unique_ids
     assert f"location_{LOCATION_ID}_last_successful_poll" in unique_ids
     assert f"location_{LOCATION_ID}_last_websocket_message" in unique_ids
     assert f"location_{LOCATION_ID}_last_ws_device_update" in unique_ids
@@ -430,11 +431,11 @@ async def test_sensor_async_setup_entry_creates_ws_status_and_device_sensors(
     )
 
 
-async def test_sensor_async_setup_entry_omits_websocket_entities_when_disabled(
+async def test_sensor_async_setup_entry_keeps_ws_status_with_debug_disabled(
     hass, location_data
 ):
-    """WebSocket-only observability sensors should be omitted when disabled."""
-    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: False})
+    """Websocket status should exist even when optional debug sensors are disabled."""
+    config_entry = build_config_entry(options={"enable_websocket": False})
     config_entry.runtime_data = HomelyRuntimeData(
         coordinator=SimpleNamespace(data=location_data),
         access_token="access",
@@ -449,7 +450,8 @@ async def test_sensor_async_setup_entry_omits_websocket_entities_when_disabled(
 
     unique_ids = {entity.unique_id for entity in collected}
     assert f"location_{LOCATION_ID}_last_successful_poll" not in unique_ids
-    assert f"location_{LOCATION_ID}_websocket_status" not in unique_ids
+    assert f"location_{LOCATION_ID}_websocket_status" in unique_ids
+    assert f"location_{LOCATION_ID}_api_connection" in unique_ids
     assert f"location_{LOCATION_ID}_last_websocket_message" not in unique_ids
     assert "70b9db72-5c00-4316-9ffa-ac7bf60fcb47_sensitivitylevel" in unique_ids
 
@@ -459,7 +461,7 @@ async def test_sensor_async_setup_entry_handles_sparse_device_lists(
 ):
     """Sensor setup should ignore malformed device collections gracefully."""
     config_entry = build_config_entry(
-        options={CONF_ENABLE_WEBSOCKET: True, CONF_ENABLE_DEBUG_SENSORS: True}
+        options={CONF_ENABLE_DEBUG_SENSORS: True}
     )
     config_entry.runtime_data = HomelyRuntimeData(
         coordinator=SimpleNamespace(data={"name": "JF23", "devices": {}}),
@@ -476,6 +478,7 @@ async def test_sensor_async_setup_entry_handles_sparse_device_lists(
     assert [entity.unique_id for entity in collected] == [
         f"location_{LOCATION_ID}_last_successful_poll",
         f"location_{LOCATION_ID}_websocket_status",
+        f"location_{LOCATION_ID}_api_connection",
         f"location_{LOCATION_ID}_last_websocket_message",
         f"location_{LOCATION_ID}_last_ws_device_update",
     ]
@@ -496,13 +499,14 @@ async def test_sensor_async_setup_entry_handles_sparse_device_lists(
 
     unique_ids = {entity.unique_id for entity in collected}
     assert f"location_{LOCATION_ID}_websocket_status" in unique_ids
+    assert f"location_{LOCATION_ID}_api_connection" in unique_ids
     assert f"location_{LOCATION_ID}_last_successful_poll" in unique_ids
     assert f"location_{LOCATION_ID}_last_websocket_message" in unique_ids
     assert f"location_{LOCATION_ID}_last_ws_device_update" in unique_ids
     assert "70b9db72-5c00-4316-9ffa-ac7bf60fcb47_sensitivitylevel" in unique_ids
     assert "70b9db72-5c00-4316-9ffa-ac7bf60fcb47_temperature" in unique_ids
 
-    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: False})
+    config_entry = build_config_entry(options={"enable_websocket": False})
     config_entry.runtime_data = HomelyRuntimeData(
         coordinator=SimpleNamespace(data={"name": "JF23", "devices": {}}),
         access_token="access",
@@ -515,14 +519,17 @@ async def test_sensor_async_setup_entry_handles_sparse_device_lists(
 
     await async_setup_entry(hass, config_entry, collected.extend)
 
-    assert [entity.unique_id for entity in collected] == []
+    assert [entity.unique_id for entity in collected] == [
+        f"location_{LOCATION_ID}_websocket_status",
+        f"location_{LOCATION_ID}_api_connection",
+    ]
 
 
 async def test_websocket_status_sensor_registers_and_unregisters_listeners(
     hass, location_data
 ):
     """Status sensor should manage listener lifecycle cleanly."""
-    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: True})
+    config_entry = build_config_entry()
     runtime_data = HomelyRuntimeData(
         coordinator=SimpleNamespace(data=location_data),
         access_token="access",
@@ -555,7 +562,7 @@ async def test_websocket_status_sensor_listener_triggers_state_update(
     hass, location_data
 ):
     """Registered websocket status listeners should schedule state writes."""
-    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: True})
+    config_entry = build_config_entry()
     runtime_data = HomelyRuntimeData(
         coordinator=SimpleNamespace(data=location_data),
         access_token="access",
@@ -585,7 +592,7 @@ async def test_websocket_status_sensor_handles_missing_listener_storage(
     hass, location_data
 ):
     """Broken runtime listener storage should not crash add/remove hooks."""
-    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: True})
+    config_entry = build_config_entry()
     runtime_data = HomelyRuntimeData(
         coordinator=SimpleNamespace(data=location_data),
         access_token="access",
@@ -614,7 +621,7 @@ async def test_websocket_status_sensor_handles_missing_listener_storage(
 
 def test_websocket_status_sensor_handles_unknown_runtime_state(hass, location_data):
     """Status sensor should return Unknown on broken runtime access."""
-    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: True})
+    config_entry = build_config_entry()
     runtime_data = HomelyRuntimeData(
         coordinator=SimpleNamespace(data=location_data),
         access_token="access",
@@ -633,7 +640,7 @@ def test_websocket_status_sensor_handles_unknown_runtime_state(hass, location_da
 
 def test_runtime_timestamp_sensor_handles_getter_failures(hass, location_data):
     """Runtime timestamp sensors should tolerate missing metadata safely."""
-    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: True})
+    config_entry = build_config_entry()
     runtime_data = HomelyRuntimeData(
         coordinator=SimpleNamespace(data=location_data),
         access_token="access",

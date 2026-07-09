@@ -12,7 +12,7 @@ from homeassistant.loader import async_get_loaded_integration
 
 from homely.client import BASE_URL
 
-from .const import CONF_ENABLE_WEBSOCKET, DEFAULT_ENABLE_WEBSOCKET, DOMAIN
+from .const import DOMAIN
 from .models import HomelyRuntimeData
 from .runtime_state import cache_age_seconds, websocket_connection_state
 
@@ -60,27 +60,8 @@ def _runtime_entry_summaries(entries: list[ConfigEntry]) -> dict[str, Any]:
     api_available_count = sum(1 for runtime in runtime_entries if runtime.api_available)
     live_update_states: list[str] = []
     websocket_connected_count = 0
-    websocket_enabled_count = sum(
-        1
-        for entry in entries
-        if bool(
-            entry.options.get(
-                CONF_ENABLE_WEBSOCKET,
-                entry.data.get(CONF_ENABLE_WEBSOCKET, DEFAULT_ENABLE_WEBSOCKET),
-            )
-        )
-    )
+    websocket_enabled_count = len(entries)
     for entry in entries:
-        websocket_enabled = bool(
-            entry.options.get(
-                CONF_ENABLE_WEBSOCKET,
-                entry.data.get(CONF_ENABLE_WEBSOCKET, DEFAULT_ENABLE_WEBSOCKET),
-            )
-        )
-        if not websocket_enabled:
-            live_update_states.append(f"{entry.title}: disabled")
-            continue
-
         websocket_state = websocket_connection_state(entry.runtime_data)
         if websocket_state.connected:
             websocket_connected_count += 1

@@ -15,6 +15,7 @@ from .websocket import (
 )
 
 WEBSOCKET_WATCHDOG_RECOVERY_WINDOW_SECONDS = 30 * 60
+CACHED_DATA_GRACE_SECONDS = 7 * 24 * 60 * 60
 
 
 @dataclass(frozen=True)
@@ -224,9 +225,11 @@ def cached_data_grace_seconds(scan_interval: int) -> int:
 
     Must exceed the scan interval: cache age is roughly one scan interval by
     the time a failed poll evaluates it, so a smaller grace would mark
-    entities unavailable after a single transient failure.
+    entities unavailable after a single transient failure. Keep the grace long
+    enough to survive multi-day Homely REST API outages and Home Assistant
+    restarts while websocket live updates continue to work.
     """
-    return max(300, scan_interval * 2)
+    return max(CACHED_DATA_GRACE_SECONDS, scan_interval * 2)
 
 
 def tracked_api_device_ids(
@@ -273,12 +276,27 @@ def monotonic_age_seconds(last_monotonic: float | None) -> int | None:
     return max(0, int(monotonic() - last_monotonic))
 
 
+def record_api_poll_status(
+    runtime_data: HomelyRuntimeData,
+    status: str,
+    *,
+    status_code: int | None = None,
+    detail: str | None = None,
+) -> None:
+    """Record the status of the latest attempted REST API poll."""
+    runtime_data.last_api_poll_status = status
+    runtime_data.last_api_poll_status_code = status_code
+    runtime_data.last_api_poll_detail = detail
+    runtime_data.last_api_poll_at = dt_util.utcnow()
+
+
 def record_successful_poll(runtime_data: HomelyRuntimeData, at: float | None = None) -> None:
     """Record a successful polling refresh and data activity timestamp."""
     timestamp = monotonic() if at is None else at
     runtime_data.last_successful_poll_monotonic = timestamp
     runtime_data.last_data_activity_monotonic = timestamp
     runtime_data.last_successful_poll_at = dt_util.utcnow()
+    record_api_poll_status(runtime_data, "success", status_code=200)
 
 
 def record_websocket_event(
@@ -364,6 +382,9 @@ def runtime_observability_snapshot(runtime_data: HomelyRuntimeData) -> dict[str,
     websocket_state = websocket_connection_state(runtime_data)
     return {
         "api_available": runtime_data.api_available,
+        "last_api_poll_status": runtime_data.last_api_poll_status,
+        "last_api_poll_status_code": runtime_data.last_api_poll_status_code,
+        "last_api_poll_detail": runtime_data.last_api_poll_detail,
         "ws_status": runtime_data.ws_status,
         "ws_status_reason": runtime_data.ws_status_reason,
         "last_disconnect_reason": runtime_data.last_disconnect_reason,

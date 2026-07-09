@@ -5,12 +5,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from homeassistant.components.binary_sensor import (
-    BinarySensorDeviceClass,
-    BinarySensorEntity,
-)
+from homeassistant.components.binary_sensor import BinarySensorDeviceClass, BinarySensorEntity
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import (
@@ -92,57 +89,8 @@ async def async_setup_entry(
             api_available_getter=lambda: runtime_data.api_available,
         )
     )
-    entities.append(
-        HomelyApiConnectionSensor(
-            coordinator,
-            runtime_data,
-            str(location_name),
-            location_id,
-        )
-    )
 
     async_add_entities(entities)
-
-
-class HomelyApiConnectionSensor(CoordinatorEntity, BinarySensorEntity):
-    """Connectivity sensor for the Homely REST API (cloud polling).
-
-    Reports whether the `/home` REST poll is reaching Homely. In websocket-only
-    mode (e.g. the endpoint returning HTTP 439) this turns off, giving users a
-    state they can see and automate on, while live updates keep flowing.
-    """
-
-    def __init__(
-        self,
-        coordinator: DataUpdateCoordinator[dict[str, Any]],
-        runtime_data: Any,
-        location_name: str,
-        location_id: str | int,
-    ) -> None:
-        super().__init__(coordinator)
-        self._runtime_data = runtime_data
-        self._attr_has_entity_name = True
-        self._attr_translation_key = "api_connection"
-        self._attr_unique_id = f"location_{location_id}_api_connection"
-        self._attr_entity_category = DIAGNOSTIC_ENTITY_CATEGORY
-        self._attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, f"location_{location_id}")},
-            name=location_name,
-            manufacturer="Homely",
-            model="Homely",
-            entry_type=DeviceEntryType.SERVICE,
-        )
-
-    @property
-    def available(self) -> bool:
-        """Always available: must report API health even when the poll fails."""
-        return True
-
-    @property
-    def is_on(self) -> bool:
-        """CONNECTIVITY: on = REST API reachable."""
-        return bool(getattr(self._runtime_data, "api_available", False))
 
 
 class HomelyDeviceOnlineSensor(CoordinatorEntity, BinarySensorEntity):

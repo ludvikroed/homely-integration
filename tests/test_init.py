@@ -144,10 +144,12 @@ def test_debug_redaction_and_device_snapshot_cover_defensive_branches():
 
 
 def test_cached_data_grace_seconds_exceeds_scan_interval():
-    """Grace must exceed the scan interval so one missed poll survives."""
-    assert _cached_data_grace_seconds(30) == 300
-    assert _cached_data_grace_seconds(120) == 300
-    assert _cached_data_grace_seconds(600) == 1200
+    """Grace must survive multi-day API outages and exceed long scan intervals."""
+    seven_days = 7 * 24 * 60 * 60
+    assert _cached_data_grace_seconds(30) == seven_days
+    assert _cached_data_grace_seconds(120) == seven_days
+    assert _cached_data_grace_seconds(600) == seven_days
+    assert _cached_data_grace_seconds(8 * 24 * 60 * 60) == 16 * 24 * 60 * 60
 
 
 async def _setup_loaded_entry(
@@ -621,13 +623,14 @@ async def test_async_setup_entry_missing_configured_location_raises_not_ready(
             raise AssertionError("Expected ConfigEntryNotReady")
 
 
-async def test_async_setup_entry_missing_location_payload_raises_not_ready(
+async def test_async_setup_entry_missing_location_payload_loads_websocket_only(
     hass,
     token_response,
     location_response,
 ):
-    """Setup should fail if the first location fetch returns no data."""
+    """Setup should load with empty data if startup API polling returns no data."""
     config_entry = build_config_entry()
+    config_entry.add_to_hass(hass)
 
     with (
         patch(
@@ -642,13 +645,17 @@ async def test_async_setup_entry_missing_location_payload_raises_not_ready(
             "custom_components.homely.get_data_with_status",
             AsyncMock(return_value=(None, 500)),
         ),
+        patch.object(
+            hass.config_entries,
+            "async_forward_entry_setups",
+            AsyncMock(return_value=None),
+        ),
+        patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),
     ):
-        try:
-            await async_setup_entry(hass, config_entry)
-        except ConfigEntryNotReady:
-            pass
-        else:
-            raise AssertionError("Expected ConfigEntryNotReady")
+        assert await async_setup_entry(hass, config_entry)
+
+    assert config_entry.runtime_data.last_data == {}
+    assert config_entry.runtime_data.api_available is False
 
 
 async def test_async_remove_config_entry_device_only_allows_stale_devices(
@@ -799,20 +806,15 @@ def test_startup_debug_logging_redacts_private_device_fields(location_data, capl
     assert "**REDACTED**" in joined
 
 
-async def test_coordinator_update_method_skips_polling_when_websocket_connected(
+async def test_coordinator_update_method_polls_when_websocket_connected(
     hass,
     token_response,
     location_response,
     location_data,
     updated_location_data,
 ):
-    """Connected websocket should short-circuit polling when polling is disabled."""
-    config_entry = build_config_entry(
-        options={
-            CONF_ENABLE_WEBSOCKET: True,
-            CONF_POLL_WHEN_WEBSOCKET: False,
-        }
-    )
+    """Connected websocket should still allow the daily API poll."""
+    config_entry = build_config_entry()
     await _setup_loaded_entry(
         hass,
         config_entry,
@@ -833,12 +835,13 @@ async def test_coordinator_update_method_skips_polling_when_websocket_connected(
     )
 
     with patch(
-        "custom_components.homely.get_data_with_status", AsyncMock()
+        "custom_components.homely.get_data_with_status",
+        AsyncMock(return_value=(updated_location_data, 200)),
     ) as get_data_with_status:
         result = await runtime_data.coordinator.update_method()
 
-    assert result == runtime_data.last_data
-    get_data_with_status.assert_not_awaited()
+    assert result["alarmState"] == "ARMED_AWAY"
+    get_data_with_status.assert_awaited_once()
 
 
 async def test_coordinator_update_method_forced_refresh_bypasses_websocket_skip(
@@ -1066,26 +1069,21 @@ async def test_coordinator_update_method_swallow_websocket_reconnect_request_err
     assert result["alarmState"] == "ARMED_AWAY"
 
 
-async def test_async_setup_entry_registers_periodic_refresh_when_websocket_polling_is_disabled(
+async def test_async_setup_entry_registers_websocket_watchdog_only(
     hass,
     token_response,
     location_response,
     location_data,
     updated_location_data,
 ):
-    """Watchdog and 6-hour fallback refresh should be registered for websocket-backed entries."""
+    """The websocket watchdog should be registered without the removed 6-hour fallback."""
     tracked_intervals: list[timedelta] = []
 
     def _capture_interval(_hass, _action, interval):
         tracked_intervals.append(interval)
         return lambda: None
 
-    config_entry = build_config_entry(
-        options={
-            CONF_ENABLE_WEBSOCKET: True,
-            CONF_POLL_WHEN_WEBSOCKET: False,
-        }
-    )
+    config_entry = build_config_entry()
 
     await _setup_loaded_entry(
         hass,
@@ -1103,16 +1101,16 @@ async def test_async_setup_entry_registers_periodic_refresh_when_websocket_polli
         ),
     )
 
-    assert tracked_intervals == [timedelta(minutes=1), timedelta(hours=6)]
+    assert tracked_intervals == [timedelta(minutes=1)]
 
 
-async def test_async_setup_entry_websocket_primary_skips_initial_poll_with_cached_snapshot(
+async def test_async_setup_entry_polls_initially_even_with_cached_snapshot(
     hass,
     token_response,
     location_response,
     location_data,
 ):
-    """WebSocket-primary entries with a cached snapshot must not poll /home on restart."""
+    """Startup should attempt the API poll even when cached data exists."""
     from homeassistant.helpers.storage import Store
 
     _FakeHomelyWebSocket.reset()
@@ -1121,12 +1119,7 @@ async def test_async_setup_entry_websocket_primary_skips_initial_poll_with_cache
     store: Store = Store(hass, 1, f"homely.{LOCATION_ID}")
     await store.async_save(location_data)
 
-    config_entry = build_config_entry(
-        options={
-            CONF_ENABLE_WEBSOCKET: True,
-            CONF_POLL_WHEN_WEBSOCKET: False,
-        }
-    )
+    config_entry = build_config_entry()
     config_entry.add_to_hass(hass)
 
     with ExitStack() as stack:
@@ -1161,8 +1154,8 @@ async def test_async_setup_entry_websocket_primary_skips_initial_poll_with_cache
         assert await hass.config_entries.async_setup(config_entry.entry_id)
         await hass.async_block_till_done()
 
-    # No /home poll happened during setup; entities are seeded straight from cache.
-    get_data_with_status.assert_not_awaited()
+    # Startup still polls /home; cache is used only because this poll failed.
+    get_data_with_status.assert_awaited_once()
     runtime_data = config_entry.runtime_data
     assert runtime_data.last_data["devices"]
     assert runtime_data.coordinator.data == runtime_data.last_data
@@ -1277,14 +1270,14 @@ async def test_coordinator_poll_failure_keeps_data_when_websocket_connected(
     assert runtime_data.api_available is False
 
 
-async def test_async_setup_entry_periodic_websocket_refresh_forces_api_poll(
+async def test_async_setup_entry_websocket_watchdog_forces_api_poll(
     hass,
     token_response,
     location_response,
     location_data,
     updated_location_data,
 ):
-    """Periodic websocket-backed refreshes should force an API poll once."""
+    """A watchdog-detected websocket failure should force an API poll once."""
     periodic_callbacks: list[tuple[timedelta, Callable[[object | None], None]]] = []
 
     def _capture_interval(_hass, action, _interval):
@@ -1292,12 +1285,7 @@ async def test_async_setup_entry_periodic_websocket_refresh_forces_api_poll(
         return lambda: None
 
     _FakeHomelyWebSocket.reset()
-    config_entry = build_config_entry(
-        options={
-            CONF_ENABLE_WEBSOCKET: True,
-            CONF_POLL_WHEN_WEBSOCKET: False,
-        }
-    )
+    config_entry = build_config_entry()
 
     await _setup_loaded_entry(
         hass,
@@ -1316,19 +1304,23 @@ async def test_async_setup_entry_periodic_websocket_refresh_forces_api_poll(
     )
 
     runtime_data = config_entry.runtime_data
-    assert len(periodic_callbacks) == 2
+    assert len(periodic_callbacks) == 1
     assert runtime_data.websocket is _FakeHomelyWebSocket.instances[0]
-    periodic_poll_callback = next(
+    watchdog_callback = next(
         action
         for interval, action in periodic_callbacks
-        if interval == timedelta(hours=6)
+        if interval == timedelta(minutes=1)
     )
+    runtime_data.websocket.connected = False
 
     with patch(
         "custom_components.homely.get_data_with_status",
         AsyncMock(return_value=(updated_location_data, 200)),
-    ) as get_data_with_status:
-        periodic_poll_callback(None)
+    ) as get_data_with_status, patch(
+        "custom_components.homely.websocket_runtime.asyncio.sleep",
+        AsyncMock(return_value=None),
+    ):
+        watchdog_callback(None)
         await hass.async_block_till_done()
 
     get_data_with_status.assert_awaited_once()
@@ -1383,21 +1375,34 @@ async def test_async_setup_entry_websocket_watchdog_requests_fast_reconnect(
         for interval, action in periodic_callbacks
         if interval == timedelta(minutes=1)
     )
-    watchdog_callback(None)
-    await hass.async_block_till_done()
+    with patch(
+        "custom_components.homely.get_data_with_status",
+        AsyncMock(return_value=(updated_location_data, 200)),
+    ), patch(
+        "custom_components.homely.websocket_runtime.asyncio.sleep",
+        AsyncMock(return_value=None),
+    ):
+        watchdog_callback(None)
+        await hass.async_block_till_done()
 
     reason = "watchdog detected disconnected websocket without disconnect callback"
-    assert websocket.request_reconnect_calls == [reason]
-    assert runtime_data.ws_status == "Disconnected"
-    assert runtime_data.ws_status_reason == reason
+    assert websocket.request_reconnect_calls[0] == reason
     assert runtime_data.last_disconnect_reason == reason
     assert runtime_data.ws_watchdog_last_reason == reason
-    assert runtime_data.coordinator.async_update_listeners.call_count == 1
-    listener.assert_called_once()
+    assert runtime_data.ws_watchdog_last_action_at is not None
+    assert runtime_data.coordinator.async_update_listeners.call_count >= 1
+    assert listener.call_count >= 1
 
-    watchdog_callback(None)
-    await hass.async_block_till_done()
-    assert websocket.request_reconnect_calls == [reason]
+    with patch(
+        "custom_components.homely.get_data_with_status",
+        AsyncMock(return_value=(updated_location_data, 200)),
+    ), patch(
+        "custom_components.homely.websocket_runtime.asyncio.sleep",
+        AsyncMock(return_value=None),
+    ):
+        watchdog_callback(None)
+        await hass.async_block_till_done()
+    assert websocket.request_reconnect_calls.count(reason) == 1
 
     assert await hass.config_entries.async_unload(config_entry.entry_id)
     await hass.async_block_till_done()
@@ -1547,6 +1552,7 @@ async def test_coordinator_update_method_logs_unavailable_once_and_back_once(
             "custom_components.homely.get_data_with_status",
             AsyncMock(return_value=(updated_location_data, 200)),
         ):
+            runtime_data.force_api_refresh_once = True
             recovered = await runtime_data.coordinator.update_method()
 
     assert first == runtime_data.last_data
@@ -1561,7 +1567,7 @@ async def test_coordinator_update_method_logs_unavailable_once_and_back_once(
     ]
     assert (
         sum(
-            "Polling API request failed with transient status=503" in message
+            "Polling API request failed with status=503" in message
             for message in info_messages
         )
         == 1
@@ -1795,7 +1801,7 @@ async def test_coordinator_update_method_refresh_invalid_auth_with_stale_cache_r
     runtime_data = config_entry.runtime_data
     runtime_data.expires_at = 0
     runtime_data.websocket = None
-    runtime_data.last_data_activity_monotonic = time.monotonic() - 400
+    runtime_data.last_data_activity_monotonic = time.monotonic() - (8 * 24 * 60 * 60)
 
     with (
         patch(
@@ -1981,7 +1987,7 @@ async def test_coordinator_update_method_marks_stale_cached_data_unavailable(
     runtime_data = config_entry.runtime_data
     runtime_data.expires_at = 0
     runtime_data.websocket = None
-    runtime_data.last_data_activity_monotonic = time.monotonic() - 400
+    runtime_data.last_data_activity_monotonic = time.monotonic() - (8 * 24 * 60 * 60)
 
     with (
         patch(
@@ -2022,7 +2028,7 @@ async def test_coordinator_update_method_invalid_refresh_payload_and_stale_cache
     runtime_data = config_entry.runtime_data
     runtime_data.expires_at = 0
     runtime_data.websocket = None
-    runtime_data.last_data_activity_monotonic = time.monotonic() - 400
+    runtime_data.last_data_activity_monotonic = time.monotonic() - (8 * 24 * 60 * 60)
 
     with (
         patch(
@@ -2780,14 +2786,14 @@ async def test_coordinator_update_method_re_raises_update_failed(
             raise AssertionError("Expected UpdateFailed")
 
 
-async def test_coordinator_update_method_non_transient_empty_response_raises_update_failed(
+async def test_coordinator_update_method_non_transient_empty_response_uses_ws_cache(
     hass,
     token_response,
     location_response,
     location_data,
     updated_location_data,
 ):
-    """Non-transient empty API responses should fail."""
+    """Non-transient empty API responses should keep websocket-maintained data."""
     config_entry = build_config_entry()
     await _setup_loaded_entry(
         hass,
@@ -2803,12 +2809,10 @@ async def test_coordinator_update_method_non_transient_empty_response_raises_upd
         "custom_components.homely.get_data_with_status",
         AsyncMock(return_value=(None, 418)),
     ):
-        try:
-            await runtime_data.coordinator.update_method()
-        except UpdateFailed:
-            pass
-        else:
-            raise AssertionError("Expected UpdateFailed")
+        result = await runtime_data.coordinator.update_method()
+
+    assert result == runtime_data.last_data
+    assert runtime_data.api_available is False
 
 
 async def test_coordinator_update_method_keeps_cached_alarm_if_api_omits_it(
@@ -2895,9 +2899,17 @@ async def test_async_setup_entry_websocket_callbacks_update_runtime_and_listener
     runtime_data.coordinator.async_request_refresh = AsyncMock(return_value=None)
     listener = MagicMock()
     runtime_data.ws_status_listeners.append(listener)
+    ws.connected = False
 
-    with patch.object(hass.loop, "call_soon_threadsafe", side_effect=lambda cb: cb()):
+    with (
+        patch.object(hass.loop, "call_soon_threadsafe", side_effect=lambda cb: cb()),
+        patch(
+            "custom_components.homely.websocket_runtime.asyncio.sleep",
+            AsyncMock(return_value=None),
+        ),
+    ):
         ws.status_update_callback("Disconnected", "network error: boom")
+        await hass.async_block_till_done()
     await hass.async_block_till_done()
 
     assert runtime_data.ws_status == "Disconnected"

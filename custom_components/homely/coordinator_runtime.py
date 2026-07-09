@@ -15,6 +15,7 @@ from .models import HomelyRuntimeData
 from .runtime_state import (
     cached_data_grace_seconds,
     cached_location_data,
+    record_api_poll_status,
     record_successful_poll,
     update_runtime_websocket_state,
     websocket_is_connected,
@@ -179,7 +180,17 @@ def build_async_update_data(
                 exc_info=exc_info,
             )
 
-        def _mark_api_unavailable(message: str) -> None:
+        def _mark_api_unavailable(
+            message: str,
+            *,
+            status_code: int | None = None,
+        ) -> None:
+            record_api_poll_status(
+                runtime_data,
+                "failed",
+                status_code=status_code,
+                detail=message,
+            )
             if runtime_data.api_available:
                 runtime_data.api_available = False
                 logger.info("%s %s", message, ctx(entry_id, location_id))
@@ -613,7 +624,8 @@ def build_async_update_data(
                     # simply reports an unknown state.
                     _mark_api_unavailable(
                         "Polling API request failed with status="
-                        f"{status_code}; continuing with websocket-maintained data"
+                        f"{status_code}; continuing with websocket-maintained data",
+                        status_code=status_code,
                     )
                     update_runtime_websocket_state(runtime_data)
                     backoff_delay = _schedule_poll_backoff(
@@ -639,11 +651,13 @@ def build_async_update_data(
                     if runtime_data.last_data:
                         _mark_api_unavailable(
                             "Polling API request failed with transient status="
-                            f"{status_code}; continuing with cached data"
+                            f"{status_code}; continuing with cached data",
+                            status_code=status_code,
                         )
                         return runtime_data.last_data
                     _mark_api_unavailable(
-                        f"Polling API request failed with transient status={status_code}; no cached data available"
+                        f"Polling API request failed with transient status={status_code}; no cached data available",
+                        status_code=status_code,
                     )
                     raise UpdateFailed(
                         f"Rate limited (status={status_code}); no cached data yet"

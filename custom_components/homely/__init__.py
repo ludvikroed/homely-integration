@@ -26,17 +26,12 @@ from .api import (
 )
 from .coordinator_runtime import build_async_update_data
 from .const import (
-    CONF_ENABLE_WEBSOCKET,
     CONF_HOME_ID,
     CONF_LOCATION_ID,
     CONF_PASSWORD,
     CONF_PENDING_IMPORT_LOCATIONS,
-    CONF_POLL_WHEN_WEBSOCKET,
-    CONF_SCAN_INTERVAL,
     CONF_USERNAME,
-    DEFAULT_ENABLE_WEBSOCKET,
     DEFAULT_HOME_ID,
-    DEFAULT_POLL_WHEN_WEBSOCKET,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     OPTION_KEYS,
@@ -53,6 +48,7 @@ from .runtime_state import (
     cached_data_grace_seconds,
     current_runtime_data,
     device_id_snapshot,
+    record_api_poll_status,
     record_successful_poll,
     tracked_api_device_ids,
 )
@@ -62,7 +58,6 @@ from .websocket_runtime import (
     build_device_topology_change_handler,
     register_internet_available_listener,
     register_websocket_health_watchdog,
-    register_websocket_connected_poll_fallback,
 )
 from .ws_updates import apply_websocket_event_to_data
 
@@ -397,60 +392,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> bo
             normalized_location_id,
         )
 
-    scan_interval = int(
-        entry.options.get(
-            CONF_SCAN_INTERVAL,
-            entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
-        )
-    )
-    enable_websocket = entry.options.get(
-        CONF_ENABLE_WEBSOCKET,
-        entry.data.get(CONF_ENABLE_WEBSOCKET, DEFAULT_ENABLE_WEBSOCKET),
-    )
-    poll_when_websocket = bool(
-        entry.options.get(
-            CONF_POLL_WHEN_WEBSOCKET,
-            entry.data.get(CONF_POLL_WHEN_WEBSOCKET, DEFAULT_POLL_WHEN_WEBSOCKET),
-        )
-    )
-    # WebSocket-primary mode: websocket enabled and polling suppressed while it is
-    # connected. In this mode a cached snapshot is enough to build entities, so we
-    # can skip the rate-limit-prone initial /home poll on every restart and let the
-    # websocket carry live state.
-    websocket_primary = bool(enable_websocket) and not poll_when_websocket
+    scan_interval = DEFAULT_SCAN_INTERVAL
+    enable_websocket = True
+    poll_when_websocket = True
 
     store: Store[dict[str, Any]] = Store(hass, 1, f"homely.{normalized_location_id}")
     stored_data: dict[str, Any] | None = await store.async_load()
     if not isinstance(stored_data, dict):
         stored_data = None
 
-    stored_has_devices = bool(
-        stored_data
-        and isinstance(stored_data.get("devices"), list)
-        and stored_data.get("devices")
+    data, initial_fetch_status = await get_data_with_status(
+        hass, access_token_str, location_id
     )
-    # Only skip the initial poll once we have a usable cached topology. The first
-    # successful poll ever still has to happen to seed that cache.
-    bootstrap_from_cache = websocket_primary and stored_has_devices
-
-    if bootstrap_from_cache:
-        assert stored_data is not None  # narrowed by stored_has_devices
-        _LOGGER.info(
-            "WebSocket-primary mode with cached snapshot; skipping initial API poll "
-            "to avoid rate limits and relying on websocket for live data "
-            "entry_id=%s location_id=%s device_count=%s",
-            entry_id,
-            location_id,
-            len(stored_data["devices"]),
-        )
-        data: dict[str, Any] | None = stored_data
-        initial_fetch_status: int | None = None
-        seed_without_poll = True
-    else:
-        data, initial_fetch_status = await get_data_with_status(
-            hass, access_token_str, location_id
-        )
-        seed_without_poll = False
+    seed_without_poll = False
     initial_rate_limited = initial_fetch_status == 429
     if not data:
         # The initial /home poll returned no usable data. This happens when
@@ -588,6 +542,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> bo
         # keeps the cache-grace logic working, but the poll timestamps stay
         # unset so diagnostics don't report a poll that never ran.
         record_successful_poll(runtime_data)
+    elif initial_fetch_status is not None:
+        record_api_poll_status(
+            runtime_data,
+            "failed",
+            status_code=initial_fetch_status,
+            detail="Initial API poll failed; using cached or websocket-only data",
+        )
     entry.runtime_data = runtime_data
 
     def _save_on_successful_update() -> None:
@@ -598,92 +559,65 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> bo
 
     entry.async_on_unload(coordinator.async_add_listener(_save_on_successful_update))
 
-    if enable_websocket:
-        hass.async_create_task(
-            async_init_websocket(
-                hass=hass,
-                entry=entry,
-                location_id=location_id,
-                logger=_LOGGER,
-                runtime_data_getter=_runtime_data,
-                coordinator=coordinator,
-                enable_websocket=bool(enable_websocket),
-                poll_when_websocket=poll_when_websocket,
-                websocket_factory=HomelyWebSocket,
-                apply_websocket_event=lambda cached_data, event_data: apply_websocket_event_to_data(
-                    cached_data,
-                    event_data,
-                ),
-                ctx=_ctx,
-                json_debug=_json_debug,
-                redact_for_debug_logging=_redact_for_debug_logging,
-            )
+    hass.async_create_task(
+        async_init_websocket(
+            hass=hass,
+            entry=entry,
+            location_id=location_id,
+            logger=_LOGGER,
+            runtime_data_getter=_runtime_data,
+            coordinator=coordinator,
+            enable_websocket=bool(enable_websocket),
+            poll_when_websocket=poll_when_websocket,
+            websocket_factory=HomelyWebSocket,
+            apply_websocket_event=lambda cached_data, event_data: apply_websocket_event_to_data(
+                cached_data,
+                event_data,
+            ),
+            ctx=_ctx,
+            json_debug=_json_debug,
+            redact_for_debug_logging=_redact_for_debug_logging,
         )
+    )
+    _LOGGER.debug(
+        "WebSocket initialization scheduled entry_id=%s location_id=%s",
+        entry_id,
+        location_id,
+    )
+
+    try:
+        internet_unsub = register_internet_available_listener(
+            hass=hass,
+            entry=entry,
+            location_id=location_id,
+            logger=_LOGGER,
+            runtime_data_getter=_runtime_data,
+        )
+        if internet_unsub is None:
+            raise RuntimeError("listener registration unavailable")
+        entry.async_on_unload(internet_unsub)
+    except Exception:
         _LOGGER.debug(
-            "WebSocket initialization scheduled entry_id=%s location_id=%s",
+            "Could not register internet_available listener entry_id=%s location_id=%s",
             entry_id,
             location_id,
         )
-
-        try:
-            internet_unsub = register_internet_available_listener(
-                hass=hass,
-                entry=entry,
-                location_id=location_id,
-                logger=_LOGGER,
-                runtime_data_getter=_runtime_data,
-            )
-            if internet_unsub is None:
-                raise RuntimeError("listener registration unavailable")
-            entry.async_on_unload(internet_unsub)
-        except Exception:
-            _LOGGER.debug(
-                "Could not register internet_available listener entry_id=%s location_id=%s",
-                entry_id,
-                location_id,
-            )
-        try:
-            watchdog_unsub = register_websocket_health_watchdog(
-                hass=hass,
-                entry=entry,
-                location_id=location_id,
-                logger=_LOGGER,
-                runtime_data_getter=_runtime_data,
-                coordinator=coordinator,
-                ctx=_ctx,
-            )
-            if watchdog_unsub is None:
-                raise RuntimeError("listener registration unavailable")
-            entry.async_on_unload(watchdog_unsub)
-        except Exception:
-            _LOGGER.debug(
-                "Could not register websocket watchdog entry_id=%s location_id=%s",
-                entry_id,
-                location_id,
-            )
-        if not poll_when_websocket:
-            try:
-                periodic_poll_unsub = register_websocket_connected_poll_fallback(
-                    hass=hass,
-                    entry=entry,
-                    location_id=location_id,
-                    logger=_LOGGER,
-                    runtime_data_getter=_runtime_data,
-                    coordinator=coordinator,
-                    ctx=_ctx,
-                )
-                if periodic_poll_unsub is None:
-                    raise RuntimeError("listener registration unavailable")
-                entry.async_on_unload(periodic_poll_unsub)
-            except Exception:
-                _LOGGER.debug(
-                    "Could not register periodic websocket-backed API refresh entry_id=%s location_id=%s",
-                    entry_id,
-                    location_id,
-                )
-    else:
+    try:
+        watchdog_unsub = register_websocket_health_watchdog(
+            hass=hass,
+            entry=entry,
+            location_id=location_id,
+            logger=_LOGGER,
+            runtime_data_getter=_runtime_data,
+            coordinator=coordinator,
+            ctx=_ctx,
+        )
+        if watchdog_unsub is None:
+            raise RuntimeError("listener registration unavailable")
+        entry.async_on_unload(watchdog_unsub)
+    except Exception:
         _LOGGER.debug(
-            "WebSocket disabled in options entry_id=%s location_id=%s; using polling only",
+            "Could not register websocket watchdog entry_id=%s location_id=%s",
             entry_id,
             location_id,
         )

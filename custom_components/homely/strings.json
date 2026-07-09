@@ -45,11 +45,8 @@
     "step": {
       "init": {
         "title": "Advanced Settings",
-        "description": "Configure how the Homely integration refreshes data.",
+        "description": "Configure optional Homely diagnostics.",
         "data": {
-          "scan_interval": "Regular API polling interval (seconds, minimum 30)",
-          "enable_websocket": "Enable live updates via WebSocket",
-          "poll_when_websocket": "Continue regular API polling while live updates are active",
           "enable_debug_sensors": "Enable debug sensors (last poll, last update, reconnect count)"
         }
       }
@@ -100,9 +97,6 @@
       },
       "online": {
         "name": "Online"
-      },
-      "api_connection": {
-        "name": "Cloud API connection"
       }
     },
     "sensor": {
@@ -153,11 +147,20 @@
       "websocket_status": {
         "name": "Live update connection status",
         "state": {
-          "disabled": "Disabled",
           "not_initialized": "Not started",
           "connecting": "Connecting",
           "connected": "Connected",
           "disconnected": "Disconnected",
+          "unknown": "Unknown"
+        }
+      },
+      "api_connection": {
+        "name": "Last cloud API poll",
+        "state": {
+          "not_run": "Not run",
+          "success": "Success",
+          "failed": "Failed",
+          "failed_503": "Failed (503)",
           "unknown": "Unknown"
         }
       },

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Callable
@@ -34,6 +35,7 @@ WEBSOCKET_HEALTH_WATCHDOG_INTERVAL = timedelta(minutes=1)
 WEBSOCKET_WATCHDOG_RECONNECT_DEBOUNCE_SECONDS = 90
 WEBSOCKET_WATCHDOG_WARNING_THRESHOLD = 3
 WEBSOCKET_WATCHDOG_WARNING_DEBOUNCE_SECONDS = 10 * 60
+WEBSOCKET_API_FALLBACK_DELAY_SECONDS = 30
 
 
 class ContextBuilder(Protocol):
@@ -45,6 +47,44 @@ class ContextBuilder(Protocol):
         location_id: str | int | None = None,
         device_id: str | int | None = None,
     ) -> str: ...
+
+
+async def _delayed_api_refresh_if_websocket_still_down(
+    *,
+    delay_seconds: int,
+    expected_runtime: HomelyRuntimeData,
+    runtime_data_getter: RuntimeDataGetter,
+    coordinator: DataUpdateCoordinator[dict[str, Any]],
+    logger: logging.Logger,
+    entry_id: str,
+    location_id: str | int,
+    ctx: ContextBuilder,
+    reason: str,
+) -> None:
+    """Request an API refresh only if websocket recovery did not happen first."""
+    await asyncio.sleep(delay_seconds)
+
+    runtime_data = runtime_data_getter()
+    if runtime_data is not expected_runtime:
+        return
+    if websocket_is_connected(runtime_data):
+        logger.debug(
+            "Skipping API fallback because websocket reconnected %s reason=%s",
+            ctx(entry_id, location_id),
+            reason,
+        )
+        return
+
+    runtime_data.force_api_refresh_once = True
+    try:
+        await coordinator.async_request_refresh()
+    except Exception as err:
+        logger.debug(
+            "Delayed API fallback refresh failed %s reason=%s: %s",
+            ctx(entry_id, location_id),
+            reason,
+            err,
+        )
 
 
 def build_device_topology_change_handler(
@@ -399,7 +439,6 @@ async def async_init_websocket(
                     status == "Disconnected"
                     and previous_status != "Disconnected"
                     and enable_websocket
-                    and not poll_when_websocket
                     and reason != "manual disconnect"
                 ):
                     try:
@@ -412,11 +451,23 @@ async def async_init_websocket(
                             )
                             return
                         runtime.ws_disconnect_refresh_monotonic = now_monotonic
-                        hass.async_create_task(coordinator.async_request_refresh())
+                        hass.async_create_task(
+                            _delayed_api_refresh_if_websocket_still_down(
+                                delay_seconds=WEBSOCKET_API_FALLBACK_DELAY_SECONDS,
+                                expected_runtime=runtime,
+                                runtime_data_getter=runtime_data_getter,
+                                coordinator=coordinator,
+                                logger=logger,
+                                entry_id=entry.entry_id,
+                                location_id=location_id,
+                                ctx=ctx,
+                                reason="websocket disconnect",
+                            )
+                        )
                         logger.debug(
-                            "Requested immediate polling refresh after websocket disconnect "
-                            "%s",
+                            "Scheduled delayed polling refresh after websocket disconnect %s delay_s=%s",
                             ctx(entry.entry_id, location_id),
+                            WEBSOCKET_API_FALLBACK_DELAY_SECONDS,
                         )
                     except Exception as err:
                         logger.debug(
@@ -613,6 +664,19 @@ def register_websocket_health_watchdog(
             runtime_data,
             reason,
             at=now_monotonic,
+        )
+        hass.async_create_task(
+            _delayed_api_refresh_if_websocket_still_down(
+                delay_seconds=WEBSOCKET_API_FALLBACK_DELAY_SECONDS,
+                expected_runtime=runtime_data,
+                runtime_data_getter=runtime_data_getter,
+                coordinator=coordinator,
+                logger=logger,
+                entry_id=entry.entry_id,
+                location_id=location_id,
+                ctx=ctx,
+                reason="websocket watchdog",
+            )
         )
         _notify_runtime_watchers(runtime_data)
 

@@ -45,11 +45,8 @@
     "step": {
       "init": {
         "title": "Avanserte innstillinger",
-        "description": "Velg hvordan Homely-integrasjonen skal oppdatere data.",
+        "description": "Velg valgfrie feilsøkingssensorer for Homely.",
         "data": {
-          "scan_interval": "Vanlig API-pollingintervall (sekunder, minimum 30)",
-          "enable_websocket": "Aktiver direkteoppdateringer via WebSocket",
-          "poll_when_websocket": "Fortsett vanlig API-polling også når direkteoppdateringer er aktive",
           "enable_debug_sensors": "Aktiver feilsøkingssensorer (siste polling, siste oppdatering, tilkoblingstellere)"
         }
       }
@@ -100,9 +97,6 @@
       },
       "online": {
         "name": "Tilkoblet"
-      },
-      "api_connection": {
-        "name": "Sky-API tilkobling"
       }
     },
     "sensor": {
@@ -153,11 +147,20 @@
       "websocket_status": {
         "name": "WebSocket-status",
         "state": {
-          "disabled": "Deaktivert",
           "not_initialized": "Ikke startet",
           "connecting": "Kobler til",
           "connected": "Tilkoblet",
           "disconnected": "Frakoblet",
+          "unknown": "Ukjent"
+        }
+      },
+      "api_connection": {
+        "name": "Siste sky-API-polling",
+        "state": {
+          "not_run": "Ikke kjørt",
+          "success": "Vellykket",
+          "failed": "Feilet",
+          "failed_503": "Feilet (503)",
           "unknown": "Ukjent"
         }
       },
