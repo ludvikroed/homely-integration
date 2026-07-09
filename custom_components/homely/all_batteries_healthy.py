@@ -41,10 +41,10 @@ class HomelyAllBatteriesHealthySensor(CoordinatorEntity, BinarySensorEntity):
         coordinator: DataUpdateCoordinator[dict[str, Any]],
         location_name: str,
         location_id: str | int,
-        api_available_getter: Callable[[], bool] | None = None,
+        fallback_data_getter: Callable[[], dict[str, Any] | None] | None = None,
     ) -> None:
         super().__init__(coordinator)
-        self._api_available_getter = api_available_getter
+        self._fallback_data_getter = fallback_data_getter
         self._attr_has_entity_name = True
         self._attr_translation_key = "any_battery_problem"
         self._attr_unique_id = battery_problem_unique_id(location_id)
@@ -61,20 +61,18 @@ class HomelyAllBatteriesHealthySensor(CoordinatorEntity, BinarySensorEntity):
 
     @property
     def available(self) -> bool:
-        """Return False when coordinator has no data or REST polling is down.
-
-        Battery state is only carried by the (currently fragile) REST poll, so
-        when polling is unavailable (e.g. websocket-only mode) this aggregate
-        must not report a stale/empty "all healthy" — it goes unavailable.
-        """
-        if self._api_available_getter is not None and not self._api_available_getter():
-            return False
-        return super().available and isinstance(self.coordinator.data, dict)
+        """Return whether there is a location snapshot to aggregate."""
+        data = self._location_data()
+        return (
+            super().available
+            and isinstance(data, dict)
+            and isinstance(data.get("devices"), list)
+        )
 
     @property
     def is_on(self) -> bool:
         """Return True when any device reports battery issue."""
-        data = self.coordinator.data or {}
+        data = self._location_data() or {}
         devices = data.get("devices", [])
         if not isinstance(devices, list):
             return False
@@ -113,3 +111,13 @@ class HomelyAllBatteriesHealthySensor(CoordinatorEntity, BinarySensorEntity):
             ):
                 return True
         return False
+
+    def _location_data(self) -> dict[str, Any] | None:
+        """Return current data, falling back to the last stored snapshot."""
+        data = self.coordinator.data
+        if isinstance(data, dict):
+            return data
+        if self._fallback_data_getter is None:
+            return None
+        fallback_data = self._fallback_data_getter()
+        return fallback_data if isinstance(fallback_data, dict) else None

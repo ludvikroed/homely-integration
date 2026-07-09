@@ -215,13 +215,6 @@ class HomelyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     _reauth_entry: config_entries.ConfigEntry | None = None
 
     @staticmethod
-    def async_get_options_flow(
-        config_entry: config_entries.ConfigEntry,
-    ) -> HomelyOptionsFlow:
-        """Get the options flow for this handler."""
-        return HomelyOptionsFlow()
-
-    @staticmethod
     def _build_user_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
         """Build user-step schema."""
         from homeassistant.helpers import selector
@@ -559,56 +552,4 @@ class HomelyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 }
             ),
             errors=errors,
-        )
-
-class HomelyOptionsFlow(config_entries.OptionsFlow):
-    """Handle options flow for Homely Alarm."""
-
-    @staticmethod
-    def _build_options_schema(
-        enable_debug_sensors: bool,
-    ) -> vol.Schema:
-        """Build options schema with supplied defaults."""
-        from homeassistant.helpers import selector
-
-        return vol.Schema(
-            {
-                vol.Optional(
-                    CONF_ENABLE_DEBUG_SENSORS,
-                    default=enable_debug_sensors,
-                ): selector.BooleanSelector(),
-            }
-        )
-
-    async def async_step_init(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Manage advanced runtime options."""
-        enable_debug_sensors = bool(
-            self.config_entry.options.get(
-                CONF_ENABLE_DEBUG_SENSORS,
-                self.config_entry.data.get(
-                    CONF_ENABLE_DEBUG_SENSORS,
-                    DEFAULT_ENABLE_DEBUG_SENSORS,
-                ),
-            )
-        )
-
-        if user_input is not None:
-            enable_debug_sensors = bool(
-                user_input.get(CONF_ENABLE_DEBUG_SENSORS, enable_debug_sensors)
-            )
-
-            return self.async_create_entry(
-                title="",
-                data={
-                    CONF_ENABLE_DEBUG_SENSORS: enable_debug_sensors,
-                },
-            )
-
-        return self.async_show_form(
-            step_id="init",
-            data_schema=self._build_options_schema(
-                enable_debug_sensors,
-            ),
         )

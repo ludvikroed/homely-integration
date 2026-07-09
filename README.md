@@ -10,13 +10,7 @@
 
 Looking for practical details, troubleshooting, and behavior notes? See [documentation.md](documentation.md).
 
-A unofficial Home Assistant integration that connects your Homely alarm system to Home Assistant using the Homely API, providing read-only, real-time monitoring of your alarm and supported devices.
-
-## ⚠️ Integration is currently partially broken
-
-Around 08/06 Homely's API stopped working. The integration needs it at startup to create devices, but after that runs on live updates (WebSocket), which still work — so alarm status keeps updating.
-
-The last alarm status is saved and restored on restart, so it shows right away. It's only blank on the very first setup before any event — then **turn your alarm on and off once to populate it.** If the alarm changes while Home Assistant is off, the status updates on the next event.
+An unofficial Home Assistant integration that connects your Homely alarm system to Home Assistant. It uses WebSocket live updates for alarm changes and the Homely cloud API for device snapshots and sensor data.
 
 ## Installation & Setup
 
@@ -42,14 +36,13 @@ Download the latest release, copy the `homely` folder to `/config/custom_compone
 
 ⭐ If you find this integration useful, please consider giving it a star on [GitHub](https://github.com/ludvikroed/homely-integration)! ⭐
 
-#### Advanced Configuration
+#### Runtime behavior
 
-After setup, open the integration options to adjust:
+WebSocket live updates are always enabled. The integration polls the Homely cloud API at startup, once every 6 hours, and after WebSocket failures if the WebSocket does not reconnect quickly.
 
-- **Polling interval**: Adjust API polling frequency in seconds as a backup for WebSocket updates
-  Default is 180 seconds and the minimum is 30 seconds.
-- **WebSocket toggle**: Enable or disable instant updates
-- **Polling while WebSocket is connected**: Optional. If disabled, API polling pauses while WebSocket is connected, does a safety poll every 6 hours, and resumes automatically if the WebSocket disconnects
+The alarm entity keeps showing the last known alarm state from cached data after a Home Assistant restart. The alarm entity also exposes attributes for the last known disarm event when Homely sends that information, including `last_disarmed_by`, `last_disarmed_at`, `last_disarmed_user_id`, `last_disarmed_event_id`, and `last_disarmed_device_id`.
+
+The `Last cloud API poll` sensor shows the result of the most recent API poll. If the API fails, it can show values such as `failed_429` or `failed_503` and include the error code as an attribute. After API errors, the integration retries with backoff, starting after 3 minutes and increasing up to 6 hours.
 
 For deeper details and value references, including sensor status values, see [documentation.md](documentation.md).
 

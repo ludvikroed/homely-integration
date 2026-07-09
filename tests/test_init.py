@@ -164,6 +164,12 @@ async def _setup_loaded_entry(
     """Helper to load a Homely config entry with mocked API responses."""
     config_entry.add_to_hass(hass)
     with ExitStack() as stack:
+        retry_delays: list[float] = []
+
+        def _capture_retry_delay(_hass, delay, _action):
+            retry_delays.append(delay)
+            return lambda: None
+
         stack.enter_context(
             patch(
                 "custom_components.homely.fetch_token_with_reason",
@@ -1122,6 +1128,12 @@ async def test_async_setup_entry_polls_initially_even_with_cached_snapshot(
     config_entry = build_config_entry()
     config_entry.add_to_hass(hass)
 
+    retry_delays: list[float] = []
+
+    def _capture_retry_delay(_hass, delay, _action):
+        retry_delays.append(delay)
+        return lambda: None
+
     with ExitStack() as stack:
         stack.enter_context(
             patch(
@@ -1151,6 +1163,12 @@ async def test_async_setup_entry_polls_initially_even_with_cached_snapshot(
         stack.enter_context(
             patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket)
         )
+        stack.enter_context(
+            patch(
+                "custom_components.homely.coordinator_runtime.async_call_later",
+                side_effect=_capture_retry_delay,
+            )
+        )
         assert await hass.config_entries.async_setup(config_entry.entry_id)
         await hass.async_block_till_done()
 
@@ -1159,6 +1177,9 @@ async def test_async_setup_entry_polls_initially_even_with_cached_snapshot(
     runtime_data = config_entry.runtime_data
     assert runtime_data.last_data["devices"]
     assert runtime_data.coordinator.data == runtime_data.last_data
+    assert retry_delays == [180]
+    assert runtime_data.next_api_retry_status_code == 429
+    assert runtime_data.next_api_retry_delay_seconds == 180
 
 
 async def test_async_setup_entry_loads_without_initial_poll_when_api_broken(
@@ -1178,6 +1199,12 @@ async def test_async_setup_entry_loads_without_initial_poll_when_api_broken(
     config_entry.add_to_hass(hass)
 
     with ExitStack() as stack:
+        retry_delays: list[float] = []
+
+        def _capture_retry_delay(_hass, delay, _action):
+            retry_delays.append(delay)
+            return lambda: None
+
         stack.enter_context(
             patch(
                 "custom_components.homely.fetch_token_with_reason",
@@ -1205,6 +1232,12 @@ async def test_async_setup_entry_loads_without_initial_poll_when_api_broken(
         )
         stack.enter_context(
             patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket)
+        )
+        stack.enter_context(
+            patch(
+                "custom_components.homely.coordinator_runtime.async_call_later",
+                side_effect=_capture_retry_delay,
+            )
         )
         assert await hass.config_entries.async_setup(config_entry.entry_id)
         await hass.async_block_till_done()
@@ -1496,8 +1529,20 @@ async def test_coordinator_backs_off_polling_after_failure_while_websocket_conne
     websocket = _FakeHomelyWebSocket.instances[0]
     websocket.connected = True  # healthy ws carries live data
 
-    getter = AsyncMock(return_value=(None, 429))
-    with patch("custom_components.homely.get_data_with_status", getter):
+    retry_delays: list[float] = []
+
+    def _capture_retry_delay(_hass, delay, _action):
+        retry_delays.append(delay)
+        return lambda: None
+
+    getter = AsyncMock(return_value=(None, 503))
+    with (
+        patch("custom_components.homely.get_data_with_status", getter),
+        patch(
+            "custom_components.homely.coordinator_runtime.async_call_later",
+            side_effect=_capture_retry_delay,
+        ),
+    ):
         first = await runtime_data.coordinator.update_method()
         # Backoff window is now in the future, so the next poll skips the API.
         second = await runtime_data.coordinator.update_method()
@@ -1506,6 +1551,9 @@ async def test_coordinator_backs_off_polling_after_failure_while_websocket_conne
     assert second == runtime_data.last_data
     assert runtime_data.poll_backoff_level == 1  # only the first failure advanced it
     assert getter.await_count == 1  # the second poll did not hit the API
+    assert retry_delays == [180]
+    assert runtime_data.next_api_retry_status_code == 503
+    assert runtime_data.next_api_retry_delay_seconds == 180
 
     # A forced refresh bypasses the backoff; a success resets it.
     runtime_data.force_api_refresh_once = True
@@ -1518,6 +1566,9 @@ async def test_coordinator_backs_off_polling_after_failure_while_websocket_conne
     assert recovered["alarmState"] == "ARMED_AWAY"
     assert runtime_data.poll_backoff_level == 0
     assert runtime_data.poll_backoff_until_monotonic == float("-inf")
+    assert runtime_data.next_api_retry_at is None
+    assert runtime_data.next_api_retry_status_code is None
+    assert runtime_data.next_api_retry_delay_seconds is None
 
 
 async def test_coordinator_update_method_logs_unavailable_once_and_back_once(
@@ -3469,6 +3520,12 @@ async def test_seeded_setup_does_not_fake_a_successful_poll(
     )
     config_entry.add_to_hass(hass)
 
+    retry_delays: list[float] = []
+
+    def _capture_retry_delay(_hass, delay, _action):
+        retry_delays.append(delay)
+        return lambda: None
+
     with ExitStack() as stack:
         stack.enter_context(
             patch(
@@ -3498,6 +3555,12 @@ async def test_seeded_setup_does_not_fake_a_successful_poll(
         stack.enter_context(
             patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket)
         )
+        stack.enter_context(
+            patch(
+                "custom_components.homely.coordinator_runtime.async_call_later",
+                side_effect=_capture_retry_delay,
+            )
+        )
         assert await hass.config_entries.async_setup(config_entry.entry_id)
         await hass.async_block_till_done()
 
@@ -3506,6 +3569,9 @@ async def test_seeded_setup_does_not_fake_a_successful_poll(
     assert runtime_data.last_successful_poll_monotonic is None
     # Cache grace still works from the data-activity baseline.
     assert runtime_data.last_data_activity_monotonic > 0
+    assert retry_delays == [180]
+    assert runtime_data.next_api_retry_status_code == 429
+    assert runtime_data.next_api_retry_delay_seconds == 180
 
 
 async def test_coordinator_listener_uses_delayed_store_save(

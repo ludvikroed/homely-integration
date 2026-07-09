@@ -41,21 +41,6 @@
       "unknown": "En uventet feil oppstod"
     }
   },
-  "options": {
-    "step": {
-      "init": {
-        "title": "Avanserte innstillinger",
-        "description": "Velg valgfrie feilsøkingssensorer for Homely.",
-        "data": {
-          "enable_debug_sensors": "Aktiver feilsøkingssensorer (siste polling, siste oppdatering, tilkoblingstellere)"
-        }
-      }
-    },
-    "error": {
-      "invalid_scan_interval": "Oppdateringsintervallet må være 30 sekunder eller høyere.",
-      "unknown": "Det oppstod en uventet feil"
-    }
-  },
   "entity": {
     "alarm_control_panel": {},
     "binary_sensor": {
@@ -160,6 +145,7 @@
           "not_run": "Ikke kjørt",
           "success": "Vellykket",
           "failed": "Feilet",
+          "failed_429": "Feilet (429)",
           "failed_503": "Feilet (503)",
           "unknown": "Ukjent"
         }

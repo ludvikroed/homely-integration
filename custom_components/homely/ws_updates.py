@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .runtime_state import LAST_DISARMED_CACHE_KEY
+
 
 def _normalize_event_type(event_type: Any) -> str | None:
     """Normalize websocket event type names to kebab-case."""
@@ -30,6 +32,39 @@ def ensure_alarm_root(data_dict: dict[str, Any]) -> dict[str, Any]:
     alarm_feature = _ensure_nested_dict(features, "alarm")
     states = _ensure_nested_dict(alarm_feature, "states")
     return _ensure_nested_dict(states, "alarm")
+
+
+def _event_type_and_payload(event_data: dict[str, Any]) -> tuple[str | None, dict[str, Any]]:
+    """Return normalized event type and payload from known websocket shapes."""
+    raw_event_type = event_data.get("type") or event_data.get("event")
+    payload = event_data.get("data")
+    if not isinstance(payload, dict):
+        payload = event_data.get("payload")
+
+    args = event_data.get("args")
+    if isinstance(args, list):
+        for item in args:
+            if not isinstance(item, dict):
+                continue
+            arg_type = item.get("type") or item.get("event")
+            arg_payload = item.get("data")
+            if isinstance(arg_payload, dict):
+                raw_event_type = arg_type or raw_event_type
+                payload = arg_payload
+                break
+
+    return _normalize_event_type(raw_event_type), payload if isinstance(payload, dict) else {}
+
+
+def _last_disarmed_details(payload: dict[str, Any]) -> dict[str, Any]:
+    """Build stable metadata for the last disarm event."""
+    return {
+        "user_name": payload.get("userName"),
+        "user_id": payload.get("userId"),
+        "timestamp": payload.get("timestamp"),
+        "event_id": payload.get("eventId"),
+        "device_id": payload.get("deviceId"),
+    }
 
 
 def apply_device_state_changes(
@@ -97,13 +132,7 @@ def apply_websocket_event_to_data(
     event_data: dict[str, Any],
 ) -> dict[str, Any]:
     """Apply a websocket event to cached data and return update details."""
-    raw_event_type = event_data.get("type") or event_data.get("event")
-    event_type = _normalize_event_type(raw_event_type)
-    payload = event_data.get("data")
-    if not isinstance(payload, dict):
-        payload = event_data.get("payload")
-    if not isinstance(payload, dict):
-        payload = {}
+    event_type, payload = _event_type_and_payload(event_data)
 
     result: dict[str, Any] = {
         "event_type": event_type,
@@ -120,6 +149,10 @@ def apply_websocket_event_to_data(
             alarm_state_dict = ensure_alarm_root(data_dict)
             alarm_state_dict["value"] = alarm_state
             data_dict["alarmState"] = alarm_state
+            if str(alarm_state).upper() == "DISARMED":
+                last_disarmed = _last_disarmed_details(payload)
+                data_dict[LAST_DISARMED_CACHE_KEY] = last_disarmed
+                result["last_disarmed"] = last_disarmed
         result["updated"] = alarm_state is not None
         result["alarm_state"] = alarm_state
         return result

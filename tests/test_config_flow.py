@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, PropertyMock, patch
+from unittest.mock import AsyncMock, patch
 
 from homeassistant import config_entries
 from homeassistant.config_entries import SOURCE_REAUTH, SOURCE_USER
@@ -13,7 +13,6 @@ from homely import HomelyClient
 
 from custom_components.homely.config_flow import (
     HomelyConfigFlow,
-    HomelyOptionsFlow,
     LOCATION_SELECTION_ALL,
     _coerce_scan_interval,
     _entry_home_id,
@@ -780,62 +779,9 @@ async def test_reauth_surfaces_invalid_auth_errors(hass):
     assert result["errors"] == {"base": "invalid_auth"}
 
 
-async def test_options_flow_updates_advanced_settings(hass):
-    """Options flow should only manage optional diagnostics."""
-    entry = build_config_entry()
-    entry.add_to_hass(hass)
-
-    result = await hass.config_entries.options.async_init(entry.entry_id)
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "init"
-
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"],
-        user_input={
-            CONF_ENABLE_DEBUG_SENSORS: True,
-        },
-    )
-
-    assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["data"] == {
-        CONF_ENABLE_DEBUG_SENSORS: True,
-    }
-
-
-async def test_options_flow_ignores_removed_polling_fields(hass):
-    """Removed polling/websocket fields should no longer be persisted."""
-    entry = build_config_entry()
-    entry.add_to_hass(hass)
-
-    result = await hass.config_entries.options.async_init(entry.entry_id)
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"],
-        user_input={
-            CONF_ENABLE_DEBUG_SENSORS: False,
-        },
-    )
-
-    assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["data"] == {CONF_ENABLE_DEBUG_SENSORS: False}
-
-
-async def test_options_flow_manual_step_uses_existing_debug_default(hass):
-    """Direct options step handling should keep the current debug default."""
-    entry = build_config_entry(
-        options={CONF_ENABLE_DEBUG_SENSORS: True},
-    )
-    entry.add_to_hass(hass)
-
-    flow = HomelyOptionsFlow()
-    flow.hass = hass
-
-    with patch.object(
-        HomelyOptionsFlow, "config_entry", new_callable=PropertyMock, return_value=entry
-    ):
-        result = await flow.async_step_init()
-
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "init"
+def test_config_flow_does_not_expose_options_flow():
+    """Options should not be changeable after setup."""
+    assert "async_get_options_flow" not in HomelyConfigFlow.__dict__
 
 
 def test_config_flow_does_not_expose_reconfigure_step():

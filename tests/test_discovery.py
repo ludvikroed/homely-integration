@@ -166,6 +166,43 @@ def test_apply_websocket_event_updates_alarm_state(location_data):
     )
 
 
+def test_apply_websocket_event_tracks_last_disarmed_user(location_data):
+    """DISARMED websocket events should expose the user from args payloads."""
+    result = apply_websocket_event_to_data(
+        location_data,
+        {
+            "time": "2026-07-09T20:14:33.478879+00:00",
+            "event": "event",
+            "args": [
+                {
+                    "type": "alarm-state-changed",
+                    "data": {
+                        "locationId": "32cd1f1d-6065-4878-bb1f-ed1aeca5a244",
+                        "state": "DISARMED",
+                        "timestamp": "2026-07-09T20:14:33.429Z",
+                        "userId": "c3da25b6-c74a-4425-ab9c-3257c67711e3",
+                        "userName": "Ingrid Blichfeldt",
+                        "eventId": 1999,
+                        "deviceId": "035b5e37-5eb5-426e-8fe6-ef31c91850af",
+                    },
+                }
+            ],
+        },
+    )
+
+    assert result["event_type"] == "alarm-state-changed"
+    assert result["updated"] is True
+    assert location_data["alarmState"] == "DISARMED"
+    assert result["last_disarmed"] == {
+        "user_name": "Ingrid Blichfeldt",
+        "user_id": "c3da25b6-c74a-4425-ab9c-3257c67711e3",
+        "timestamp": "2026-07-09T20:14:33.429Z",
+        "event_id": 1999,
+        "device_id": "035b5e37-5eb5-426e-8fe6-ef31c91850af",
+    }
+    assert location_data["lastDisarmedBy"] == result["last_disarmed"]
+
+
 def test_apply_websocket_event_updates_device_state(location_data):
     """Device websocket events should update the matching cached state."""
     result = apply_websocket_event_to_data(

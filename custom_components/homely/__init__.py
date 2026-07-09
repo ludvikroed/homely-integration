@@ -24,7 +24,7 @@ from .api import (
     get_data_with_status,
     get_location_id,
 )
-from .coordinator_runtime import build_async_update_data
+from .coordinator_runtime import build_async_update_data, schedule_api_error_retry
 from .const import (
     CONF_HOME_ID,
     CONF_LOCATION_ID,
@@ -48,7 +48,9 @@ from .runtime_state import (
     cached_data_grace_seconds,
     current_runtime_data,
     device_id_snapshot,
+    LAST_DISARMED_CACHE_KEY,
     record_api_poll_status,
+    record_last_disarmed,
     record_successful_poll,
     tracked_api_device_ids,
 )
@@ -536,18 +538,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> bo
         partner_code=partner_code,
         api_available=initial_api_available,
     )
+    record_last_disarmed(runtime_data, data.get(LAST_DISARMED_CACHE_KEY))
     if initial_api_available:
         # Only claim a successful poll when one actually happened. When seeding
         # from cache the data-activity baseline (set by the dataclass default)
         # keeps the cache-grace logic working, but the poll timestamps stay
         # unset so diagnostics don't report a poll that never ran.
         record_successful_poll(runtime_data)
-    elif initial_fetch_status is not None:
+    else:
         record_api_poll_status(
             runtime_data,
             "failed",
             status_code=initial_fetch_status,
             detail="Initial API poll failed; using cached or websocket-only data",
+        )
+        schedule_api_error_retry(
+            hass=hass,
+            runtime_data=runtime_data,
+            runtime_data_getter=_runtime_data,
+            logger=_LOGGER,
+            entry_id=entry_id,
+            location_id=location_id,
+            ctx=_ctx,
+            status_code=initial_fetch_status,
         )
     entry.runtime_data = runtime_data
 
@@ -725,6 +738,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> b
     )
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
+        retry_unsub = (
+            entry_data.api_retry_unsub if entry_data is not None else None
+        )
+        if callable(retry_unsub):
+            retry_unsub()
+            entry_data.api_retry_unsub = None
         ws = entry_data.websocket if entry_data is not None else None
         if ws:
             disconnect = getattr(ws, "disconnect", None)

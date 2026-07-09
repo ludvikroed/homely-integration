@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import logging
 from copy import deepcopy
+from datetime import timedelta
 from unittest.mock import MagicMock
 
 from homeassistant.components.alarm_control_panel.const import AlarmControlPanelState
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceEntryType
+from homeassistant.util import dt as dt_util
 
 from custom_components.homely.alarm_control_panel import (
     PARALLEL_UPDATES as ALARM_PARALLEL_UPDATES,
@@ -52,6 +54,34 @@ def test_alarm_panel_maps_known_alarm_states(location_data):
 
     coordinator.data["alarmState"] = "ARMED_AWAY_PENDING"
     assert entity.alarm_state is AlarmControlPanelState.ARMING
+
+
+def test_alarm_panel_exposes_last_disarmed_attributes(location_data):
+    """Alarm entity should expose metadata from the last DISARMED event."""
+    coordinator = MagicMock()
+    coordinator.data = location_data
+    runtime_data = HomelyRuntimeData(
+        coordinator=coordinator,
+        access_token="access",
+        refresh_token="refresh",
+        expires_at=0,
+        location_id=LOCATION_ID,
+        last_data=location_data,
+        last_disarmed_by="Ingrid Blichfeldt",
+        last_disarmed_user_id="c3da25b6-c74a-4425-ab9c-3257c67711e3",
+        last_disarmed_at="2026-07-09T20:14:33.429Z",
+        last_disarmed_event_id=1999,
+        last_disarmed_device_id="035b5e37-5eb5-426e-8fe6-ef31c91850af",
+    )
+    entity = HomelyAlarmPanel(coordinator, LOCATION_ID, runtime_data=runtime_data)
+
+    assert entity.extra_state_attributes == {
+        "last_disarmed_by": "Ingrid Blichfeldt",
+        "last_disarmed_user_id": "c3da25b6-c74a-4425-ab9c-3257c67711e3",
+        "last_disarmed_at": "2026-07-09T20:14:33.429Z",
+        "last_disarmed_event_id": 1999,
+        "last_disarmed_device_id": "035b5e37-5eb5-426e-8fe6-ef31c91850af",
+    }
 
 
 def test_alarm_panel_uses_nested_fallback_and_handles_unknown_state(
@@ -258,6 +288,9 @@ def test_api_connection_sensor_reports_last_poll_status():
     runtime_data.last_api_poll_status_code = 200
     runtime_data.last_api_poll_detail = None
     runtime_data.last_api_poll_at = None
+    runtime_data.next_api_retry_at = None
+    runtime_data.next_api_retry_status_code = None
+    runtime_data.next_api_retry_delay_seconds = None
 
     entry = build_config_entry()
     entry.runtime_data = runtime_data
@@ -273,41 +306,49 @@ def test_api_connection_sensor_reports_last_poll_status():
 
     runtime_data.api_available = False
     runtime_data.last_api_poll_status = "failed"
-    runtime_data.last_api_poll_status_code = 503
+    runtime_data.last_api_poll_status_code = 429
     runtime_data.last_api_poll_detail = "Polling API request failed"
+    runtime_data.next_api_retry_at = dt_util.utcnow() + timedelta(minutes=3)
+    runtime_data.next_api_retry_status_code = 429
+    runtime_data.next_api_retry_delay_seconds = 180
     assert entity.available is True
-    assert entity.native_value == "failed_503"
-    assert "failed_503" in entity.options
-    assert entity.extra_state_attributes == {
-        "api_available": False,
-        "status_code": 503,
+    assert entity.native_value == "failed_429"
+    assert "failed_429" in entity.options
+    attrs = entity.extra_state_attributes
+    assert attrs is not None
+    assert attrs == {
+        "status_code": 429,
+        "last_error_code": 429,
         "detail": "Polling API request failed",
+        "next_retry_at": runtime_data.next_api_retry_at,
+        "retry_status_code": 429,
+        "retry_delay_seconds": 180,
     }
     assert entity.device_info["entry_type"] is DeviceEntryType.SERVICE
 
 
-def test_all_batteries_healthy_sensor_unavailable_when_api_polling_down(location_data):
-    """Aggregate battery sensor goes unavailable in websocket-only mode.
-
-    Battery state only comes from the REST poll; when polling is down the
-    aggregate must not report a stale/empty "all healthy".
-    """
+def test_all_batteries_healthy_sensor_uses_cached_snapshot_when_poll_data_missing(
+    location_data,
+):
+    """Aggregate battery sensor should keep reporting from cached location data."""
     coordinator = MagicMock()
-    coordinator.data = location_data
+    coordinator.data = None
     coordinator.last_update_success = True
 
-    api_available = {"value": True}
     entity = HomelyAllBatteriesHealthySensor(
         coordinator,
         "JF23",
         LOCATION_ID,
-        api_available_getter=lambda: api_available["value"],
+        fallback_data_getter=lambda: location_data,
     )
 
     assert entity.available is True
+    assert entity.is_on is False
 
-    api_available["value"] = False
-    assert entity.available is False
+    location_data["devices"][2]["features"]["report"]["states"]["lowbat"][
+        "value"
+    ] = True
+    assert entity.is_on is True
 
 
 def test_all_batteries_healthy_sensor_aggregates_battery_problems(location_data):

@@ -16,6 +16,7 @@ from .websocket import (
 
 WEBSOCKET_WATCHDOG_RECOVERY_WINDOW_SECONDS = 30 * 60
 CACHED_DATA_GRACE_SECONDS = 7 * 24 * 60 * 60
+LAST_DISARMED_CACHE_KEY = "lastDisarmedBy"
 
 
 @dataclass(frozen=True)
@@ -317,6 +318,40 @@ def record_websocket_event(
         runtime_data.last_data_activity_monotonic = timestamp
 
 
+def record_last_disarmed(
+    runtime_data: HomelyRuntimeData,
+    details: dict[str, Any] | None,
+) -> None:
+    """Record details for the last DISARMED alarm event."""
+    if not isinstance(details, dict):
+        return
+
+    user_name = details.get("user_name")
+    if user_name is None:
+        user_name = details.get("userName")
+    runtime_data.last_disarmed_by = str(user_name) if user_name else None
+
+    user_id = details.get("user_id")
+    if user_id is None:
+        user_id = details.get("userId")
+    runtime_data.last_disarmed_user_id = str(user_id) if user_id else None
+
+    disarmed_at = details.get("timestamp")
+    if disarmed_at is None:
+        disarmed_at = details.get("time")
+    runtime_data.last_disarmed_at = str(disarmed_at) if disarmed_at else None
+
+    event_id = details.get("event_id")
+    if event_id is None:
+        event_id = details.get("eventId")
+    runtime_data.last_disarmed_event_id = event_id
+
+    device_id = details.get("device_id")
+    if device_id is None:
+        device_id = details.get("deviceId")
+    runtime_data.last_disarmed_device_id = str(device_id) if device_id else None
+
+
 def _prune_watchdog_recovery_history(
     runtime_data: HomelyRuntimeData,
     *,
@@ -385,6 +420,9 @@ def runtime_observability_snapshot(runtime_data: HomelyRuntimeData) -> dict[str,
         "last_api_poll_status": runtime_data.last_api_poll_status,
         "last_api_poll_status_code": runtime_data.last_api_poll_status_code,
         "last_api_poll_detail": runtime_data.last_api_poll_detail,
+        "next_api_retry_at": runtime_data.next_api_retry_at,
+        "next_api_retry_status_code": runtime_data.next_api_retry_status_code,
+        "next_api_retry_delay_seconds": runtime_data.next_api_retry_delay_seconds,
         "ws_status": runtime_data.ws_status,
         "ws_status_reason": runtime_data.ws_status_reason,
         "last_disconnect_reason": runtime_data.last_disconnect_reason,

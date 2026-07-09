@@ -86,7 +86,7 @@ async def async_setup_entry(
             coordinator,
             str(location_name),
             location_id,
-            api_available_getter=lambda: runtime_data.api_available,
+            fallback_data_getter=_last_data,
         )
     )
 

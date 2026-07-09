@@ -48,10 +48,19 @@ class HomelyRuntimeData:
     last_api_poll_status_code: int | None = None
     last_api_poll_detail: str | None = None
     last_api_poll_at: datetime | None = None
+    next_api_retry_at: datetime | None = None
+    next_api_retry_status_code: int | None = None
+    next_api_retry_delay_seconds: int | None = None
+    api_retry_unsub: Callable[[], None] | None = None
     last_websocket_event_monotonic: float | None = None
     last_websocket_event_at: datetime | None = None
     last_websocket_event_type: str | None = None
     last_ws_event_details: dict[str, Any] | None = None
+    last_disarmed_by: str | None = None
+    last_disarmed_user_id: str | None = None
+    last_disarmed_at: str | None = None
+    last_disarmed_event_id: int | str | None = None
+    last_disarmed_device_id: str | None = None
     api_available: bool = True
     # Exponential backoff for REST polling while the websocket carries live
     # data. Avoids hammering a rate-limited/broken API (HTTP 429/439) every

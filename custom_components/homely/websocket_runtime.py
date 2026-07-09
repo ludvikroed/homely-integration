@@ -16,6 +16,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from .models import HomelyConfigEntry, HomelyRuntimeData
 from .runtime_state import (
     device_id_snapshot,
+    record_last_disarmed,
     record_websocket_event,
     record_websocket_watchdog_recovery,
     update_runtime_websocket_state,
@@ -239,6 +240,18 @@ def build_websocket_data_handler(
                 return
 
             if event_type == "alarm-state-changed":
+                event_details: dict[str, Any] = {
+                    "alarm_state": result.get("alarm_state")
+                }
+                last_disarmed = result.get("last_disarmed")
+                if isinstance(last_disarmed, dict):
+                    record_last_disarmed(runtime_data, last_disarmed)
+                    event_details["last_disarmed_by"] = last_disarmed.get(
+                        "user_name"
+                    )
+                    event_details["last_disarmed_user_id"] = last_disarmed.get(
+                        "user_id"
+                    )
                 logger.debug(
                     "Applied websocket alarm update %s alarm_state=%s",
                     ctx(entry.entry_id, location_id),
@@ -249,7 +262,7 @@ def build_websocket_data_handler(
                         runtime_data,
                         event_type,
                         update_data_activity=True,
-                        event_details={"alarm_state": result.get("alarm_state")},
+                        event_details=event_details,
                     )
                     coordinator.async_update_listeners()
                 else:

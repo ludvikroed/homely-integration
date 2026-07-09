@@ -5,14 +5,18 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Awaitable, Callable
+from datetime import timedelta
 from typing import Any, Protocol
 
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .api import RefreshTokenResult, describe_refresh_token_failure
 from .models import HomelyRuntimeData
 from .runtime_state import (
+    LAST_DISARMED_CACHE_KEY,
     cached_data_grace_seconds,
     cached_location_data,
     record_api_poll_status,
@@ -26,10 +30,9 @@ from .runtime_state import (
 _TRANSIENT_HTTP_STATUS = {429, 500, 502, 503, 504}
 
 # Exponential backoff for REST polling while the websocket is healthy and
-# carries live data. When the API keeps failing (e.g. HTTP 429 rate limit or
-# the broken 439 endpoint) there is no point polling every scan interval, so we
-# back off up to a 6 hour safety poll and reset on the first success.
-_POLL_BACKOFF_SCHEDULE_SECONDS = (60, 300, 900, 1800, 3600, 21600)
+# carries live data. Start fairly soon after a failed API call, then back off
+# up to the normal 6 hour poll interval.
+_POLL_BACKOFF_SCHEDULE_SECONDS = (180, 600, 1800, 3600, 7200, 21600)
 
 
 def _schedule_poll_backoff(runtime_data: HomelyRuntimeData, *, now: float) -> int:
@@ -47,6 +50,82 @@ def _reset_poll_backoff(runtime_data: HomelyRuntimeData) -> None:
     """Clear poll backoff after a successful poll."""
     runtime_data.poll_backoff_level = 0
     runtime_data.poll_backoff_until_monotonic = float("-inf")
+
+
+def _clear_api_retry_schedule(runtime_data: HomelyRuntimeData) -> None:
+    """Cancel any pending API error retry."""
+    retry_unsub = runtime_data.api_retry_unsub
+    if retry_unsub is not None:
+        retry_unsub()
+    runtime_data.api_retry_unsub = None
+    runtime_data.next_api_retry_at = None
+    runtime_data.next_api_retry_status_code = None
+    runtime_data.next_api_retry_delay_seconds = None
+
+
+def _next_api_retry_delay_seconds(runtime_data: HomelyRuntimeData) -> int | None:
+    """Return seconds until the next planned API retry."""
+    retry_at = runtime_data.next_api_retry_at
+    if retry_at is None:
+        return None
+    return max(0, int((retry_at - dt_util.utcnow()).total_seconds()))
+
+
+def schedule_api_error_retry(
+    *,
+    hass: HomeAssistant,
+    runtime_data: HomelyRuntimeData,
+    runtime_data_getter: RuntimeDataGetter,
+    logger: logging.Logger,
+    entry_id: str,
+    location_id: str | int,
+    ctx: ContextBuilder,
+    status_code: int | None,
+) -> None:
+    """Schedule a forced API poll after any failed API call."""
+    _clear_api_retry_schedule(runtime_data)
+    retry_delay = _schedule_poll_backoff(runtime_data, now=time.monotonic())
+    runtime_data.next_api_retry_at = dt_util.utcnow() + timedelta(
+        seconds=retry_delay
+    )
+    runtime_data.next_api_retry_status_code = status_code
+    runtime_data.next_api_retry_delay_seconds = retry_delay
+
+    async def _async_retry_failed_api(_now: Any) -> None:
+        current_runtime = runtime_data_getter()
+        if current_runtime is not runtime_data:
+            return
+        runtime_data.api_retry_unsub = None
+        runtime_data.next_api_retry_at = None
+        runtime_data.next_api_retry_status_code = None
+        runtime_data.next_api_retry_delay_seconds = None
+        runtime_data.force_api_refresh_once = True
+        logger.debug(
+            "Retrying Homely API after failure %s retry_delay_s=%s status=%s",
+            ctx(entry_id, location_id),
+            retry_delay,
+            status_code,
+        )
+        try:
+            await runtime_data.coordinator.async_request_refresh()
+        except Exception as err:
+            logger.debug(
+                "Scheduled Homely API retry after failure failed %s: %s",
+                ctx(entry_id, location_id),
+                err,
+            )
+
+    runtime_data.api_retry_unsub = async_call_later(
+        hass,
+        retry_delay,
+        _async_retry_failed_api,
+    )
+    logger.debug(
+        "Scheduled Homely API retry after failure %s retry_delay_s=%s status=%s",
+        ctx(entry_id, location_id),
+        retry_delay,
+        status_code,
+    )
 
 type RuntimeDataGetter = Callable[[], HomelyRuntimeData | None]
 type RefreshTokenCallable = Callable[[HomeAssistant, str], Awaitable[dict[str, Any] | None]]
@@ -190,6 +269,16 @@ def build_async_update_data(
                 "failed",
                 status_code=status_code,
                 detail=message,
+            )
+            schedule_api_error_retry(
+                hass=hass,
+                runtime_data=runtime_data,
+                runtime_data_getter=runtime_data_getter,
+                logger=logger,
+                entry_id=entry_id,
+                location_id=location_id,
+                ctx=ctx,
+                status_code=status_code,
             )
             if runtime_data.api_available:
                 runtime_data.api_available = False
@@ -628,16 +717,13 @@ def build_async_update_data(
                         status_code=status_code,
                     )
                     update_runtime_websocket_state(runtime_data)
-                    backoff_delay = _schedule_poll_backoff(
-                        runtime_data, now=time.monotonic()
-                    )
                     logger.debug(
                         "Polling kept websocket-maintained data after API failure "
                         "entry_id=%s location_id=%s status=%s next_poll_in_s=%s",
                         entry_id,
                         location_id,
                         status_code,
-                        backoff_delay,
+                        _next_api_retry_delay_seconds(runtime_data),
                     )
                     return (
                         runtime_data.last_data
@@ -674,13 +760,22 @@ def build_async_update_data(
                     )
                     if cached_data is not None:
                         return cached_data
+                    _mark_api_unavailable(
+                        "Homely API still rejected credentials after retrying stored credentials",
+                        status_code=status_code,
+                    )
                     raise UpdateFailed(
                         "Failed to fetch data from API after retrying stored credentials"
                     )
+                _mark_api_unavailable(
+                    f"Polling API request failed with status={status_code}",
+                    status_code=status_code,
+                )
                 raise UpdateFailed("Failed to fetch data from API")
 
             _mark_api_available()
             _reset_poll_backoff(runtime_data)
+            _clear_api_retry_schedule(runtime_data)
             record_successful_poll(runtime_data)
             elapsed_ms = int((time.monotonic() - poll_started_at) * 1000)
             devices = updated.get("devices")
@@ -717,6 +812,13 @@ def build_async_update_data(
             new_alarm = old_alarm
         elif new_alarm is not None:
             set_alarm_state(updated, new_alarm)
+
+        last_disarmed = runtime_data.last_data.get(LAST_DISARMED_CACHE_KEY)
+        if (
+            isinstance(last_disarmed, dict)
+            and LAST_DISARMED_CACHE_KEY not in updated
+        ):
+            updated[LAST_DISARMED_CACHE_KEY] = last_disarmed
 
         runtime_data.last_data = updated
         handle_device_topology_change(updated)

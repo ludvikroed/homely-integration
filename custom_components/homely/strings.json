@@ -41,21 +41,6 @@
       "unknown": "Unexpected error occurred"
     }
   },
-  "options": {
-    "step": {
-      "init": {
-        "title": "Advanced Settings",
-        "description": "Configure optional Homely diagnostics.",
-        "data": {
-          "enable_debug_sensors": "Enable debug sensors (last poll, last update, reconnect count)"
-        }
-      }
-    },
-    "error": {
-      "invalid_scan_interval": "Scan interval must be 30 seconds or higher.",
-      "unknown": "Unexpected error occurred"
-    }
-  },
   "entity": {
     "alarm_control_panel": {},
     "binary_sensor": {
@@ -160,6 +145,7 @@
           "not_run": "Not run",
           "success": "Success",
           "failed": "Failed",
+          "failed_429": "Failed (429)",
           "failed_503": "Failed (503)",
           "unknown": "Unknown"
         }

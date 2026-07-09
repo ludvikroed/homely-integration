@@ -534,16 +534,28 @@ class HomelyApiPollStatusSensor(CoordinatorEntity, SensorEntity):
     def extra_state_attributes(self) -> dict[str, Any] | None:
         """Expose details about the latest API poll."""
         try:
-            attrs: dict[str, Any] = {
-                "api_available": self._runtime_data.api_available,
-            }
+            attrs: dict[str, Any] = {}
             if self._runtime_data.last_api_poll_at is not None:
                 attrs["last_poll_at"] = self._runtime_data.last_api_poll_at
             if self._runtime_data.last_api_poll_status_code is not None:
                 attrs["status_code"] = self._runtime_data.last_api_poll_status_code
+                if self._runtime_data.last_api_poll_status == "failed":
+                    attrs["last_error_code"] = (
+                        self._runtime_data.last_api_poll_status_code
+                    )
             if self._runtime_data.last_api_poll_detail:
                 attrs["detail"] = self._runtime_data.last_api_poll_detail
-        except (AttributeError, ValueError):
+            if self._runtime_data.next_api_retry_at is not None:
+                attrs["next_retry_at"] = self._runtime_data.next_api_retry_at
+            if self._runtime_data.next_api_retry_status_code is not None:
+                attrs["retry_status_code"] = (
+                    self._runtime_data.next_api_retry_status_code
+                )
+            if self._runtime_data.next_api_retry_delay_seconds is not None:
+                attrs["retry_delay_seconds"] = (
+                    self._runtime_data.next_api_retry_delay_seconds
+                )
+        except (AttributeError, TypeError, ValueError):
             return None
         return attrs
 
