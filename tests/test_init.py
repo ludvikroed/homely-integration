@@ -237,6 +237,44 @@ async def test_async_setup_entry_loads_runtime_data(
     assert runtime_data.last_data["name"] == "JF23"
     assert runtime_data.coordinator.data["alarmState"] == "ARMED_AWAY"
     assert runtime_data.last_successful_poll_at is not None
+    assert runtime_data.coordinator.config_entry is config_entry
+
+
+async def test_async_setup_entry_fetches_home_snapshot_once(
+    hass,
+    token_response,
+    location_response,
+    updated_location_data,
+):
+    """The validated startup snapshot should seed the coordinator without a second poll."""
+    config_entry = build_config_entry()
+    config_entry.add_to_hass(hass)
+    get_data_with_status = AsyncMock(return_value=(updated_location_data, 200))
+
+    with (
+        patch(
+            "custom_components.homely.fetch_token_with_reason",
+            AsyncMock(return_value=(token_response, None)),
+        ),
+        patch(
+            "custom_components.homely.get_location_id",
+            AsyncMock(return_value=location_response),
+        ),
+        patch(
+            "custom_components.homely.get_data_with_status",
+            get_data_with_status,
+        ),
+        patch.object(
+            hass.config_entries,
+            "async_forward_entry_setups",
+            AsyncMock(return_value=None),
+        ),
+        patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),
+    ):
+        assert await hass.config_entries.async_setup(config_entry.entry_id)
+        await hass.async_block_till_done()
+
+    get_data_with_status.assert_awaited_once()
 
 
 async def test_async_setup_entry_reenables_legacy_integration_disabled_error_code_sensor(
@@ -1182,6 +1220,54 @@ async def test_async_setup_entry_polls_initially_even_with_cached_snapshot(
     assert runtime_data.next_api_retry_delay_seconds == 180
 
 
+async def test_async_setup_entry_does_not_confirm_cached_device_removal_from_one_poll(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+):
+    """A restart must not bypass the two-snapshot device removal guard."""
+    from homeassistant.helpers.storage import Store
+
+    stored_data = deepcopy(location_data)
+    removed_device_id = stored_data["devices"][-1]["id"]
+    store: Store = Store(hass, 1, f"homely.{LOCATION_ID}")
+    await store.async_save(stored_data)
+
+    live_data = deepcopy(location_data)
+    live_data["devices"] = live_data["devices"][:-1]
+    config_entry = build_config_entry()
+    config_entry.add_to_hass(hass)
+
+    with (
+        patch(
+            "custom_components.homely.fetch_token_with_reason",
+            AsyncMock(return_value=(token_response, None)),
+        ),
+        patch(
+            "custom_components.homely.get_location_id",
+            AsyncMock(return_value=location_response),
+        ),
+        patch(
+            "custom_components.homely.get_data_with_status",
+            AsyncMock(return_value=(live_data, 200)),
+        ),
+        patch.object(
+            hass.config_entries,
+            "async_forward_entry_setups",
+            AsyncMock(return_value=None),
+        ),
+        patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),
+    ):
+        assert await hass.config_entries.async_setup(config_entry.entry_id)
+        await hass.async_block_till_done()
+
+    runtime_data = config_entry.runtime_data
+    assert removed_device_id in _device_id_snapshot(runtime_data.last_data)
+    assert runtime_data.pending_removed_device_ids == {removed_device_id}
+    assert runtime_data.pending_removal_confirmations == 1
+
+
 async def test_async_setup_entry_loads_without_initial_poll_when_api_broken(
     hass,
     token_response,
@@ -1301,6 +1387,85 @@ async def test_coordinator_poll_failure_keeps_data_when_websocket_connected(
     assert coordinator.last_update_success is True
     assert coordinator.data == baseline
     assert runtime_data.api_available is False
+
+
+async def test_coordinator_transport_failure_uses_fresh_cache_without_websocket(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """A network failure should not discard a fresh snapshot when websocket is down."""
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+    runtime_data.websocket = None
+    baseline = runtime_data.last_data
+
+    with patch(
+        "custom_components.homely.get_data_with_status",
+        AsyncMock(return_value=(None, None)),
+    ):
+        result = await runtime_data.coordinator.update_method()
+
+    assert result is baseline
+    assert runtime_data.api_available is False
+    assert runtime_data.last_api_poll_status == "failed"
+    assert runtime_data.next_api_retry_delay_seconds == 180
+
+
+async def test_coordinator_invalid_success_payload_uses_cache_and_skips_topology_reload(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """HTTP 200 is not enough when the location payload omits its device list."""
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+    runtime_data.websocket = None
+    baseline = runtime_data.last_data
+
+    with (
+        patch(
+            "custom_components.homely.get_data_with_status",
+            AsyncMock(
+                return_value=(
+                    {"locationId": LOCATION_ID, "name": "Incomplete"},
+                    200,
+                )
+            ),
+        ),
+        patch.object(
+            hass.config_entries,
+            "async_reload",
+            AsyncMock(return_value=True),
+        ) as async_reload,
+    ):
+        result = await runtime_data.coordinator.update_method()
+        await hass.async_block_till_done()
+
+    assert result is baseline
+    assert runtime_data.last_api_poll_status_code == 200
+    assert "invalid location payload" in (runtime_data.last_api_poll_detail or "")
+    async_reload.assert_not_awaited()
 
 
 async def test_async_setup_entry_websocket_watchdog_forces_api_poll(
@@ -1798,6 +1963,107 @@ async def test_coordinator_update_method_does_not_double_schedule_topology_reloa
     async_reload.assert_not_awaited()
 
 
+async def test_coordinator_requires_two_snapshots_before_device_removal(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """A single incomplete device list must not remove existing devices."""
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+    removed_device = updated_location_data["devices"][-1]
+    missing_device_data = deepcopy(updated_location_data)
+    missing_device_data["devices"] = missing_device_data["devices"][:-1]
+
+    get_data = AsyncMock(
+        side_effect=[
+            (deepcopy(missing_device_data), 200),
+            (deepcopy(missing_device_data), 200),
+        ]
+    )
+    with (
+        patch(
+            "custom_components.homely.get_data_with_status",
+            get_data,
+        ),
+        patch.object(
+            hass.config_entries,
+            "async_reload",
+            AsyncMock(return_value=True),
+        ) as async_reload,
+    ):
+        first = await runtime_data.coordinator.update_method()
+        assert removed_device["id"] in _device_id_snapshot(first)
+        assert runtime_data.pending_removed_device_ids == {removed_device["id"]}
+        async_reload.assert_not_awaited()
+
+        second = await runtime_data.coordinator.update_method()
+        await hass.async_block_till_done()
+
+    assert removed_device["id"] not in _device_id_snapshot(second)
+    assert runtime_data.pending_removed_device_ids == set()
+    async_reload.assert_awaited_once_with(config_entry.entry_id)
+
+
+async def test_coordinator_retries_topology_reload_after_reload_failure(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """A failed reload should restore the old snapshot so the next poll retries."""
+    config_entry = build_config_entry()
+    changed_data = deepcopy(updated_location_data)
+    changed_data["devices"].append(
+        {
+            "id": "new-device-id",
+            "name": "New sensor",
+            "modelName": "Alarm Motion Sensor 2",
+            "online": True,
+            "features": {},
+        }
+    )
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+    original_ids = set(runtime_data.tracked_device_ids)
+
+    with (
+        patch(
+            "custom_components.homely.get_data_with_status",
+            AsyncMock(return_value=(changed_data, 200)),
+        ),
+        patch.object(
+            hass.config_entries,
+            "async_reload",
+            AsyncMock(return_value=False),
+        ) as async_reload,
+    ):
+        await runtime_data.coordinator.update_method()
+        await hass.async_block_till_done()
+
+    async_reload.assert_awaited_once_with(config_entry.entry_id)
+    assert runtime_data.tracked_device_ids == original_ids
+    assert runtime_data.topology_reload_pending is False
+
+
 async def test_coordinator_update_method_refresh_invalid_auth_uses_cache(
     hass,
     token_response,
@@ -1832,14 +2098,14 @@ async def test_coordinator_update_method_refresh_invalid_auth_uses_cache(
     assert result == runtime_data.last_data
 
 
-async def test_coordinator_update_method_refresh_invalid_auth_with_stale_cache_raises_update_failed(
+async def test_coordinator_update_method_refresh_invalid_auth_with_stale_cache_starts_reauth(
     hass,
     token_response,
     location_response,
     location_data,
     updated_location_data,
 ):
-    """Runtime invalid_auth should not trigger reauth even when cache is stale."""
+    """Permanent credential rejection should start reauth once cache is stale."""
     config_entry = build_config_entry()
     await _setup_loaded_entry(
         hass,
@@ -1865,10 +2131,10 @@ async def test_coordinator_update_method_refresh_invalid_auth_with_stale_cache_r
     ):
         try:
             await runtime_data.coordinator.update_method()
-        except UpdateFailed as err:
-            assert "automatic reauthentication is disabled" in str(err)
+        except ConfigEntryAuthFailed as err:
+            assert "credentials were rejected" in str(err)
         else:
-            raise AssertionError("Expected UpdateFailed")
+            raise AssertionError("Expected ConfigEntryAuthFailed")
 
 
 async def test_coordinator_update_method_refreshes_via_full_login_and_updates_websocket(
@@ -3073,8 +3339,7 @@ async def test_async_setup_entry_websocket_handles_connect_failure_and_internet_
     hass.bus.async_fire("internet_available")
     await hass.async_block_till_done()
 
-    assert "poll detected disconnected websocket" in ws.request_reconnect_calls
-    assert "internet_available event" in ws.request_reconnect_calls
+    assert ws.request_reconnect_calls == ["internet_available event"]
 
 
 async def test_async_setup_entry_websocket_status_callback_tolerates_listener_failures(

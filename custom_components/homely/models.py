@@ -68,6 +68,8 @@ class HomelyRuntimeData:
     poll_backoff_until_monotonic: float = float("-inf")
     poll_backoff_level: int = 0
     tracked_device_ids: set[str] = field(default_factory=set)
+    pending_removed_device_ids: set[str] = field(default_factory=set)
+    pending_removal_confirmations: int = 0
     topology_reload_pending: bool = False
     force_api_refresh_once: bool = False
     partner_code: int | str | None = None

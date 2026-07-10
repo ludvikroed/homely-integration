@@ -138,13 +138,13 @@ class HomelyDeviceOnlineSensor(CoordinatorEntity, BinarySensorEntity):
         return super().available and self._get_current_device() is not None
 
     @property
-    def is_on(self) -> bool:
+    def is_on(self) -> bool | None:
         """Return True if device is online."""
         device = self._get_current_device()
         if not device:
-            return False
+            return None
 
-        return bool(device.get("online", False))
+        return _coerce_bool(device.get("online"))
 
 
 class HomelyBinarySensor(CoordinatorEntity, BinarySensorEntity):
@@ -223,11 +223,11 @@ class HomelyBinarySensor(CoordinatorEntity, BinarySensorEntity):
         return super().available and is_device_available(self._get_current_device())
 
     @property
-    def is_on(self) -> bool:
+    def is_on(self) -> bool | None:
         """Return True if sensor is on."""
         device = self._get_current_device()
         if not device:
-            return False
+            return None
 
         value = _get_value_by_path(device, self._path)
         if callable(self._transform_device_value):
@@ -242,5 +242,5 @@ class HomelyBinarySensor(CoordinatorEntity, BinarySensorEntity):
                 pass
         parsed = _coerce_bool(value)
         if parsed is None:
-            return False
+            return None
         return not parsed if self._invert else parsed

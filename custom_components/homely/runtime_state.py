@@ -270,6 +270,39 @@ def device_id_snapshot(data: dict[str, Any] | None) -> set[str]:
     }
 
 
+def location_payload_error(
+    data: dict[str, Any] | None,
+    expected_location_id: str | int,
+) -> str | None:
+    """Return why a REST location payload is unsafe to accept."""
+    if not isinstance(data, dict) or not data:
+        return "payload is empty or not an object"
+
+    payload_location_id = data.get("locationId")
+    if payload_location_id is None:
+        return "payload is missing locationId"
+    if str(payload_location_id) != str(expected_location_id):
+        return "payload locationId does not match the configured location"
+
+    devices = data.get("devices")
+    if not isinstance(devices, list):
+        return "payload devices is missing or not a list"
+
+    seen_ids: set[str] = set()
+    for device in devices:
+        if not isinstance(device, dict):
+            return "payload contains a device that is not an object"
+        device_id = device.get("id")
+        if device_id is None or not str(device_id).strip():
+            return "payload contains a device without an id"
+        normalized_id = str(device_id)
+        if normalized_id in seen_ids:
+            return "payload contains duplicate device ids"
+        seen_ids.add(normalized_id)
+
+    return None
+
+
 def monotonic_age_seconds(last_monotonic: float | None) -> int | None:
     """Return age in seconds for a monotonic timestamp."""
     if last_monotonic is None or last_monotonic <= 0:

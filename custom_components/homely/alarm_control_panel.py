@@ -86,6 +86,7 @@ class HomelyAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
         self._attr_has_entity_name = True
         self._location_id = location_id
         self._last_unknown_state: str | None = None
+        self._attr_code_arm_required = False
         location_name = str(
             (coordinator.data or {}).get("name") or f"Homely location {location_id}"
         )

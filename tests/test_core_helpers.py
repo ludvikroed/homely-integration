@@ -22,6 +22,7 @@ from custom_components.homely.device_state import (
 from custom_components.homely.models import HomelyRuntimeData
 from custom_components.homely.models import get_entry_runtime_data
 from custom_components.homely.runtime_state import (
+    location_payload_error,
     reported_websocket_status,
     record_successful_poll,
     record_websocket_watchdog_recovery,
@@ -165,6 +166,35 @@ def test_tracked_device_ids_handle_missing_snapshots():
     assert _tracked_api_device_ids(runtime_data) == (False, set())
 
 
+def test_location_payload_validation_rejects_unsafe_snapshots(location_data):
+    """REST snapshots must identify the location and every listed device."""
+    assert location_payload_error(location_data, LOCATION_ID) is None
+    assert location_payload_error({}, LOCATION_ID) is not None
+    assert location_payload_error({"locationId": LOCATION_ID}, LOCATION_ID) is not None
+    assert (
+        location_payload_error(
+            {"locationId": "other", "devices": []},
+            LOCATION_ID,
+        )
+        is not None
+    )
+    assert (
+        location_payload_error(
+            {"locationId": LOCATION_ID, "devices": [{"name": "missing id"}]},
+            LOCATION_ID,
+        )
+        is not None
+    )
+    assert (
+        location_payload_error(
+            {
+                "locationId": LOCATION_ID,
+                "devices": [{"id": "duplicate"}, {"id": "duplicate"}],
+            },
+            LOCATION_ID,
+        )
+        is not None
+    )
 def test_runtime_state_helpers_handle_broken_websocket_and_manual_disconnect(
     location_data,
 ):

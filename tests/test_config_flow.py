@@ -27,7 +27,6 @@ from custom_components.homely.config_flow import (
     get_location_id,
 )
 from custom_components.homely.const import (
-    CONF_ENABLE_DEBUG_SENSORS,
     CONF_HOME_ID,
     CONF_LOCATION_ID,
     CONF_PENDING_IMPORT_LOCATIONS,
@@ -244,9 +243,7 @@ async def test_user_flow_single_location_creates_entry_with_default_options(
         CONF_PASSWORD: PASSWORD,
         CONF_LOCATION_ID: LOCATION_ID,
     }
-    assert result["options"] == {
-        CONF_ENABLE_DEBUG_SENSORS: False,
-    }
+    assert result["options"] == {}
 
 
 async def test_user_flow_multiple_locations_requires_selection(

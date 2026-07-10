@@ -9,6 +9,7 @@ from datetime import timedelta
 from typing import Any, Protocol
 
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from homeassistant.util import dt as dt_util
@@ -19,6 +20,8 @@ from .runtime_state import (
     LAST_DISARMED_CACHE_KEY,
     cached_data_grace_seconds,
     cached_location_data,
+    device_id_snapshot,
+    location_payload_error,
     record_api_poll_status,
     record_successful_poll,
     update_runtime_websocket_state,
@@ -27,7 +30,7 @@ from .runtime_state import (
     websocket_state_context,
 )
 
-_TRANSIENT_HTTP_STATUS = {429, 500, 502, 503, 504}
+_TRANSIENT_HTTP_STATUS = {408, 425, 429, 439, 500, 502, 503, 504}
 
 # Exponential backoff for REST polling while the websocket is healthy and
 # carries live data. Start fairly soon after a failed API call, then back off
@@ -50,6 +53,59 @@ def _reset_poll_backoff(runtime_data: HomelyRuntimeData) -> None:
     """Clear poll backoff after a successful poll."""
     runtime_data.poll_backoff_level = 0
     runtime_data.poll_backoff_until_monotonic = float("-inf")
+
+
+def _preserve_unconfirmed_removed_devices(
+    runtime_data: HomelyRuntimeData,
+    updated: dict[str, Any],
+    *,
+    logger: logging.Logger,
+    entry_id: str,
+    location_id: str | int,
+    ctx: ContextBuilder,
+) -> None:
+    """Require two matching snapshots before accepting removed devices."""
+    previous_ids = device_id_snapshot(runtime_data.last_data)
+    updated_ids = device_id_snapshot(updated)
+    removed_ids = previous_ids - updated_ids
+
+    if not removed_ids:
+        runtime_data.pending_removed_device_ids.clear()
+        runtime_data.pending_removal_confirmations = 0
+        return
+
+    if removed_ids == runtime_data.pending_removed_device_ids:
+        runtime_data.pending_removal_confirmations += 1
+    else:
+        runtime_data.pending_removed_device_ids = set(removed_ids)
+        runtime_data.pending_removal_confirmations = 1
+
+    if runtime_data.pending_removal_confirmations >= 2:
+        logger.info(
+            "Confirmed Homely device removal after two snapshots %s removed_count=%s",
+            ctx(entry_id, location_id),
+            len(removed_ids),
+        )
+        runtime_data.pending_removed_device_ids.clear()
+        runtime_data.pending_removal_confirmations = 0
+        return
+
+    previous_devices = runtime_data.last_data.get("devices")
+    updated_devices = updated.get("devices")
+    if not isinstance(previous_devices, list) or not isinstance(updated_devices, list):
+        return
+
+    preserved = [
+        device
+        for device in previous_devices
+        if isinstance(device, dict) and str(device.get("id")) in removed_ids
+    ]
+    updated_devices.extend(preserved)
+    logger.warning(
+        "Homely API omitted existing devices; waiting for a second snapshot before removal %s removed_count=%s",
+        ctx(entry_id, location_id),
+        len(removed_ids),
+    )
 
 
 def _clear_api_retry_schedule(runtime_data: HomelyRuntimeData) -> None:
@@ -326,7 +382,11 @@ def build_async_update_data(
                     err,
                 )
 
-        def _use_cached_data(message: str) -> dict[str, Any] | None:
+        def _use_cached_data(
+            message: str,
+            *,
+            status_code: int | None = None,
+        ) -> dict[str, Any] | None:
             cached_data = cached_location_data(runtime_data)
             if cached_data is None:
                 return None
@@ -340,7 +400,8 @@ def build_async_update_data(
             if not websocket_connected and cache_age_seconds >= stale_grace_seconds:
                 _mark_api_unavailable(
                     f"{message}; cached data age={int(cache_age_seconds)}s exceeded "
-                    f"grace={stale_grace_seconds}s"
+                    f"grace={stale_grace_seconds}s",
+                    status_code=status_code,
                 )
                 logger.warning(
                     "Marking Homely entities unavailable because cached data is stale "
@@ -352,7 +413,7 @@ def build_async_update_data(
                 )
                 return None
 
-            _mark_api_unavailable(message)
+            _mark_api_unavailable(message, status_code=status_code)
             update_runtime_websocket_state(runtime_data)
             logger.debug(
                 "Using cached Homely data %s age_s=%s grace_s=%s %s",
@@ -407,8 +468,8 @@ def build_async_update_data(
                     )
                     if cached_data is not None:
                         return None, cached_data
-                    raise UpdateFailed(
-                        "Homely login endpoint reported invalid_auth, but automatic reauthentication is disabled; will retry later"
+                    raise ConfigEntryAuthFailed(
+                        "Homely credentials were rejected after cached data expired"
                     )
                 cached_data = _use_cached_data(
                     "Homely auth endpoint did not return a usable token during fallback login; using cached data"
@@ -696,6 +757,21 @@ def build_async_update_data(
                 access_token,
                 runtime_data.location_id,
             )
+            if updated:
+                payload_error = location_payload_error(
+                    updated,
+                    runtime_data.location_id,
+                )
+                if payload_error is not None:
+                    cached_data = _use_cached_data(
+                        f"Polling API returned an invalid location payload: {payload_error}; using cached data",
+                        status_code=status_code,
+                    )
+                    if cached_data is not None:
+                        return cached_data
+                    raise UpdateFailed(
+                        f"Homely API returned an invalid location payload: {payload_error}"
+                    )
             if not updated and status_code in (401, 403):
                 updated, status_code, cached_data = await _retry_poll_with_stored_credentials(
                     status_code
@@ -730,23 +806,16 @@ def build_async_update_data(
                         if isinstance(runtime_data.last_data, dict)
                         else {}
                     )
-                if (
-                    status_code in _TRANSIENT_HTTP_STATUS
-                    and isinstance(runtime_data.last_data, dict)
-                ):
-                    if runtime_data.last_data:
-                        _mark_api_unavailable(
-                            "Polling API request failed with transient status="
-                            f"{status_code}; continuing with cached data",
-                            status_code=status_code,
-                        )
-                        return runtime_data.last_data
-                    _mark_api_unavailable(
-                        f"Polling API request failed with transient status={status_code}; no cached data available",
+                if status_code is None or status_code in _TRANSIENT_HTTP_STATUS:
+                    cached_data = _use_cached_data(
+                        "Polling API request failed with transient status="
+                        f"{status_code}; continuing with cached data",
                         status_code=status_code,
                     )
+                    if cached_data is not None:
+                        return cached_data
                     raise UpdateFailed(
-                        f"Rate limited (status={status_code}); no cached data yet"
+                        f"Transient API failure (status={status_code}); no usable cached data"
                     )
                 if status_code in (401, 403):
                     cached_data = _use_cached_data(
@@ -820,6 +889,14 @@ def build_async_update_data(
         ):
             updated[LAST_DISARMED_CACHE_KEY] = last_disarmed
 
+        _preserve_unconfirmed_removed_devices(
+            runtime_data,
+            updated,
+            logger=logger,
+            entry_id=entry_id,
+            location_id=location_id,
+            ctx=ctx,
+        )
         runtime_data.last_data = updated
         handle_device_topology_change(updated)
         update_runtime_websocket_state(runtime_data)

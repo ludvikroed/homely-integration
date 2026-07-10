@@ -149,15 +149,6 @@
           "failed_503": "Feilet (503)",
           "unknown": "Ukjent"
         }
-      },
-      "last_successful_poll": {
-        "name": "Siste vellykkede API-polling"
-      },
-      "last_websocket_message": {
-        "name": "Siste WebSocket-oppdatering"
-      },
-      "last_ws_device_update": {
-        "name": "Sist oppdatert enhet"
       }
     }
   }

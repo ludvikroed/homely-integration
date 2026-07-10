@@ -2,23 +2,19 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import homeassistant.helpers.entity as entity_helper
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.util import dt as dt_util
 
 from custom_components.homely.models import HomelyRuntimeData
 from custom_components.homely.sensor import (
     PARALLEL_UPDATES,
     HomelySensor,
-    HomelyRuntimeTimestampSensor,
     HomelyWebSocketStatusSensor,
     async_setup_entry,
 )
-from custom_components.homely.const import CONF_ENABLE_DEBUG_SENSORS
 from custom_components.homely.sensors.discover import discover_device_sensors
 from tests.common import LOCATION_ID, build_config_entry
 
@@ -355,49 +351,11 @@ def test_websocket_status_sensor_ignores_legacy_disabled_option(
     assert "disabled" not in entity.options
 
 
-async def test_runtime_timestamp_sensors_use_runtime_data(hass, location_data):
-    """Runtime timestamp sensors should expose the latest poll and websocket times."""
-    config_entry = build_config_entry(
-        options={CONF_ENABLE_DEBUG_SENSORS: True}
-    )
-    last_poll_at = dt_util.utcnow()
-    last_ws_at = last_poll_at + timedelta(seconds=5)
-    runtime_data = HomelyRuntimeData(
-        coordinator=SimpleNamespace(data=location_data),
-        access_token="access",
-        refresh_token="refresh",
-        expires_at=0,
-        location_id=LOCATION_ID,
-        last_data=location_data,
-        last_successful_poll_at=last_poll_at,
-        last_websocket_event_at=last_ws_at,
-        last_websocket_event_type="device-state-changed",
-    )
-    config_entry.runtime_data = runtime_data
-    collected = []
-
-    await async_setup_entry(hass, config_entry, collected.extend)
-
-    by_unique_id = {entity.unique_id: entity for entity in collected}
-    assert (
-        by_unique_id[f"location_{LOCATION_ID}_last_successful_poll"].native_value
-        == last_poll_at
-    )
-    websocket_message = by_unique_id[f"location_{LOCATION_ID}_last_websocket_message"]
-    assert websocket_message.native_value == last_ws_at
-    assert websocket_message.icon == "mdi:message-outline"
-    assert websocket_message.extra_state_attributes == {
-        "event_type": "device-state-changed"
-    }
-
-
 async def test_sensor_async_setup_entry_creates_ws_status_and_device_sensors(
     hass, location_data
 ):
     """Sensor platform setup should create status sensor and discovered sensors."""
-    config_entry = build_config_entry(
-        options={CONF_ENABLE_DEBUG_SENSORS: True}
-    )
+    config_entry = build_config_entry()
     config_entry.runtime_data = HomelyRuntimeData(
         coordinator=SimpleNamespace(data=location_data),
         access_token="access",
@@ -413,9 +371,9 @@ async def test_sensor_async_setup_entry_creates_ws_status_and_device_sensors(
     unique_ids = {entity.unique_id for entity in collected}
     assert f"location_{LOCATION_ID}_websocket_status" in unique_ids
     assert f"location_{LOCATION_ID}_api_connection" in unique_ids
-    assert f"location_{LOCATION_ID}_last_successful_poll" in unique_ids
-    assert f"location_{LOCATION_ID}_last_websocket_message" in unique_ids
-    assert f"location_{LOCATION_ID}_last_ws_device_update" in unique_ids
+    assert f"location_{LOCATION_ID}_last_successful_poll" not in unique_ids
+    assert f"location_{LOCATION_ID}_last_websocket_message" not in unique_ids
+    assert f"location_{LOCATION_ID}_last_ws_device_update" not in unique_ids
     assert "70b9db72-5c00-4316-9ffa-ac7bf60fcb47_sensitivitylevel" in unique_ids
     assert "70b9db72-5c00-4316-9ffa-ac7bf60fcb47_temperature" in unique_ids
     assert "6c120e85-e8d5-49ac-abc0-baa29f9243b7_soundvolume" in unique_ids
@@ -460,9 +418,7 @@ async def test_sensor_async_setup_entry_handles_sparse_device_lists(
     hass, location_data
 ):
     """Sensor setup should ignore malformed device collections gracefully."""
-    config_entry = build_config_entry(
-        options={CONF_ENABLE_DEBUG_SENSORS: True}
-    )
+    config_entry = build_config_entry()
     config_entry.runtime_data = HomelyRuntimeData(
         coordinator=SimpleNamespace(data={"name": "JF23", "devices": {}}),
         access_token="access",
@@ -476,11 +432,8 @@ async def test_sensor_async_setup_entry_handles_sparse_device_lists(
     await async_setup_entry(hass, config_entry, collected.extend)
 
     assert [entity.unique_id for entity in collected] == [
-        f"location_{LOCATION_ID}_last_successful_poll",
         f"location_{LOCATION_ID}_websocket_status",
         f"location_{LOCATION_ID}_api_connection",
-        f"location_{LOCATION_ID}_last_websocket_message",
-        f"location_{LOCATION_ID}_last_ws_device_update",
     ]
 
     config_entry.runtime_data = HomelyRuntimeData(
@@ -500,9 +453,9 @@ async def test_sensor_async_setup_entry_handles_sparse_device_lists(
     unique_ids = {entity.unique_id for entity in collected}
     assert f"location_{LOCATION_ID}_websocket_status" in unique_ids
     assert f"location_{LOCATION_ID}_api_connection" in unique_ids
-    assert f"location_{LOCATION_ID}_last_successful_poll" in unique_ids
-    assert f"location_{LOCATION_ID}_last_websocket_message" in unique_ids
-    assert f"location_{LOCATION_ID}_last_ws_device_update" in unique_ids
+    assert f"location_{LOCATION_ID}_last_successful_poll" not in unique_ids
+    assert f"location_{LOCATION_ID}_last_websocket_message" not in unique_ids
+    assert f"location_{LOCATION_ID}_last_ws_device_update" not in unique_ids
     assert "70b9db72-5c00-4316-9ffa-ac7bf60fcb47_sensitivitylevel" in unique_ids
     assert "70b9db72-5c00-4316-9ffa-ac7bf60fcb47_temperature" in unique_ids
 
@@ -636,43 +589,3 @@ def test_websocket_status_sensor_handles_unknown_runtime_state(hass, location_da
     entity._runtime_data = SimpleNamespace()
     assert entity.native_value == "unknown"
     assert entity.extra_state_attributes is None
-
-
-def test_runtime_timestamp_sensor_handles_getter_failures(hass, location_data):
-    """Runtime timestamp sensors should tolerate missing metadata safely."""
-    config_entry = build_config_entry()
-    runtime_data = HomelyRuntimeData(
-        coordinator=SimpleNamespace(data=location_data),
-        access_token="access",
-        refresh_token="refresh",
-        expires_at=0,
-        location_id=LOCATION_ID,
-        last_data=location_data,
-    )
-    config_entry.runtime_data = runtime_data
-
-    broken_entity = HomelyRuntimeTimestampSensor(
-        runtime_data.coordinator,
-        config_entry,
-        LOCATION_ID,
-        translation_key="last_websocket_message",
-        unique_suffix="broken_runtime_timestamp",
-        icon="mdi:clock-outline",
-        value_getter=lambda _runtime_data: (_ for _ in ()).throw(AttributeError("bad")),
-        extra_attributes_getter=lambda _runtime_data: (
-            _ for _ in ()
-        ).throw(ValueError("bad")),
-    )
-    assert broken_entity.native_value is None
-    assert broken_entity.extra_state_attributes is None
-
-    no_extra_entity = HomelyRuntimeTimestampSensor(
-        runtime_data.coordinator,
-        config_entry,
-        LOCATION_ID,
-        translation_key="last_successful_poll",
-        unique_suffix="no_extra_runtime_timestamp",
-        icon="mdi:clock-outline",
-        value_getter=lambda _runtime_data: None,
-    )
-    assert no_extra_entity.extra_state_attributes is None

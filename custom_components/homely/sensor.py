@@ -16,11 +16,7 @@ from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
 )
 
-from .const import (
-    CONF_ENABLE_DEBUG_SENSORS,
-    DEFAULT_ENABLE_DEBUG_SENSORS,
-    DOMAIN,
-)
+from .const import DOMAIN
 from .device_state import get_current_device, is_device_available
 from .models import HomelyConfigEntry, get_entry_runtime_data
 from .naming import (
@@ -58,77 +54,25 @@ async def async_setup_entry(
     def _fallback_data_getter() -> dict[str, Any] | None:
         return runtime_data.last_data
 
-    enable_debug_sensors = bool(
-        entry.options.get(
-            CONF_ENABLE_DEBUG_SENSORS,
-            entry.data.get(CONF_ENABLE_DEBUG_SENSORS, DEFAULT_ENABLE_DEBUG_SENSORS),
-        )
-    )
-
-    _DEBUG_SENSOR_SUFFIXES = [
+    removed_sensor_suffixes = [
         "last_successful_poll",
         "last_websocket_message",
         "last_ws_device_update",
     ]
-    if not enable_debug_sensors:
-        entity_registry = er.async_get(hass)
-        for suffix in _DEBUG_SENSOR_SUFFIXES:
-            unique_id = f"location_{location_id}_{suffix}"
-            entity_id = entity_registry.async_get_entity_id("sensor", DOMAIN, unique_id)
-            if entity_id:
-                entity_registry.async_remove(entity_id)
+    entity_registry = er.async_get(hass)
+    for suffix in removed_sensor_suffixes:
+        unique_id = f"location_{location_id}_{suffix}"
+        entity_id = entity_registry.async_get_entity_id("sensor", DOMAIN, unique_id)
+        if entity_id:
+            entity_registry.async_remove(entity_id)
 
     entities: list[SensorEntity] = []
-    if enable_debug_sensors:
-        entities.append(
-            HomelyRuntimeTimestampSensor(
-                coordinator,
-                entry,
-                location_id,
-                translation_key="last_successful_poll",
-                unique_suffix="last_successful_poll",
-                icon="mdi:clock-check-outline",
-                value_getter=lambda runtime_data: runtime_data.last_successful_poll_at,
-            )
-        )
     entities.append(
         HomelyWebSocketStatusSensor(coordinator, entry, location_id)
     )
     entities.append(
         HomelyApiPollStatusSensor(coordinator, entry, location_id)
     )
-    if enable_debug_sensors:
-        entities.append(
-            HomelyRuntimeTimestampSensor(
-                coordinator,
-                entry,
-                location_id,
-                translation_key="last_websocket_message",
-                unique_suffix="last_websocket_message",
-                icon="mdi:message-outline",
-                value_getter=lambda runtime_data: runtime_data.last_websocket_event_at,
-                extra_attributes_getter=lambda runtime_data: (
-                    {
-                        "event_type": runtime_data.last_websocket_event_type,
-                        **(runtime_data.last_ws_event_details or {}),
-                    }
-                    if runtime_data.last_websocket_event_type
-                    else None
-                ),
-            )
-        )
-        entities.append(
-            HomelyRuntimeStateSensor(
-                coordinator,
-                entry,
-                location_id,
-                translation_key="last_ws_device_update",
-                unique_suffix="last_ws_device_update",
-                icon="mdi:update",
-                value_getter=_get_last_ws_device_name,
-                extra_attributes_getter=_get_last_ws_device_attrs,
-            )
-        )
 
     devices = data.get("devices", [])
     if not isinstance(devices, list):
@@ -151,94 +95,6 @@ async def async_setup_entry(
                 )
 
     async_add_entities(entities)
-
-
-def _get_last_ws_device_name(runtime_data: Any) -> str | None:
-    """Return the name of the last device updated via websocket."""
-    if runtime_data.last_websocket_event_type != "device-state-changed":
-        return None
-    details = runtime_data.last_ws_event_details
-    if not isinstance(details, dict):
-        return None
-    device_id = details.get("device_id")
-    if not device_id:
-        return None
-    devices = (runtime_data.last_data or {}).get("devices") or []
-    for device in devices:
-        if isinstance(device, dict) and str(device.get("id")) == str(device_id):
-            return str(device.get("name") or device.get("modelName") or device_id)
-    return str(device_id)
-
-
-def _get_last_ws_device_attrs(runtime_data: Any) -> dict[str, Any] | None:
-    """Return attributes for the last websocket device update."""
-    if runtime_data.last_websocket_event_type != "device-state-changed":
-        return None
-    details = runtime_data.last_ws_event_details
-    if not isinstance(details, dict) or not details:
-        return None
-    return dict(details)
-
-
-class HomelyRuntimeStateSensor(CoordinatorEntity, SensorEntity):
-    """Generic runtime state sensor backed by location runtime metadata."""
-
-    def __init__(
-        self,
-        coordinator: DataUpdateCoordinator[dict[str, Any]],
-        entry: HomelyConfigEntry,
-        location_id: str,
-        *,
-        translation_key: str,
-        unique_suffix: str,
-        icon: str,
-        value_getter: Callable[[Any], Any],
-        extra_attributes_getter: Callable[[Any], dict[str, Any] | None] | None = None,
-        enabled_default: bool = False,
-    ) -> None:
-        super().__init__(coordinator)
-        self._attr_has_entity_name = True
-        self._runtime_data = get_entry_runtime_data(entry)
-        self._value_getter = value_getter
-        self._extra_attributes_getter = extra_attributes_getter
-        self._attr_translation_key = translation_key
-        self._attr_unique_id = f"location_{location_id}_{unique_suffix}"
-        self._attr_icon = icon
-        self._attr_entity_category = DIAGNOSTIC_ENTITY_CATEGORY
-        self._attr_entity_registry_enabled_default = enabled_default
-        location_name = str(
-            (self._runtime_data.last_data or {}).get("name", "Location")
-        )
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, f"location_{location_id}")},
-            name=location_name,
-            manufacturer="Homely",
-            model="Homely",
-            entry_type=DeviceEntryType.SERVICE,
-        )
-
-    @property
-    def available(self) -> bool:
-        """Runtime metadata stays available regardless of API poll success."""
-        return True
-
-    @property
-    def native_value(self) -> Any:
-        """Return the current sensor value."""
-        try:
-            return self._value_getter(self._runtime_data)
-        except (AttributeError, ValueError):
-            return None
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any] | None:
-        """Expose optional runtime metadata."""
-        if self._extra_attributes_getter is None:
-            return None
-        try:
-            return self._extra_attributes_getter(self._runtime_data)
-        except (AttributeError, ValueError):
-            return None
 
 
 class HomelySensor(CoordinatorEntity, SensorEntity):
@@ -489,7 +345,8 @@ class HomelyApiPollStatusSensor(CoordinatorEntity, SensorEntity):
         self._attr_icon = "mdi:cloud-sync-outline"
         self._attr_entity_category = DIAGNOSTIC_ENTITY_CATEGORY
         self._attr_device_class = SensorDeviceClass.ENUM
-        self._attr_options = ["not_run", "success", "failed", "unknown"]
+        self._api_status_options = ["not_run", "success", "failed", "unknown"]
+        self._attr_options = self._api_status_options
         location_name = str(
             (self._runtime_data.last_data or {}).get("name", "Location")
         )
@@ -517,14 +374,14 @@ class HomelyApiPollStatusSensor(CoordinatorEntity, SensorEntity):
 
         if status == "failed" and status_code is not None:
             return f"failed_{status_code}"
-        if status not in self._attr_options:
+        if status not in self._api_status_options:
             return "unknown"
         return status
 
     @property
     def options(self) -> list[str]:
         """Return known API poll status values, including current failure code."""
-        options = list(self._attr_options)
+        options = list(self._api_status_options)
         value = self.native_value
         if value not in options:
             options.append(value)
@@ -558,66 +415,3 @@ class HomelyApiPollStatusSensor(CoordinatorEntity, SensorEntity):
         except (AttributeError, TypeError, ValueError):
             return None
         return attrs
-
-
-class HomelyRuntimeTimestampSensor(CoordinatorEntity, SensorEntity):
-    """Timestamp sensor backed by runtime metadata for a location."""
-
-    def __init__(
-        self,
-        coordinator: DataUpdateCoordinator[dict[str, Any]],
-        entry: HomelyConfigEntry,
-        location_id: str,
-        *,
-        translation_key: str,
-        unique_suffix: str,
-        icon: str,
-        value_getter: Callable[[Any], Any],
-        extra_attributes_getter: Callable[[Any], dict[str, Any] | None] | None = None,
-        enabled_default: bool = True,
-    ) -> None:
-        super().__init__(coordinator)
-        self._attr_has_entity_name = True
-        self._runtime_data = get_entry_runtime_data(entry)
-        self._value_getter = value_getter
-        self._extra_attributes_getter = extra_attributes_getter
-        self._attr_translation_key = translation_key
-        self._attr_unique_id = f"location_{location_id}_{unique_suffix}"
-        self._attr_icon = icon
-        self._attr_entity_category = DIAGNOSTIC_ENTITY_CATEGORY
-        self._attr_entity_registry_enabled_default = enabled_default
-        self._attr_device_class = SensorDeviceClass.TIMESTAMP
-        location_name = str(
-            (self._runtime_data.last_data or {}).get("name", "Location")
-        )
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, f"location_{location_id}")},
-            name=location_name,
-            manufacturer="Homely",
-            model="Homely",
-            entry_type=DeviceEntryType.SERVICE,
-        )
-
-    @property
-    def available(self) -> bool:
-        """Runtime metadata stays available regardless of API poll success."""
-        return True
-
-    @property
-    def native_value(self) -> Any:
-        """Return the current timestamp value."""
-        try:
-            value = self._value_getter(self._runtime_data)
-        except (AttributeError, ValueError):
-            return None
-        return value
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any] | None:
-        """Expose optional runtime metadata."""
-        if self._extra_attributes_getter is None:
-            return None
-        try:
-            return self._extra_attributes_getter(self._runtime_data)
-        except (AttributeError, ValueError):
-            return None

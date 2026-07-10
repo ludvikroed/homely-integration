@@ -16,12 +16,10 @@ from homely.client import HomelyClient
 
 from .const import (
     CONF_PENDING_IMPORT_LOCATIONS,
-    CONF_ENABLE_DEBUG_SENSORS,
     CONF_HOME_ID,
     CONF_LOCATION_ID,
     CONF_PASSWORD,
     CONF_USERNAME,
-    DEFAULT_ENABLE_DEBUG_SENSORS,
     DEFAULT_HOME_ID,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
@@ -126,9 +124,7 @@ def _find_location_by_id(
 
 def _entry_options() -> dict[str, Any]:
     """Return default options for newly created entries."""
-    return {
-        CONF_ENABLE_DEBUG_SENSORS: DEFAULT_ENABLE_DEBUG_SENSORS,
-    }
+    return {}
 
 
 def _coerce_scan_interval(value: Any, default: int = DEFAULT_SCAN_INTERVAL) -> int:

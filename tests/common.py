@@ -8,11 +8,9 @@ from typing import Any
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.homely.const import (
-    CONF_ENABLE_DEBUG_SENSORS,
     CONF_LOCATION_ID,
     CONF_PASSWORD,
     CONF_USERNAME,
-    DEFAULT_ENABLE_DEBUG_SENSORS,
     DOMAIN,
 )
 
@@ -241,10 +239,6 @@ def build_config_entry(
         data.update(data_overrides)
 
     default_options: dict[str, Any] = {}
-    if include_default_options:
-        default_options = {
-            CONF_ENABLE_DEBUG_SENSORS: DEFAULT_ENABLE_DEBUG_SENSORS,
-        }
     if options is not None:
         default_options.update(options)
 

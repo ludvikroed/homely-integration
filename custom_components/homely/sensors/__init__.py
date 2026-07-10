@@ -67,16 +67,20 @@ SENSORS: list[dict[str, Any]] = [
         "type": "binary_sensor",
         "name": "alarm",
         "get_translation_key": lambda device: (
-            "motion" if "motion" in device.get("modelName", "").lower() else "contact"
+            "motion"
+            if "motion" in str(device.get("modelName") or "").lower()
+            else "contact"
         ),
         "device_class": BinarySensorDeviceClass.DOOR,
         "device_suffix": "alarm",
         "get_name": lambda device: (
-            "motion" if "motion" in device.get("modelName", "").lower() else "contact"
+            "motion"
+            if "motion" in str(device.get("modelName") or "").lower()
+            else "contact"
         ),
         "get_device_class": lambda device: (
             BinarySensorDeviceClass.MOTION
-            if "motion" in device.get("modelName", "").lower()
+            if "motion" in str(device.get("modelName") or "").lower()
             else BinarySensorDeviceClass.DOOR
         ),
     },

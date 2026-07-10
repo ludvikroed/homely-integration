@@ -83,8 +83,8 @@ def test_binary_sensor_invert_logic_for_door_state(location_data):
     assert entity.is_on is True
 
 
-def test_binary_sensor_returns_false_for_unparseable_or_missing_values(location_data):
-    """Binary sensors should fail closed on missing or non-bool values."""
+def test_binary_sensor_returns_unknown_for_unparseable_or_missing_values(location_data):
+    """Binary sensors should not report a false safe state without valid data."""
     coordinator = MagicMock()
     coordinator.data = location_data
     coordinator.last_update_success = True
@@ -99,11 +99,11 @@ def test_binary_sensor_returns_false_for_unparseable_or_missing_values(location_
     coordinator.data["devices"][0]["features"]["alarm"]["states"]["alarm"]["value"] = (
         "maybe"
     )
-    assert entity.is_on is False
+    assert entity.is_on is None
 
     coordinator.data = {"devices": []}
     assert entity.available is False
-    assert entity.is_on is False
+    assert entity.is_on is None
 
 
 def test_online_sensor_becomes_unavailable_when_device_disappears(location_data):
@@ -121,7 +121,7 @@ def test_online_sensor_becomes_unavailable_when_device_disappears(location_data)
 
     coordinator.data = {"devices": []}
     assert entity.available is False
-    assert entity.is_on is False
+    assert entity.is_on is None
 
 
 def test_binary_sensor_falls_back_to_name_and_config_category(location_data):

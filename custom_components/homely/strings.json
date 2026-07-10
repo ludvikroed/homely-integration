@@ -149,15 +149,6 @@
           "failed_503": "Failed (503)",
           "unknown": "Unknown"
         }
-      },
-      "last_successful_poll": {
-        "name": "Last successful API poll"
-      },
-      "last_websocket_message": {
-        "name": "Last received live update"
-      },
-      "last_ws_device_update": {
-        "name": "Last updated device"
       }
     }
   }

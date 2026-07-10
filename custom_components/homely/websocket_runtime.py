@@ -102,21 +102,33 @@ def build_device_topology_change_handler(
 
     async def _reload_for_device_topology_change(
         pending_runtime: HomelyRuntimeData,
+        previous_ids: set[str],
     ) -> None:
         """Reload the entry once when the device list changes."""
         current_runtime = runtime_data_getter()
         if current_runtime is not pending_runtime:
             return
 
+        reload_succeeded = False
         try:
             logger.info(
                 "Reloading Homely entry after device topology change %s",
                 ctx(entry.entry_id, location_id),
             )
-            await hass.config_entries.async_reload(entry.entry_id)
+            reload_succeeded = bool(
+                await hass.config_entries.async_reload(entry.entry_id)
+            )
+        except Exception as err:
+            logger.warning(
+                "Failed to reload Homely entry after device topology change %s: %s",
+                ctx(entry.entry_id, location_id),
+                err,
+            )
         finally:
             current_runtime = runtime_data_getter()
             if current_runtime is pending_runtime:
+                if not reload_succeeded:
+                    current_runtime.tracked_device_ids = previous_ids
                 current_runtime.topology_reload_pending = False
 
     def _handle_device_topology_change(updated_data: dict[str, Any]) -> None:
@@ -161,7 +173,9 @@ def build_device_topology_change_handler(
                 [log_identifier(device_id) for device_id in added],
                 [log_identifier(device_id) for device_id in removed],
             )
-        hass.async_create_task(_reload_for_device_topology_change(runtime_data))
+        hass.async_create_task(
+            _reload_for_device_topology_change(runtime_data, previous_ids)
+        )
 
     return _handle_device_topology_change
 
@@ -464,7 +478,8 @@ async def async_init_websocket(
                             )
                             return
                         runtime.ws_disconnect_refresh_monotonic = now_monotonic
-                        hass.async_create_task(
+                        entry.async_create_background_task(
+                            hass,
                             _delayed_api_refresh_if_websocket_still_down(
                                 delay_seconds=WEBSOCKET_API_FALLBACK_DELAY_SECONDS,
                                 expected_runtime=runtime,
@@ -475,7 +490,8 @@ async def async_init_websocket(
                                 location_id=location_id,
                                 ctx=ctx,
                                 reason="websocket disconnect",
-                            )
+                            ),
+                            "homely websocket disconnect API fallback",
                         )
                         logger.debug(
                             "Scheduled delayed polling refresh after websocket disconnect %s delay_s=%s",
@@ -678,7 +694,8 @@ def register_websocket_health_watchdog(
             reason,
             at=now_monotonic,
         )
-        hass.async_create_task(
+        entry.async_create_background_task(
+            hass,
             _delayed_api_refresh_if_websocket_still_down(
                 delay_seconds=WEBSOCKET_API_FALLBACK_DELAY_SECONDS,
                 expected_runtime=runtime_data,
@@ -689,7 +706,8 @@ def register_websocket_health_watchdog(
                 location_id=location_id,
                 ctx=ctx,
                 reason="websocket watchdog",
-            )
+            ),
+            "homely websocket watchdog API fallback",
         )
         _notify_runtime_watchers(runtime_data)
 

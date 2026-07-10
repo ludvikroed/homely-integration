@@ -10,5 +10,5 @@
   "issue_tracker": "https://github.com/ludvikroed/homely-integration/issues",
   "loggers": ["custom_components.homely", "homely"],
   "requirements": ["python-homely==0.1.9"],
-  "version": "1.5.1-beta"
+  "version": "1.5.1-beta2"
 }

@@ -46,7 +46,7 @@ The `Last cloud API poll` sensor shows the result of the most recent API poll. I
 
 For deeper details and value references, including sensor status values, see [documentation.md](documentation.md).
 
-If Homely adds or removes devices on a location, the integration detects the topology change and reloads the entry automatically. New devices can then appear without manual reconfiguration. Devices that disappear from the API are not deleted automatically.
+If Homely adds or removes devices on a location, the integration detects the topology change and reloads the entry automatically. New devices can then appear without manual reconfiguration. A removal must be reported by two consecutive valid API snapshots before it is accepted, and devices are not deleted automatically.
 
 ---
 

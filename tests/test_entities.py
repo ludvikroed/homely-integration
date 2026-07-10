@@ -54,6 +54,7 @@ def test_alarm_panel_maps_known_alarm_states(location_data):
 
     coordinator.data["alarmState"] = "ARMED_AWAY_PENDING"
     assert entity.alarm_state is AlarmControlPanelState.ARMING
+    assert entity.code_arm_required is False
 
 
 def test_alarm_panel_exposes_last_disarmed_attributes(location_data):
@@ -435,11 +436,11 @@ def test_all_batteries_healthy_sensor_handles_malformed_nested_payloads():
     }
     entity = HomelyAllBatteriesHealthySensor(coordinator, "JF23", LOCATION_ID)
 
-    assert entity.is_on is False
+    assert entity.is_on is None
     assert entity.extra_state_attributes is None
 
     coordinator.data = {"devices": {}}
-    assert entity.is_on is False
+    assert entity.is_on is None
     assert entity.extra_state_attributes is None
 
 

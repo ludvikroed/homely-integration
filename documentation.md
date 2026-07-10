@@ -14,7 +14,7 @@ The Homely API is read-only for now, so this integration focuses on monitoring a
 
 If a device is missing, or a device only shows partial data, use the [Missing device or sensor issue form](https://github.com/ludvikroed/homely-integration/issues/new?template=missing_sensors_devices.yml).
 
-When Homely adds or removes devices on a home, the integration reloads the config entry automatically. New devices can then appear automatically. Devices that disappear from the API are not deleted automatically.
+When Homely adds or removes devices on a home, the integration reloads the config entry automatically. New devices can then appear automatically. A removal is accepted only after two consecutive valid API snapshots report the device as absent, and devices are not deleted automatically.
 
 ## Supported device types
 
@@ -103,7 +103,7 @@ If Homely stops reporting a device, you can remove it manually in Home Assistant
 2. Open the stale device.
 3. Click **Delete device**.
 
-The integration only allows deleting Homely devices that are no longer present in the latest API data. The home device itself is protected and cannot be deleted.
+The integration only allows deleting Homely devices that are still absent after the removal has been confirmed by two consecutive valid API snapshots. The home device itself is protected and cannot be deleted.
 
 ## Polling and WebSocket behavior
 
