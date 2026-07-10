@@ -323,6 +323,9 @@ async def test_async_setup_entry_reenables_legacy_integration_disabled_error_cod
                 AsyncMock(return_value=None),
             )
         )
+        stack.enter_context(
+            patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket)
+        )
         assert await hass.config_entries.async_setup(config_entry.entry_id)
         await hass.async_block_till_done()
 
@@ -376,6 +379,9 @@ async def test_async_setup_entry_keeps_user_disabled_error_code_sensor_disabled(
                 "async_forward_entry_setups",
                 AsyncMock(return_value=None),
             )
+        )
+        stack.enter_context(
+            patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket)
         )
         assert await hass.config_entries.async_setup(config_entry.entry_id)
         await hass.async_block_till_done()
@@ -695,11 +701,17 @@ async def test_async_setup_entry_missing_location_payload_loads_websocket_only(
             AsyncMock(return_value=None),
         ),
         patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),
+        patch(
+            "custom_components.homely.register_websocket_health_watchdog",
+            return_value=lambda: None,
+        ),
+        patch("custom_components.homely.schedule_api_error_retry"),
     ):
         assert await async_setup_entry(hass, config_entry)
 
     assert config_entry.runtime_data.last_data == {}
     assert config_entry.runtime_data.api_available is False
+    await config_entry.runtime_data.coordinator.async_shutdown()
 
 
 async def test_async_remove_config_entry_device_only_allows_stale_devices(
