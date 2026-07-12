@@ -141,7 +141,6 @@ SENSORS: list[dict[str, Any]] = [
         "device_class": None,
         "device_suffix": "battery_defect",
         "entity_category": "diagnostic",
-        "enabled_default": False,
         "icon": "mdi:battery-alert",
     },
     # Practical lock/report sensors (created only when available)
@@ -188,7 +187,6 @@ SENSORS: list[dict[str, Any]] = [
         "translation_key": "metering_check",
         "device_suffix": "metering_check",
         "entity_category": "diagnostic",
-        "enabled_default": False,
         "icon": "mdi:counter",
     },
     # Temperature sensors
@@ -239,7 +237,6 @@ SENSORS: list[dict[str, Any]] = [
         "unit": "V",
         "device_suffix": "battery_voltage",
         "entity_category": "diagnostic",
-        "enabled_default": False,
     },
     # Diagnostic sensors
     {
@@ -252,7 +249,6 @@ SENSORS: list[dict[str, Any]] = [
         "unit": "%",
         "device_suffix": "networklinkstrength",
         "entity_category": "diagnostic",
-        "enabled_default": False,
         "icon": "mdi:wifi",
     },
     {
@@ -264,7 +260,6 @@ SENSORS: list[dict[str, Any]] = [
         "device_class": None,
         "device_suffix": "networklinkaddress",
         "entity_category": "diagnostic",
-        "enabled_default": False,
         "icon": "mdi:identifier",
     },
     {

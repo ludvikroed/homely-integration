@@ -197,10 +197,50 @@ def test_apply_websocket_event_tracks_last_disarmed_user(location_data):
         "user_name": "Ingrid Blichfeldt",
         "user_id": "c3da25b6-c74a-4425-ab9c-3257c67711e3",
         "timestamp": "2026-07-09T20:14:33.429Z",
-        "event_id": 1999,
         "device_id": "035b5e37-5eb5-426e-8fe6-ef31c91850af",
     }
     assert location_data["lastDisarmedBy"] == result["last_disarmed"]
+
+
+def test_apply_websocket_event_tracks_last_armed_user(location_data):
+    """Completed armed events should expose the user from args payloads."""
+    result = apply_websocket_event_to_data(
+        location_data,
+        {
+            "event": "event",
+            "args": [
+                {
+                    "type": "alarm-state-changed",
+                    "data": {
+                        "state": "ARMED_AWAY",
+                        "timestamp": "2026-07-10T18:02:11.429Z",
+                        "userId": "user-armed-1",
+                        "userName": "Ola Nordmann",
+                        "eventId": 2001,
+                        "deviceId": "device-armed-1",
+                    },
+                }
+            ],
+        },
+    )
+
+    assert result["last_armed"] == {
+        "user_name": "Ola Nordmann",
+        "user_id": "user-armed-1",
+        "timestamp": "2026-07-10T18:02:11.429Z",
+        "device_id": "device-armed-1",
+    }
+    assert location_data["lastArmedBy"] == result["last_armed"]
+
+    pending = apply_websocket_event_to_data(
+        location_data,
+        {
+            "type": "alarm-state-changed",
+            "data": {"state": "ARMED_AWAY_PENDING", "userName": "Someone else"},
+        },
+    )
+    assert "last_armed" not in pending
+    assert location_data["lastArmedBy"] == result["last_armed"]
 
 
 def test_apply_websocket_event_updates_device_state(location_data):

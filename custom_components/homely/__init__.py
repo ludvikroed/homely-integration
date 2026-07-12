@@ -10,8 +10,9 @@ from typing import Any
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceEntry
 from homeassistant.helpers.storage import Store
@@ -44,13 +45,18 @@ from .logging_helpers import (
     _redact_for_debug_logging,
 )
 from .models import HomelyConfigEntry, HomelyRuntimeData
+from .repairs import (
+    async_delete_missing_devices_issue,
+    async_sync_missing_devices_issue,
+)
 from .runtime_state import (
-    cached_data_grace_seconds,
     current_runtime_data,
     device_id_snapshot,
+    LAST_ARMED_CACHE_KEY,
     LAST_DISARMED_CACHE_KEY,
     location_payload_error,
     record_api_poll_status,
+    record_last_armed,
     record_last_disarmed,
     record_successful_poll,
     tracked_api_device_ids,
@@ -71,11 +77,6 @@ PLATFORMS = [
     Platform.LOCK,
 ]
 _LOGGER = logging.getLogger(__name__)
-
-
-def _cached_data_grace_seconds(scan_interval: int) -> int:
-    """Compatibility wrapper for cache-grace helper tests."""
-    return cached_data_grace_seconds(scan_interval)
 
 
 def _device_id_snapshot(data: dict[str, Any] | None) -> set[str]:
@@ -211,19 +212,15 @@ def _schedule_pending_location_imports(
     _clear_pending_import_locations(hass, entry)
 
 
-def _reenable_legacy_error_code_entities(
+def _reenable_integration_disabled_entities(
     hass: HomeAssistant,
     entry: ConfigEntry,
 ) -> None:
-    """Re-enable legacy Yale error-code sensors that were once disabled by default.
+    """Re-enable Homely entities that older versions disabled by default.
 
-    Earlier versions exposed the `error_code` sensor with
-    `entity_registry_enabled_default = False`, which caused Home Assistant to
-    persist `disabled_by=integration` in the entity registry. Once we flipped the
-    default to enabled, existing installs kept the old disabled registry entry.
-
-    Only restore entities that were disabled by the integration itself; if the
-    user manually disabled one, we should respect that choice.
+    Home Assistant persists integration-disabled registry entries across
+    upgrades. Restore those entries now that every Homely entity is enabled by
+    default, while preserving explicit user choices.
     """
     entity_registry = er.async_get(hass)
     reenabled = 0
@@ -232,11 +229,7 @@ def _reenable_legacy_error_code_entities(
         entity_registry,
         entry.entry_id,
     ):
-        if registry_entry.domain != Platform.SENSOR:
-            continue
         if registry_entry.platform != DOMAIN:
-            continue
-        if not registry_entry.unique_id.endswith("_error_code"):
             continue
         if registry_entry.disabled_by is not er.RegistryEntryDisabler.INTEGRATION:
             continue
@@ -249,7 +242,7 @@ def _reenable_legacy_error_code_entities(
 
     if reenabled:
         _LOGGER.info(
-            "Re-enabled %s legacy Homely error code sensor(s) entry_id=%s",
+            "Re-enabled %s Homely entity registry entries entry_id=%s",
             reenabled,
             entry.entry_id,
         )
@@ -324,30 +317,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> bo
         expires_in_seconds,
     )
 
-    # Resolve location id for this entry. Prefer stored location_id and fall back
-    # to legacy home_id-based entries created before multi-step location selection.
-    location_response = await get_location_id(hass, access_token_str)
-    if not location_response:
-        raise ConfigEntryNotReady("Failed to fetch Homely locations")
-    location_id = None
+    # Config flow and reauth already validate modern entries. Avoid fetching the
+    # complete account location list on every restart; legacy home_id entries
+    # still need that lookup once so they can be migrated to a stable location_id.
     partner_code: int | str | None = None
     configured_location_id = entry.data.get(CONF_LOCATION_ID)
     if configured_location_id is not None:
-        configured_location_id = str(configured_location_id)
-        for location_item in location_response:
-            candidate_location_id = location_item.get("locationId")
-            if (
-                candidate_location_id is not None
-                and str(candidate_location_id) == configured_location_id
-            ):
-                location_id = candidate_location_id
-                partner_code = location_item.get("partnerCode")
-                break
-        if location_id is None:
-            raise ConfigEntryNotReady(
-                f"Configured location_id={configured_location_id} is not available"
-            )
+        location_id: str | int = str(configured_location_id)
+        _LOGGER.debug(
+            "Using stored location_id entry_id=%s location_id=%s",
+            entry_id,
+            location_id,
+        )
     else:
+        location_response = await get_location_id(hass, access_token_str)
+        if not location_response:
+            raise ConfigEntryNotReady("Failed to fetch Homely locations")
         home_id = int(
             entry.options.get(
                 CONF_HOME_ID,
@@ -407,22 +392,40 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> bo
     ):
         stored_data = None
 
-    data, initial_fetch_status = await get_data_with_status(
-        hass, access_token_str, location_id
-    )
-    initial_payload_error = (
-        location_payload_error(data, normalized_location_id) if data else None
-    )
-    if initial_payload_error is not None:
-        _LOGGER.warning(
-            "Initial Homely API poll returned an invalid payload; treating it as a failed poll %s error=%s",
+    initial_fetch_deferred = stored_data is not None
+    initial_fetch_status: int | None = None
+    initial_payload_error: str | None = None
+    data: dict[str, Any] | None = stored_data
+    if initial_fetch_deferred:
+        _LOGGER.debug(
+            "Loading entry from stored data while startup API synchronization runs in background %s",
             _ctx(entry_id, location_id),
-            initial_payload_error,
         )
-        data = None
+    else:
+        data, initial_fetch_status = await get_data_with_status(
+            hass, access_token_str, location_id
+        )
+        initial_payload_error = (
+            location_payload_error(data, normalized_location_id) if data else None
+        )
+        if initial_payload_error is not None:
+            _LOGGER.warning(
+                "Initial Homely API poll returned an invalid payload; treating it as a failed poll %s error=%s",
+                _ctx(entry_id, location_id),
+                initial_payload_error,
+            )
+            data = None
     seed_without_poll = False
+    save_initial_data = False
     initial_pending_removed_ids: set[str] = set()
-    if not data:
+    if initial_fetch_deferred:
+        assert data is not None
+        seed_without_poll = True
+        initial_alarm_state = _get_alarm_state(data)
+        if initial_alarm_state is not None:
+            _set_alarm_state(data, initial_alarm_state)
+        _log_startup_device_payloads(data, entry_id, location_id)
+    elif not data:
         # The initial /home poll returned no usable data. This happens when
         # Homely rate limits us, or when the REST API is temporarily broken
         # while the websocket still works. Degrade gracefully instead of
@@ -479,7 +482,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> bo
                     len(initial_pending_removed_ids),
                 )
         _log_startup_device_payloads(data, entry_id, location_id)
-        await store.async_save(data)
+        save_initial_data = True
 
     def _runtime_data() -> HomelyRuntimeData | None:
         """Return runtime data only while the entry is still loaded."""
@@ -507,7 +510,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> bo
         runtime_data_getter=_runtime_data,
         ctx=_ctx,
         log_identifier=_log_identifier,
+        save_snapshot=store.async_save,
     )
+
+    @callback
+    def _sync_missing_devices_issue(snapshot: dict[str, Any]) -> None:
+        async_sync_missing_devices_issue(hass, entry, snapshot)
+
     async_update_data = build_async_update_data(
         hass=hass,
         logger=_LOGGER,
@@ -537,6 +546,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> bo
         get_alarm_state=_get_alarm_state,
         set_alarm_state=_set_alarm_state,
         handle_device_topology_change=handle_device_topology_change,
+        sync_missing_devices_issue=_sync_missing_devices_issue,
         ctx=_ctx,
     )
     coordinator = DataUpdateCoordinator(
@@ -566,43 +576,49 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> bo
         partner_code=partner_code,
         api_available=initial_api_available,
     )
+    record_last_armed(runtime_data, data.get(LAST_ARMED_CACHE_KEY))
     record_last_disarmed(runtime_data, data.get(LAST_DISARMED_CACHE_KEY))
-    if initial_api_available:
-        # Only claim a successful poll when one actually happened. When seeding
-        # from cache the data-activity baseline (set by the dataclass default)
-        # keeps the cache-grace logic working, but the poll timestamps stay
-        # unset so diagnostics don't report a poll that never ran.
-        record_successful_poll(runtime_data)
-    else:
-        record_api_poll_status(
-            runtime_data,
-            "failed",
-            status_code=initial_fetch_status,
-            detail=(
-                f"Initial API poll returned an invalid payload: {initial_payload_error}"
-                if initial_payload_error is not None
-                else "Initial API poll failed; using cached or websocket-only data"
-            ),
-        )
-        schedule_api_error_retry(
-            hass=hass,
-            runtime_data=runtime_data,
-            runtime_data_getter=_runtime_data,
-            logger=_LOGGER,
-            entry_id=entry_id,
-            location_id=location_id,
-            ctx=_ctx,
-            status_code=initial_fetch_status,
-        )
+    if not initial_fetch_deferred:
+        if initial_api_available:
+            # Only claim a successful poll when one actually happened. When seeding
+            # from cache the data-activity baseline (set by the dataclass default)
+            # keeps the cache-grace logic working, but the poll timestamps stay
+            # unset so diagnostics don't report a poll that never ran.
+            record_successful_poll(runtime_data)
+        else:
+            record_api_poll_status(
+                runtime_data,
+                "failed",
+                status_code=initial_fetch_status,
+                detail=(
+                    f"Initial API poll returned an invalid payload: {initial_payload_error}"
+                    if initial_payload_error is not None
+                    else "Initial API poll failed; using cached or websocket-only data"
+                ),
+            )
+            schedule_api_error_retry(
+                hass=hass,
+                runtime_data=runtime_data,
+                runtime_data_getter=_runtime_data,
+                logger=_LOGGER,
+                entry_id=entry_id,
+                location_id=location_id,
+                ctx=_ctx,
+                status_code=initial_fetch_status,
+            )
     entry.runtime_data = runtime_data
+    if save_initial_data:
+        entry.async_create_background_task(
+            hass,
+            store.async_save(data),
+            "homely initial data cache save",
+        )
 
     def _save_on_successful_update() -> None:
         # Delay the write: this listener fires for every websocket event, and
         # an immediate save per event would hammer .storage (flash wear).
         if coordinator.last_update_success and runtime_data.last_data:
             store.async_delay_save(lambda: runtime_data.last_data, 60)
-
-    entry.async_on_unload(coordinator.async_add_listener(_save_on_successful_update))
 
     hass.async_create_task(
         async_init_websocket(
@@ -671,6 +687,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> bo
     # snapshot. Seed it directly instead of polling /home a second time through
     # async_config_entry_first_refresh().
     coordinator.async_set_updated_data(data)
+    entry.async_on_unload(coordinator.async_add_listener(_save_on_successful_update))
     if seed_without_poll:
         device_count = (
             len(data["devices"])
@@ -684,9 +701,39 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> bo
             location_id,
             device_count,
         )
-    _reenable_legacy_error_code_entities(hass, entry)
+    _reenable_integration_disabled_entities(hass, entry)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     _schedule_pending_location_imports(hass, entry)
+    @callback
+    def _handle_device_registry_updated(
+        event: Event[dr.EventDeviceRegistryUpdatedData],
+    ) -> None:
+        if event.data.get("action") != "remove":
+            return
+        current_runtime = _runtime_data()
+        if current_runtime is not None:
+            _sync_missing_devices_issue(current_runtime.last_data)
+
+    try:
+        entry.async_on_unload(
+            hass.bus.async_listen(
+                dr.EVENT_DEVICE_REGISTRY_UPDATED,
+                _handle_device_registry_updated,
+            )
+        )
+    except Exception:
+        _LOGGER.debug(
+            "Could not register device-registry listener entry_id=%s location_id=%s",
+            entry_id,
+            location_id,
+        )
+
+    if initial_fetch_deferred:
+        entry.async_create_background_task(
+            hass,
+            coordinator.async_refresh(),
+            "homely startup API synchronization",
+        )
 
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
 
@@ -696,6 +743,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> bo
         location_id,
     )
     return True
+
+
+async def async_remove_entry(
+    hass: HomeAssistant, entry: HomelyConfigEntry
+) -> None:
+    """Clean up repairs when a config entry is removed."""
+    async_delete_missing_devices_issue(hass, entry)
 
 
 async def async_remove_config_entry_device(

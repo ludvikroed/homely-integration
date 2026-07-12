@@ -20,7 +20,7 @@ from homeassistant.helpers.update_coordinator import (
 
 from .const import DOMAIN
 from .models import HomelyConfigEntry, HomelyRuntimeData, get_entry_runtime_data
-from .runtime_state import LAST_DISARMED_CACHE_KEY
+from .runtime_state import LAST_ARMED_CACHE_KEY, LAST_DISARMED_CACHE_KEY
 
 _LOGGER = logging.getLogger(__name__)
 PARALLEL_UPDATES = 0
@@ -140,8 +140,9 @@ class HomelyAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
-        """Return metadata for the last known disarm event."""
-        attrs = self._last_disarmed_attrs()
+        """Return metadata for the last known arm and disarm events."""
+        attrs = self._last_armed_attrs()
+        attrs.update(self._last_disarmed_attrs())
         return attrs or None
 
     def _location_data(self) -> dict[str, Any]:
@@ -162,30 +163,48 @@ class HomelyAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
                 attrs["last_disarmed_user_id"] = runtime_data.last_disarmed_user_id
             if runtime_data.last_disarmed_at:
                 attrs["last_disarmed_at"] = runtime_data.last_disarmed_at
-            if runtime_data.last_disarmed_event_id is not None:
-                attrs["last_disarmed_event_id"] = runtime_data.last_disarmed_event_id
             if runtime_data.last_disarmed_device_id:
                 attrs["last_disarmed_device_id"] = runtime_data.last_disarmed_device_id
             return attrs
 
-        last_disarmed = self._location_data().get(LAST_DISARMED_CACHE_KEY)
-        if not isinstance(last_disarmed, dict):
+        return self._cached_alarm_event_attrs(LAST_DISARMED_CACHE_KEY, "disarmed")
+
+    def _last_armed_attrs(self) -> dict[str, Any]:
+        """Return alarm-panel attributes for the last completed armed event."""
+        runtime_data = self._runtime_data
+        if runtime_data is not None:
+            attrs: dict[str, Any] = {}
+            if runtime_data.last_armed_by:
+                attrs["last_armed_by"] = runtime_data.last_armed_by
+            if runtime_data.last_armed_user_id:
+                attrs["last_armed_user_id"] = runtime_data.last_armed_user_id
+            if runtime_data.last_armed_at:
+                attrs["last_armed_at"] = runtime_data.last_armed_at
+            if runtime_data.last_armed_device_id:
+                attrs["last_armed_device_id"] = runtime_data.last_armed_device_id
+            return attrs
+
+        return self._cached_alarm_event_attrs(LAST_ARMED_CACHE_KEY, "armed")
+
+    def _cached_alarm_event_attrs(
+        self, cache_key: str, attribute_prefix: str
+    ) -> dict[str, Any]:
+        """Return normalized alarm-event attributes from cached location data."""
+        details = self._location_data().get(cache_key)
+        if not isinstance(details, dict):
             return {}
 
-        attrs = {}
-        user_name = last_disarmed.get("user_name") or last_disarmed.get("userName")
-        user_id = last_disarmed.get("user_id") or last_disarmed.get("userId")
-        disarmed_at = last_disarmed.get("timestamp") or last_disarmed.get("time")
-        event_id = last_disarmed.get("event_id") or last_disarmed.get("eventId")
-        device_id = last_disarmed.get("device_id") or last_disarmed.get("deviceId")
+        attrs: dict[str, Any] = {}
+        user_name = details.get("user_name") or details.get("userName")
+        user_id = details.get("user_id") or details.get("userId")
+        changed_at = details.get("timestamp") or details.get("time")
+        device_id = details.get("device_id") or details.get("deviceId")
         if user_name:
-            attrs["last_disarmed_by"] = user_name
+            attrs[f"last_{attribute_prefix}_by"] = user_name
         if user_id:
-            attrs["last_disarmed_user_id"] = user_id
-        if disarmed_at:
-            attrs["last_disarmed_at"] = disarmed_at
-        if event_id is not None:
-            attrs["last_disarmed_event_id"] = event_id
+            attrs[f"last_{attribute_prefix}_user_id"] = user_id
+        if changed_at:
+            attrs[f"last_{attribute_prefix}_at"] = changed_at
         if device_id:
-            attrs["last_disarmed_device_id"] = device_id
+            attrs[f"last_{attribute_prefix}_device_id"] = device_id
         return attrs

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .runtime_state import LAST_DISARMED_CACHE_KEY
+from .runtime_state import LAST_ARMED_CACHE_KEY, LAST_DISARMED_CACHE_KEY
 
 
 def _normalize_event_type(event_type: Any) -> str | None:
@@ -56,13 +56,12 @@ def _event_type_and_payload(event_data: dict[str, Any]) -> tuple[str | None, dic
     return _normalize_event_type(raw_event_type), payload if isinstance(payload, dict) else {}
 
 
-def _last_disarmed_details(payload: dict[str, Any]) -> dict[str, Any]:
-    """Build stable metadata for the last disarm event."""
+def _alarm_change_details(payload: dict[str, Any]) -> dict[str, Any]:
+    """Build stable metadata for an alarm state-change event."""
     return {
         "user_name": payload.get("userName"),
         "user_id": payload.get("userId"),
         "timestamp": payload.get("timestamp"),
-        "event_id": payload.get("eventId"),
         "device_id": payload.get("deviceId"),
     }
 
@@ -156,10 +155,23 @@ def apply_websocket_event_to_data(
             alarm_state_dict = ensure_alarm_root(data_dict)
             alarm_state_dict["value"] = alarm_state
             data_dict["alarmState"] = alarm_state
-            if str(alarm_state).upper() == "DISARMED":
-                last_disarmed = _last_disarmed_details(payload)
-                data_dict[LAST_DISARMED_CACHE_KEY] = last_disarmed
-                result["last_disarmed"] = last_disarmed
+            normalized_state = str(alarm_state).upper()
+            if normalized_state == "DISARMED":
+                last_disarmed = _alarm_change_details(payload)
+                if any(value is not None for value in last_disarmed.values()):
+                    data_dict[LAST_DISARMED_CACHE_KEY] = last_disarmed
+                    result["last_disarmed"] = last_disarmed
+            elif (
+                normalized_state == "ARMED"
+                or (
+                    normalized_state.startswith("ARMED_")
+                    and not normalized_state.endswith("_PENDING")
+                )
+            ):
+                last_armed = _alarm_change_details(payload)
+                if any(value is not None for value in last_armed.values()):
+                    data_dict[LAST_ARMED_CACHE_KEY] = last_armed
+                    result["last_armed"] = last_armed
         result["updated"] = alarm_state is not None
         result["alarm_state"] = alarm_state
         return result

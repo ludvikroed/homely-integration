@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 import logging
 import time
@@ -13,12 +14,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from custom_components.homely import api
 from custom_components.homely import (
-    _cached_data_grace_seconds,
     _device_id_snapshot,
     _log_startup_device_payloads,
     _pending_import_locations,
@@ -42,6 +44,7 @@ from custom_components.homely.const import (
     DOMAIN,
 )
 from custom_components.homely.models import HomelyRuntimeData
+from custom_components.homely.repairs import missing_devices_issue_id
 from tests.common import LOCATION_ID, SECOND_LOCATION_ID, build_config_entry
 
 
@@ -141,15 +144,6 @@ def test_debug_redaction_and_device_snapshot_cover_defensive_branches():
     ]
     assert _device_id_snapshot(None) == set()
     assert _device_id_snapshot({"devices": {}}) == set()
-
-
-def test_cached_data_grace_seconds_exceeds_scan_interval():
-    """Grace must survive multi-day API outages and exceed long scan intervals."""
-    seven_days = 7 * 24 * 60 * 60
-    assert _cached_data_grace_seconds(30) == seven_days
-    assert _cached_data_grace_seconds(120) == seven_days
-    assert _cached_data_grace_seconds(600) == seven_days
-    assert _cached_data_grace_seconds(8 * 24 * 60 * 60) == 16 * 24 * 60 * 60
 
 
 async def _setup_loaded_entry(
@@ -277,14 +271,14 @@ async def test_async_setup_entry_fetches_home_snapshot_once(
     get_data_with_status.assert_awaited_once()
 
 
-async def test_async_setup_entry_reenables_legacy_integration_disabled_error_code_sensor(
+async def test_async_setup_entry_reenables_integration_disabled_entities(
     hass,
     token_response,
     location_response,
     location_data,
     updated_location_data,
 ):
-    """Legacy integration-disabled Yale error code sensors should be restored."""
+    """Entities disabled by older integration defaults should be restored."""
     config_entry = build_config_entry()
     config_entry.add_to_hass(hass)
     entity_registry = er.async_get(hass)
@@ -334,14 +328,14 @@ async def test_async_setup_entry_reenables_legacy_integration_disabled_error_cod
     assert refreshed.disabled_by is None
 
 
-async def test_async_setup_entry_keeps_user_disabled_error_code_sensor_disabled(
+async def test_async_setup_entry_keeps_user_disabled_entities_disabled(
     hass,
     token_response,
     location_response,
     location_data,
     updated_location_data,
 ):
-    """User-disabled Yale error code sensors should stay disabled."""
+    """Explicitly user-disabled Homely entities should stay disabled."""
     config_entry = build_config_entry()
     config_entry.add_to_hass(hass)
     entity_registry = er.async_get(hass)
@@ -518,8 +512,11 @@ async def test_async_setup_entry_missing_credentials_raises_auth_failed(hass):
 async def test_async_setup_entry_missing_locations_raises_not_ready(
     hass, token_response
 ):
-    """Missing location data should mark the entry as not ready."""
-    config_entry = build_config_entry()
+    """Missing location data should keep legacy entries from loading."""
+    config_entry = build_config_entry(
+        data_overrides={CONF_LOCATION_ID: None},
+        unique_id=None,
+    )
     config_entry.add_to_hass(hass)
 
     with (
@@ -648,12 +645,17 @@ async def test_async_setup_entry_invalid_home_mapping_raises_not_ready(
             raise AssertionError("Expected ConfigEntryNotReady")
 
 
-async def test_async_setup_entry_missing_configured_location_raises_not_ready(
+async def test_async_setup_entry_uses_stored_location_without_account_lookup(
     hass,
     token_response,
+    updated_location_data,
 ):
-    """Missing configured locations should raise not-ready."""
+    """Modern entries should avoid a redundant account-location request."""
     config_entry = build_config_entry()
+    config_entry.add_to_hass(hass)
+    get_location_id = AsyncMock(
+        return_value=[{"locationId": "other-location", "name": "Other"}]
+    )
 
     with (
         patch(
@@ -662,15 +664,23 @@ async def test_async_setup_entry_missing_configured_location_raises_not_ready(
         ),
         patch(
             "custom_components.homely.get_location_id",
-            AsyncMock(return_value=[{"locationId": "other-location", "name": "Other"}]),
-        )
+            get_location_id,
+        ),
+        patch(
+            "custom_components.homely.get_data_with_status",
+            AsyncMock(return_value=(updated_location_data, 200)),
+        ),
+        patch.object(
+            hass.config_entries,
+            "async_forward_entry_setups",
+            AsyncMock(return_value=None),
+        ),
+        patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),
     ):
-        try:
-            await async_setup_entry(hass, config_entry)
-        except ConfigEntryNotReady:
-            pass
-        else:
-            raise AssertionError("Expected ConfigEntryNotReady")
+        assert await hass.config_entries.async_setup(config_entry.entry_id)
+        await hass.async_block_till_done()
+
+    get_location_id.assert_not_awaited()
 
 
 async def test_async_setup_entry_missing_location_payload_loads_websocket_only(
@@ -1230,6 +1240,56 @@ async def test_async_setup_entry_polls_initially_even_with_cached_snapshot(
     assert retry_delays == [180]
     assert runtime_data.next_api_retry_status_code == 429
     assert runtime_data.next_api_retry_delay_seconds == 180
+
+
+async def test_async_setup_entry_does_not_wait_for_api_when_cache_exists(
+    hass,
+    token_response,
+    location_data,
+    updated_location_data,
+):
+    """Cached entries should load while startup API synchronization runs."""
+    from homeassistant.helpers.storage import Store
+
+    store: Store = Store(hass, 1, f"homely.{LOCATION_ID}")
+    await store.async_save(location_data)
+    config_entry = build_config_entry()
+    config_entry.add_to_hass(hass)
+    api_started = asyncio.Event()
+    release_api = asyncio.Event()
+
+    async def _delayed_api_result(*_args):
+        api_started.set()
+        await release_api.wait()
+        return updated_location_data, 200
+
+    with (
+        patch(
+            "custom_components.homely.fetch_token_with_reason",
+            AsyncMock(return_value=(token_response, None)),
+        ),
+        patch(
+            "custom_components.homely.get_data_with_status",
+            AsyncMock(side_effect=_delayed_api_result),
+        ),
+        patch.object(
+            hass.config_entries,
+            "async_forward_entry_setups",
+            AsyncMock(return_value=None),
+        ),
+        patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),
+    ):
+        assert await asyncio.wait_for(
+            hass.config_entries.async_setup(config_entry.entry_id), timeout=1
+        )
+        await asyncio.wait_for(api_started.wait(), timeout=1)
+        assert config_entry.state is ConfigEntryState.LOADED
+        assert config_entry.runtime_data.coordinator.data["name"] == location_data["name"]
+
+        release_api.set()
+        await hass.async_block_till_done()
+
+    assert config_entry.runtime_data.coordinator.data == updated_location_data
 
 
 async def test_async_setup_entry_does_not_confirm_cached_device_removal_from_one_poll(
@@ -1889,7 +1949,9 @@ async def test_coordinator_update_method_reload_on_new_device_topology(
     location_data,
     updated_location_data,
 ):
-    """Device additions or removals should trigger a controlled entry reload."""
+    """Device additions should be cached before a controlled entry reload."""
+    from homeassistant.helpers.storage import Store
+
     config_entry = build_config_entry()
     changed_data = deepcopy(updated_location_data)
     changed_data["devices"].append(
@@ -1925,6 +1987,9 @@ async def test_coordinator_update_method_reload_on_new_device_topology(
 
     assert result["devices"][-1]["id"] == "new-device-id"
     assert "new-device-id" in runtime_data.tracked_device_ids
+    cached = await Store(hass, 1, f"homely.{LOCATION_ID}").async_load()
+    assert cached is not None
+    assert "new-device-id" in _device_id_snapshot(cached)
     async_reload.assert_awaited_once_with(config_entry.entry_id)
     assert runtime_data.topology_reload_pending is False
 
@@ -1994,6 +2059,14 @@ async def test_coordinator_requires_two_snapshots_before_device_removal(
     )
     runtime_data = config_entry.runtime_data
     removed_device = updated_location_data["devices"][-1]
+    device_registry = dr.async_get(hass)
+    registry_device = device_registry.async_get_or_create(
+        config_entry_id=config_entry.entry_id,
+        identifiers={(DOMAIN, removed_device["id"])},
+        name=removed_device["name"],
+    )
+    issue_registry = ir.async_get(hass)
+    issue_id = missing_devices_issue_id(config_entry.entry_id)
     missing_device_data = deepcopy(updated_location_data)
     missing_device_data["devices"] = missing_device_data["devices"][:-1]
 
@@ -2018,13 +2091,27 @@ async def test_coordinator_requires_two_snapshots_before_device_removal(
         assert removed_device["id"] in _device_id_snapshot(first)
         assert runtime_data.pending_removed_device_ids == {removed_device["id"]}
         async_reload.assert_not_awaited()
+        assert issue_registry.async_get_issue(DOMAIN, issue_id) is None
 
         second = await runtime_data.coordinator.update_method()
         await hass.async_block_till_done()
 
     assert removed_device["id"] not in _device_id_snapshot(second)
     assert runtime_data.pending_removed_device_ids == set()
-    async_reload.assert_awaited_once_with(config_entry.entry_id)
+    async_reload.assert_not_awaited()
+    issue = issue_registry.async_get_issue(DOMAIN, issue_id)
+    assert issue is not None
+    assert issue.severity is ir.IssueSeverity.WARNING
+    assert issue.translation_key == "missing_devices"
+    assert issue.translation_placeholders == {
+        "count": "1",
+        "devices": f"- {removed_device['name']}",
+        "home": config_entry.title,
+    }
+
+    device_registry.async_remove_device(registry_device.id)
+    await hass.async_block_till_done()
+    assert issue_registry.async_get_issue(DOMAIN, issue_id) is None
 
 
 async def test_coordinator_retries_topology_reload_after_reload_failure(
@@ -2076,14 +2163,14 @@ async def test_coordinator_retries_topology_reload_after_reload_failure(
     assert runtime_data.topology_reload_pending is False
 
 
-async def test_coordinator_update_method_refresh_invalid_auth_uses_cache(
+async def test_coordinator_update_method_refresh_invalid_auth_starts_reauth(
     hass,
     token_response,
     location_response,
     location_data,
     updated_location_data,
 ):
-    """Runtime invalid_auth responses should keep cached data instead of reauth."""
+    """Explicit credential rejection should start reauth despite fresh cache."""
     config_entry = build_config_entry()
     await _setup_loaded_entry(
         hass,
@@ -2104,10 +2191,12 @@ async def test_coordinator_update_method_refresh_invalid_auth_uses_cache(
             "custom_components.homely.fetch_token_with_reason",
             AsyncMock(return_value=(None, "invalid_auth")),
         ),
+        patch.object(config_entry, "async_start_reauth") as async_start_reauth,
     ):
-        result = await runtime_data.coordinator.update_method()
+        await runtime_data.coordinator.async_refresh()
 
-    assert result == runtime_data.last_data
+    async_start_reauth.assert_called_once_with(hass)
+    assert runtime_data.coordinator.last_update_success is False
 
 
 async def test_coordinator_update_method_refresh_invalid_auth_with_stale_cache_starts_reauth(
@@ -2117,7 +2206,7 @@ async def test_coordinator_update_method_refresh_invalid_auth_with_stale_cache_s
     location_data,
     updated_location_data,
 ):
-    """Permanent credential rejection should start reauth once cache is stale."""
+    """Permanent credential rejection should also start reauth with stale cache."""
     config_entry = build_config_entry()
     await _setup_loaded_entry(
         hass,
@@ -2296,14 +2385,14 @@ async def test_coordinator_update_method_refresh_exception_uses_cache(
     )
 
 
-async def test_coordinator_update_method_marks_stale_cached_data_unavailable(
+async def test_coordinator_update_method_keeps_old_cache_without_websocket(
     hass,
     token_response,
     location_response,
     location_data,
     updated_location_data,
 ):
-    """Stale cached data should stop masking failures when websocket is down."""
+    """API failures should keep old cached data even when websocket is down."""
     config_entry = build_config_entry()
     await _setup_loaded_entry(
         hass,
@@ -2327,24 +2416,20 @@ async def test_coordinator_update_method_marks_stale_cached_data_unavailable(
             AsyncMock(return_value=(None, "cannot_connect")),
         ),
     ):
-        try:
-            await runtime_data.coordinator.update_method()
-        except UpdateFailed as err:
-            assert "Failed to refresh token and full login also failed" in str(err)
-        else:
-            raise AssertionError("Expected UpdateFailed")
+        result = await runtime_data.coordinator.update_method()
 
+    assert result == runtime_data.last_data
     assert runtime_data.api_available is False
 
 
-async def test_coordinator_update_method_invalid_refresh_payload_and_stale_cache_raises(
+async def test_coordinator_update_method_invalid_refresh_payload_keeps_old_cache(
     hass,
     token_response,
     location_response,
     location_data,
     updated_location_data,
 ):
-    """Invalid refresh payloads should not mask failures once websocket and cache are both dead."""
+    """Invalid refresh payloads should retain the last valid cached snapshot."""
     config_entry = build_config_entry()
     await _setup_loaded_entry(
         hass,
@@ -2369,13 +2454,9 @@ async def test_coordinator_update_method_invalid_refresh_payload_and_stale_cache
             AsyncMock(return_value=(None, "cannot_connect")),
         ),
     ):
-        try:
-            await runtime_data.coordinator.update_method()
-        except UpdateFailed as err:
-            assert "Failed to refresh token and full login also failed" in str(err)
-        else:
-            raise AssertionError("Expected UpdateFailed")
+        result = await runtime_data.coordinator.update_method()
 
+    assert result == runtime_data.last_data
     assert runtime_data.api_available is False
 
 
@@ -2955,14 +3036,14 @@ async def test_coordinator_update_method_http_401_updates_connected_websocket_to
     websocket.sync_token.assert_called_once_with("fresh-access-token")
 
 
-async def test_coordinator_update_method_http_401_uses_cache_when_full_login_is_invalid(
+async def test_coordinator_update_method_http_401_invalid_login_starts_reauth(
     hass,
     token_response,
     location_response,
     location_data,
     updated_location_data,
 ):
-    """Polling invalid_auth should keep retrying later instead of triggering reauth."""
+    """A rejected access token and stored password should start reauth."""
     config_entry = build_config_entry()
     await _setup_loaded_entry(
         hass,
@@ -2984,9 +3065,12 @@ async def test_coordinator_update_method_http_401_uses_cache_when_full_login_is_
             AsyncMock(return_value=(None, "invalid_auth")),
         ),
     ):
-        result = await runtime_data.coordinator.update_method()
-
-    assert result == runtime_data.last_data
+        try:
+            await runtime_data.coordinator.update_method()
+        except ConfigEntryAuthFailed as err:
+            assert "credentials were rejected" in str(err)
+        else:
+            raise AssertionError("Expected ConfigEntryAuthFailed")
 
 
 async def test_coordinator_update_method_http_401_uses_cache_when_full_login_cannot_connect(
@@ -3163,6 +3247,8 @@ async def test_coordinator_update_method_keeps_cached_alarm_if_api_omits_it(
     )
     runtime_data = config_entry.runtime_data
     runtime_data.last_data["alarmState"] = "ARM_PENDING"
+    runtime_data.last_data["lastArmedBy"] = {"user_name": "Ola Nordmann"}
+    runtime_data.last_data["lastDisarmedBy"] = {"user_name": "Ingrid Blichfeldt"}
     payload = deepcopy(updated_location_data)
     payload.pop("alarmState", None)
     payload["features"]["alarm"]["states"]["alarm"].pop("value", None)
@@ -3175,6 +3261,8 @@ async def test_coordinator_update_method_keeps_cached_alarm_if_api_omits_it(
 
     assert result["alarmState"] == "ARM_PENDING"
     assert result["features"]["alarm"]["states"]["alarm"]["value"] == "ARM_PENDING"
+    assert result["lastArmedBy"] == {"user_name": "Ola Nordmann"}
+    assert result["lastDisarmedBy"] == {"user_name": "Ingrid Blichfeldt"}
 
 
 async def test_async_reload_entry_calls_reload(hass):
@@ -3264,13 +3352,19 @@ async def test_async_setup_entry_websocket_callbacks_update_runtime_and_listener
     ws.on_data_update(
         {
             "type": "alarm-state-changed",
-            "data": {"alarmState": "ARMED_AWAY"},
+            "data": {
+                "alarmState": "ARMED_AWAY",
+                "userName": "Ola Nordmann",
+                "userId": "user-armed-1",
+            },
         }
     )
     assert runtime_data.last_data["alarmState"] == "ARMED_AWAY"
     assert runtime_data.last_data_activity_monotonic > 0
     assert runtime_data.last_websocket_event_at is not None
     assert runtime_data.last_websocket_event_type == "alarm-state-changed"
+    assert runtime_data.last_armed_by == "Ola Nordmann"
+    assert runtime_data.last_armed_user_id == "user-armed-1"
 
     ws.on_data_update(
         {

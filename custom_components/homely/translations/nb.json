@@ -27,18 +27,24 @@
     },
     "error": {
       "cannot_connect": "Kunne ikke koble til Homely akkurat nå. Sjekk internettforbindelsen og prøv igjen.",
-      "invalid_auth": "Feil brukernavn eller passord.",
+      "invalid_auth": "Feil e-postadresse eller passord.",
       "invalid_location": "Det valgte hjemmet er ikke gyldig for denne kontoen.",
-      "invalid_scan_interval": "Oppdateringsintervallet må være 30 sekunder eller høyere.",
+      "invalid_scan_interval": "Oppdateringsintervallet må være minst 30 sekunder.",
       "no_homes": "Fant ingen hjem på denne kontoen.",
-      "unknown": "Det oppstod en uventet feil"
+      "unknown": "Det oppstod en uventet feil."
     },
     "abort": {
-      "already_configured": "Dette hjemmet er allerede konfigurert",
-      "invalid_auth": "Feil brukernavn eller passord.",
+      "already_configured": "Dette hjemmet er allerede konfigurert.",
+      "invalid_auth": "Feil e-postadresse eller passord.",
       "invalid_location": "Det valgte hjemmet er ikke gyldig for denne kontoen.",
-      "reauth_successful": "Påloggingen ble oppdatert",
-      "unknown": "En uventet feil oppstod"
+      "reauth_successful": "Påloggingen ble oppdatert.",
+      "unknown": "Det oppstod en uventet feil."
+    }
+  },
+  "issues": {
+    "missing_devices": {
+      "title": "Homely-enheter rapporteres ikke lenger",
+      "description": "Homely har sluttet å rapportere registrerte enheter for **{home}**. Antall berørte enheter: {count}. Bortfallet ble bekreftet av to gyldige API-snapshots:\n\n{devices}\n\nKontroller om enhetene fortsatt er tilgjengelige i Homely. Hvis de ble fjernet med vilje, åpner du Homely-integrasjonen under **Innstillinger > Enheter og tjenester** og sletter de utdaterte enhetene fra Home Assistant. Dette varselet lukkes automatisk når enhetene kommer tilbake eller slettes."
     }
   },
   "entity": {
@@ -89,7 +95,7 @@
         "name": "Temperatur"
       },
       "motion_sensitivity": {
-        "name": "Bevegelsessensitivitet"
+        "name": "Bevegelsesfølsomhet"
       },
       "sound_volume": {
         "name": "Lydnivå",
@@ -130,7 +136,7 @@
         "name": "Effekt"
       },
       "websocket_status": {
-        "name": "WebSocket-status",
+        "name": "Status for sanntidstilkobling",
         "state": {
           "not_initialized": "Ikke startet",
           "connecting": "Kobler til",
@@ -140,7 +146,7 @@
         }
       },
       "api_connection": {
-        "name": "Siste sky-API-polling",
+        "name": "Siste spørring mot sky-API",
         "state": {
           "not_run": "Ikke kjørt",
           "success": "Vellykket",

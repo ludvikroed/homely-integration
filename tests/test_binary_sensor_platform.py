@@ -51,7 +51,7 @@ def test_binary_sensor_and_online_sensor_read_runtime_values(location_data):
     assert motion_entity.available is True
     assert online_entity.is_on is True
     assert online_entity.available is True
-    assert online_entity.entity_registry_enabled_default is False
+    assert online_entity.entity_registry_enabled_default is True
 
     coordinator.data["devices"][0]["features"]["alarm"]["states"]["alarm"]["value"] = (
         True

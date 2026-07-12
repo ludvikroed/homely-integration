@@ -57,8 +57,8 @@ def test_alarm_panel_maps_known_alarm_states(location_data):
     assert entity.code_arm_required is False
 
 
-def test_alarm_panel_exposes_last_disarmed_attributes(location_data):
-    """Alarm entity should expose metadata from the last DISARMED event."""
+def test_alarm_panel_exposes_last_alarm_change_attributes(location_data):
+    """Alarm entity should expose metadata from the last arm and disarm events."""
     coordinator = MagicMock()
     coordinator.data = location_data
     runtime_data = HomelyRuntimeData(
@@ -68,19 +68,25 @@ def test_alarm_panel_exposes_last_disarmed_attributes(location_data):
         expires_at=0,
         location_id=LOCATION_ID,
         last_data=location_data,
+        last_armed_by="Ola Nordmann",
+        last_armed_user_id="user-armed-1",
+        last_armed_at="2026-07-10T18:02:11.429Z",
+        last_armed_device_id="device-armed-1",
         last_disarmed_by="Ingrid Blichfeldt",
         last_disarmed_user_id="c3da25b6-c74a-4425-ab9c-3257c67711e3",
         last_disarmed_at="2026-07-09T20:14:33.429Z",
-        last_disarmed_event_id=1999,
         last_disarmed_device_id="035b5e37-5eb5-426e-8fe6-ef31c91850af",
     )
     entity = HomelyAlarmPanel(coordinator, LOCATION_ID, runtime_data=runtime_data)
 
     assert entity.extra_state_attributes == {
+        "last_armed_by": "Ola Nordmann",
+        "last_armed_user_id": "user-armed-1",
+        "last_armed_at": "2026-07-10T18:02:11.429Z",
+        "last_armed_device_id": "device-armed-1",
         "last_disarmed_by": "Ingrid Blichfeldt",
         "last_disarmed_user_id": "c3da25b6-c74a-4425-ab9c-3257c67711e3",
         "last_disarmed_at": "2026-07-09T20:14:33.429Z",
-        "last_disarmed_event_id": 1999,
         "last_disarmed_device_id": "035b5e37-5eb5-426e-8fe6-ef31c91850af",
     }
 

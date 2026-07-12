@@ -17,8 +17,8 @@ from homeassistant.util import dt as dt_util
 from .api import RefreshTokenResult, describe_refresh_token_failure
 from .models import HomelyRuntimeData
 from .runtime_state import (
+    LAST_ARMED_CACHE_KEY,
     LAST_DISARMED_CACHE_KEY,
-    cached_data_grace_seconds,
     cached_location_data,
     device_id_snapshot,
     location_payload_error,
@@ -34,7 +34,7 @@ _TRANSIENT_HTTP_STATUS = {408, 425, 429, 439, 500, 502, 503, 504}
 
 # Exponential backoff for REST polling while the websocket is healthy and
 # carries live data. Start fairly soon after a failed API call, then back off
-# up to the normal 6 hour poll interval.
+# up to a six-hour recovery interval without changing the normal daily poll.
 _POLL_BACKOFF_SCHEDULE_SECONDS = (180, 600, 1800, 3600, 7200, 21600)
 
 
@@ -197,6 +197,7 @@ type RefreshResultGetter = Callable[[], RefreshTokenResult | None]
 type RefreshResultClearer = Callable[[], None]
 type AlarmGetter = Callable[[dict[str, Any] | None], Any]
 type AlarmSetter = Callable[[dict[str, Any], Any], None]
+type SnapshotCallback = Callable[[dict[str, Any]], None]
 
 
 class ContextBuilder(Protocol):
@@ -230,6 +231,7 @@ def build_async_update_data(
     get_alarm_state: AlarmGetter,
     set_alarm_state: AlarmSetter,
     handle_device_topology_change: Callable[[dict[str, Any]], None],
+    sync_missing_devices_issue: SnapshotCallback,
     ctx: ContextBuilder,
 ) -> Callable[[], Awaitable[dict[str, Any]]]:
     """Build the periodic coordinator update method for a Homely entry."""
@@ -395,31 +397,12 @@ def build_async_update_data(
                 0.0,
                 time.monotonic() - runtime_data.last_data_activity_monotonic,
             )
-            websocket_connected = websocket_is_connected(runtime_data)
-            stale_grace_seconds = cached_data_grace_seconds(scan_interval)
-            if not websocket_connected and cache_age_seconds >= stale_grace_seconds:
-                _mark_api_unavailable(
-                    f"{message}; cached data age={int(cache_age_seconds)}s exceeded "
-                    f"grace={stale_grace_seconds}s",
-                    status_code=status_code,
-                )
-                logger.warning(
-                    "Marking Homely entities unavailable because cached data is stale "
-                    "%s age_s=%s grace_s=%s %s",
-                    ctx(entry_id, location_id),
-                    int(cache_age_seconds),
-                    stale_grace_seconds,
-                    websocket_state_context(runtime_data),
-                )
-                return None
-
             _mark_api_unavailable(message, status_code=status_code)
             update_runtime_websocket_state(runtime_data)
             logger.debug(
-                "Using cached Homely data %s age_s=%s grace_s=%s %s",
+                "Using cached Homely data without age expiry %s age_s=%s %s",
                 ctx(entry_id, location_id),
                 int(cache_age_seconds),
-                stale_grace_seconds,
                 websocket_state_context(runtime_data),
             )
             return cached_data
@@ -456,20 +439,15 @@ def build_async_update_data(
             if not login_response:
                 failure_kind = _classify_login_reason(login_reason)
                 if login_reason == "invalid_auth":
-                    cached_data = _use_cached_data(
-                        "Homely login endpoint reported invalid_auth during background refresh; using cached data and retrying later"
-                    )
                     _log_auth_issue(
                         "Fallback full login reported invalid_auth during background refresh",
                         kind=failure_kind,
-                        used_cache=cached_data is not None,
+                        used_cache=False,
                         refresh_failure=refresh_failure,
                         login_reason=login_reason,
                     )
-                    if cached_data is not None:
-                        return None, cached_data
                     raise ConfigEntryAuthFailed(
-                        "Homely credentials were rejected after cached data expired"
+                        "Homely credentials were rejected"
                     )
                 cached_data = _use_cached_data(
                     "Homely auth endpoint did not return a usable token during fallback login; using cached data"
@@ -857,7 +835,7 @@ def build_async_update_data(
                 elapsed_ms,
                 device_count,
             )
-        except UpdateFailed:
+        except (ConfigEntryAuthFailed, UpdateFailed):
             raise
         except Exception as err:
             cached_data = _use_cached_data(
@@ -882,12 +860,10 @@ def build_async_update_data(
         elif new_alarm is not None:
             set_alarm_state(updated, new_alarm)
 
-        last_disarmed = runtime_data.last_data.get(LAST_DISARMED_CACHE_KEY)
-        if (
-            isinstance(last_disarmed, dict)
-            and LAST_DISARMED_CACHE_KEY not in updated
-        ):
-            updated[LAST_DISARMED_CACHE_KEY] = last_disarmed
+        for alarm_metadata_key in (LAST_ARMED_CACHE_KEY, LAST_DISARMED_CACHE_KEY):
+            alarm_metadata = runtime_data.last_data.get(alarm_metadata_key)
+            if isinstance(alarm_metadata, dict) and alarm_metadata_key not in updated:
+                updated[alarm_metadata_key] = alarm_metadata
 
         _preserve_unconfirmed_removed_devices(
             runtime_data,
@@ -897,6 +873,7 @@ def build_async_update_data(
             location_id=location_id,
             ctx=ctx,
         )
+        sync_missing_devices_issue(updated)
         runtime_data.last_data = updated
         handle_device_topology_change(updated)
         update_runtime_websocket_state(runtime_data)

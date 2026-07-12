@@ -4,11 +4,11 @@
   "codeowners": ["@ludvikroed"],
   "config_flow": true,
   "dependencies": [],
-  "documentation": "https://github.com/ludvikroed/homely-integration/blob/main/README.md",
+  "documentation": "https://github.com/ludvikroed/homely-integration/blob/main/documentation.md",
   "integration_type": "hub",
   "iot_class": "cloud_push",
   "issue_tracker": "https://github.com/ludvikroed/homely-integration/issues",
   "loggers": ["custom_components.homely", "homely"],
   "requirements": ["python-homely==0.1.9"],
-  "version": "1.5.1-beta3"
+  "version": "1.5.1"
 }

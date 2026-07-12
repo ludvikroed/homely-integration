@@ -114,7 +114,7 @@ class HomelyDeviceOnlineSensor(CoordinatorEntity, BinarySensorEntity):
             self._attr_suggested_object_id = suggested_object_id
         self._attr_icon = "mdi:lan-connect"
         self._attr_entity_category = DIAGNOSTIC_ENTITY_CATEGORY
-        self._attr_entity_registry_enabled_default = False
+        self._attr_entity_registry_enabled_default = True
         self._attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, self._device_id)},

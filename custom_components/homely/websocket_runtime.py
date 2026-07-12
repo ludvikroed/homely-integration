@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from typing import Any, Protocol
 
@@ -16,6 +16,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from .models import HomelyConfigEntry, HomelyRuntimeData
 from .runtime_state import (
     device_id_snapshot,
+    record_last_armed,
     record_last_disarmed,
     record_websocket_event,
     record_websocket_watchdog_recovery,
@@ -30,8 +31,9 @@ type IdentifierFormatter = Callable[[Any], str | None]
 type JsonDebugFormatter = Callable[[Any], str]
 type RedactionHelper = Callable[[Any], Any]
 type WebSocketApplyCallable = Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]
+type SnapshotSaver = Callable[[dict[str, Any]], Awaitable[None]]
 
-WEBSOCKET_CONNECTED_FALLBACK_POLL_INTERVAL = timedelta(hours=6)
+WEBSOCKET_CONNECTED_FALLBACK_POLL_INTERVAL = timedelta(hours=24)
 WEBSOCKET_HEALTH_WATCHDOG_INTERVAL = timedelta(minutes=1)
 WEBSOCKET_WATCHDOG_RECONNECT_DEBOUNCE_SECONDS = 90
 WEBSOCKET_WATCHDOG_WARNING_THRESHOLD = 3
@@ -97,12 +99,14 @@ def build_device_topology_change_handler(
     runtime_data_getter: RuntimeDataGetter,
     ctx: ContextBuilder,
     log_identifier: IdentifierFormatter,
+    save_snapshot: SnapshotSaver,
 ) -> Callable[[dict[str, Any]], None]:
     """Build a handler that reloads the entry when device topology changes."""
 
     async def _reload_for_device_topology_change(
         pending_runtime: HomelyRuntimeData,
         previous_ids: set[str],
+        updated_data: dict[str, Any],
     ) -> None:
         """Reload the entry once when the device list changes."""
         current_runtime = runtime_data_getter()
@@ -111,6 +115,7 @@ def build_device_topology_change_handler(
 
         reload_succeeded = False
         try:
+            await save_snapshot(updated_data)
             logger.info(
                 "Reloading Homely entry after device topology change %s",
                 ctx(entry.entry_id, location_id),
@@ -150,16 +155,6 @@ def build_device_topology_change_handler(
         removed = sorted(previous_ids - updated_ids)
         runtime_data.tracked_device_ids = updated_ids
 
-        if runtime_data.topology_reload_pending:
-            logger.debug(
-                "Device topology changed again while reload is pending %s added_count=%s removed_count=%s",
-                ctx(entry.entry_id, location_id),
-                len(added),
-                len(removed),
-            )
-            return
-
-        runtime_data.topology_reload_pending = True
         logger.info(
             "Homely device topology changed %s added_count=%s removed_count=%s",
             ctx(entry.entry_id, location_id),
@@ -173,8 +168,31 @@ def build_device_topology_change_handler(
                 [log_identifier(device_id) for device_id in added],
                 [log_identifier(device_id) for device_id in removed],
             )
+
+        if not added:
+            logger.info(
+                "Keeping stale Home Assistant device entries for manual removal %s removed_count=%s",
+                ctx(entry.entry_id, location_id),
+                len(removed),
+            )
+            return
+
+        if runtime_data.topology_reload_pending:
+            logger.debug(
+                "Device topology changed again while reload is pending %s added_count=%s removed_count=%s",
+                ctx(entry.entry_id, location_id),
+                len(added),
+                len(removed),
+            )
+            return
+
+        runtime_data.topology_reload_pending = True
         hass.async_create_task(
-            _reload_for_device_topology_change(runtime_data, previous_ids)
+            _reload_for_device_topology_change(
+                runtime_data,
+                previous_ids,
+                updated_data,
+            )
         )
 
     return _handle_device_topology_change
@@ -257,6 +275,11 @@ def build_websocket_data_handler(
                 event_details: dict[str, Any] = {
                     "alarm_state": result.get("alarm_state")
                 }
+                last_armed = result.get("last_armed")
+                if isinstance(last_armed, dict):
+                    record_last_armed(runtime_data, last_armed)
+                    event_details["last_armed_by"] = last_armed.get("user_name")
+                    event_details["last_armed_user_id"] = last_armed.get("user_id")
                 last_disarmed = result.get("last_disarmed")
                 if isinstance(last_disarmed, dict):
                     record_last_disarmed(runtime_data, last_disarmed)

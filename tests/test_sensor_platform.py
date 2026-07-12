@@ -142,8 +142,8 @@ def test_sensor_entity_uses_diagnostic_defaults_and_correct_link_quality_unit(
     battery_voltage_entity = HomelySensor(coordinator, motion_device, battery_voltage)
 
     assert link_quality_entity.native_unit_of_measurement == "%"
-    assert link_quality_entity.entity_registry_enabled_default is False
-    assert battery_voltage_entity.entity_registry_enabled_default is False
+    assert link_quality_entity.entity_registry_enabled_default is True
+    assert battery_voltage_entity.entity_registry_enabled_default is True
 
 
 def test_sensor_entity_handles_transform_errors_gracefully(location_data):

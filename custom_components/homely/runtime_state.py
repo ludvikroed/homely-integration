@@ -15,7 +15,7 @@ from .websocket import (
 )
 
 WEBSOCKET_WATCHDOG_RECOVERY_WINDOW_SECONDS = 30 * 60
-CACHED_DATA_GRACE_SECONDS = 7 * 24 * 60 * 60
+LAST_ARMED_CACHE_KEY = "lastArmedBy"
 LAST_DISARMED_CACHE_KEY = "lastDisarmedBy"
 
 
@@ -221,18 +221,6 @@ def update_runtime_websocket_state(runtime_data: HomelyRuntimeData) -> None:
         runtime_data.last_disconnect_reason = snapshot.reason
 
 
-def cached_data_grace_seconds(scan_interval: int) -> int:
-    """Return grace period for cached polling data when websocket is unavailable.
-
-    Must exceed the scan interval: cache age is roughly one scan interval by
-    the time a failed poll evaluates it, so a smaller grace would mark
-    entities unavailable after a single transient failure. Keep the grace long
-    enough to survive multi-day Homely REST API outages and Home Assistant
-    restarts while websocket live updates continue to work.
-    """
-    return max(CACHED_DATA_GRACE_SECONDS, scan_interval * 2)
-
-
 def tracked_api_device_ids(
     entry_data: HomelyRuntimeData | None,
 ) -> tuple[bool, set[str]]:
@@ -351,6 +339,30 @@ def record_websocket_event(
         runtime_data.last_data_activity_monotonic = timestamp
 
 
+def _alarm_event_detail(details: dict[str, Any], snake_key: str, camel_key: str) -> Any:
+    """Return an alarm-event detail from normalized or API-style keys."""
+    value = details.get(snake_key)
+    return details.get(camel_key) if value is None else value
+
+
+def record_last_armed(
+    runtime_data: HomelyRuntimeData,
+    details: dict[str, Any] | None,
+) -> None:
+    """Record details for the last completed armed alarm event."""
+    if not isinstance(details, dict):
+        return
+
+    user_name = _alarm_event_detail(details, "user_name", "userName")
+    runtime_data.last_armed_by = str(user_name) if user_name else None
+    user_id = _alarm_event_detail(details, "user_id", "userId")
+    runtime_data.last_armed_user_id = str(user_id) if user_id else None
+    armed_at = _alarm_event_detail(details, "timestamp", "time")
+    runtime_data.last_armed_at = str(armed_at) if armed_at else None
+    device_id = _alarm_event_detail(details, "device_id", "deviceId")
+    runtime_data.last_armed_device_id = str(device_id) if device_id else None
+
+
 def record_last_disarmed(
     runtime_data: HomelyRuntimeData,
     details: dict[str, Any] | None,
@@ -359,29 +371,16 @@ def record_last_disarmed(
     if not isinstance(details, dict):
         return
 
-    user_name = details.get("user_name")
-    if user_name is None:
-        user_name = details.get("userName")
+    user_name = _alarm_event_detail(details, "user_name", "userName")
     runtime_data.last_disarmed_by = str(user_name) if user_name else None
 
-    user_id = details.get("user_id")
-    if user_id is None:
-        user_id = details.get("userId")
+    user_id = _alarm_event_detail(details, "user_id", "userId")
     runtime_data.last_disarmed_user_id = str(user_id) if user_id else None
 
-    disarmed_at = details.get("timestamp")
-    if disarmed_at is None:
-        disarmed_at = details.get("time")
+    disarmed_at = _alarm_event_detail(details, "timestamp", "time")
     runtime_data.last_disarmed_at = str(disarmed_at) if disarmed_at else None
 
-    event_id = details.get("event_id")
-    if event_id is None:
-        event_id = details.get("eventId")
-    runtime_data.last_disarmed_event_id = event_id
-
-    device_id = details.get("device_id")
-    if device_id is None:
-        device_id = details.get("deviceId")
+    device_id = _alarm_event_detail(details, "device_id", "deviceId")
     runtime_data.last_disarmed_device_id = str(device_id) if device_id else None
 
 

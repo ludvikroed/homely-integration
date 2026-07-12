@@ -56,10 +56,13 @@ class HomelyRuntimeData:
     last_websocket_event_at: datetime | None = None
     last_websocket_event_type: str | None = None
     last_ws_event_details: dict[str, Any] | None = None
+    last_armed_by: str | None = None
+    last_armed_user_id: str | None = None
+    last_armed_at: str | None = None
+    last_armed_device_id: str | None = None
     last_disarmed_by: str | None = None
     last_disarmed_user_id: str | None = None
     last_disarmed_at: str | None = None
-    last_disarmed_event_id: int | str | None = None
     last_disarmed_device_id: str | None = None
     api_available: bool = True
     # Exponential backoff for REST polling while the websocket carries live

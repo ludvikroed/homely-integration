@@ -98,6 +98,7 @@ def test_location_helpers_cover_name_and_label_fallbacks():
 
 def test_scan_interval_coercion_uses_safe_defaults():
     """Invalid stored scan intervals should fall back safely."""
+    assert DEFAULT_SCAN_INTERVAL == 24 * 60 * 60
     assert _coerce_scan_interval("30") == 30
     assert _coerce_scan_interval("bad") == DEFAULT_SCAN_INTERVAL
     assert _coerce_scan_interval(5) == 30

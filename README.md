@@ -8,97 +8,85 @@
   <a href="LICENSE"><img src="https://img.shields.io/github/license/ludvikroed/homely-integration?style=for-the-badge" alt="License"></a>
 </p>
 
-Looking for practical details, troubleshooting, and behavior notes? See [documentation.md](documentation.md).
+Unofficial Home Assistant integration for Homely alarm systems with real-time WebSocket updates and periodic API synchronization.
 
-An unofficial Home Assistant integration that connects your Homely alarm system to Home Assistant. It uses WebSocket live updates for alarm changes and the Homely cloud API for device snapshots and sensor data.
+The integration is read-only. It monitors alarm, lock, sensor, battery, and connection states but cannot arm, disarm, lock, or unlock devices.
 
-## Installation & Setup
+See [documentation.md](documentation.md) for runtime behavior, entity details, API limitations, Repairs, reauthentication, and troubleshooting.
 
-#### Via HACS (Recommended)
+## Features
+
+- Live alarm and device-state updates through WebSocket events
+- Device discovery and periodic reconciliation through the Homely `/home` API
+- Alarm control panel and state-only lock entities
+- Automatic sensors based on the features Homely exposes for each device
+- Multiple Homely homes, including an **Add all homes** setup option
+- Cached state during restarts and temporary API outages
+- Diagnostic entities, System Health information, downloadable diagnostics, and Repairs for confirmed stale devices
+
+## Installation
+
+### HACS (recommended)
+
 Make sure [HACS](https://hacs.xyz/) is installed.
 
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=ludvikroed&repository=homely-integration&category=integration)
 
-Click **Download**, then restart Home Assistant.
+Open the repository in HACS, select **Download**, and restart Home Assistant.
 
-#### Manual Installation
-Download the latest release, copy the `homely` folder to `/config/custom_components/homely/`, then restart Home Assistant and configure the integration.
+### Manual installation
 
-#### Configure
+1. Download the latest release.
+2. Copy `custom_components/homely` to `/config/custom_components/homely`.
+3. Restart Home Assistant.
 
-1. Go to **Settings** → **Devices & Services** → **"+ Add Integration"**
-2. Search for **"Homely"**
-3. Enter your Homely account credentials (username and password)
-4. If your account has multiple Homely homes, choose either **Add all homes** or one specific home from the dropdown
-5. Finish setup
+## Setup
 
-`Add all homes` creates one config entry per available home. Homes that are already configured are skipped automatically.
+1. Go to **Settings > Devices & services**.
+2. Select **Add integration** and search for **Homely**.
+3. Enter the email address and password for your Homely account.
+4. If the account has multiple homes, select one home or **Add all homes**.
 
-⭐ If you find this integration useful, please consider giving it a star on [GitHub](https://github.com/ludvikroed/homely-integration)! ⭐
+Each home is created as a separate config entry. Homes that are already configured are skipped.
 
-#### Runtime behavior
+## Troubleshooting
 
-WebSocket live updates are always enabled. The integration polls the Homely cloud API at startup, once every 6 hours, and after WebSocket failures if the WebSocket does not reconnect quickly.
+Start by checking:
 
-The alarm entity keeps showing the last known alarm state from cached data after a Home Assistant restart. The alarm entity also exposes attributes for the last known disarm event when Homely sends that information, including `last_disarmed_by`, `last_disarmed_at`, `last_disarmed_user_id`, `last_disarmed_event_id`, and `last_disarmed_device_id`.
+- The Homely email address and password are correct.
+- The expected home was selected during setup if you have multiple homes.
+- The integration is updated to the latest available version.
+- **Live update connection status** and **Last cloud API poll** on the Homely home device.
+- **Settings > System > Logs** for Homely errors.
 
-The `Last cloud API poll` sensor shows the result of the most recent API poll. If the API fails, it can show values such as `failed_429` or `failed_503` and include the error code as an attribute. After API errors, the integration retries with backoff, starting after 3 minutes and increasing up to 6 hours.
+To enable debug logging from YAML:
 
-For deeper details and value references, including sensor status values, see [documentation.md](documentation.md).
-
-If Homely adds or removes devices on a location, the integration detects the topology change and reloads the entry automatically. New devices can then appear without manual reconfiguration. A removal must be reported by two consecutive valid API snapshots before it is accepted, and devices are not deleted automatically.
-
----
-
-### Troubleshooting
-
-- Verify your Homely username and password are correct
-- If your account has multiple locations, make sure the correct location was selected during setup
-- Enable debugging (shown below) and check HA logs
-- If a device or sensor is present but does not work as expected, please use the [Bug report form](https://github.com/ludvikroed/homely-integration/issues/new?template=bug_report.yml)
-
-If you can't resolve your problem, please [open a GitHub issue](https://github.com/ludvikroed/homely-integration/issues/new/choose) and choose the matching form.
-
-If a device is missing, or a device is present but missing sensors, use the [Missing device or sensor issue form](https://github.com/ludvikroed/homely-integration/issues/new?template=missing_sensors_devices.yml).
-
-##### Enable Debug Logging
-
-To troubleshoot issues or monitor WebSocket and API activity, open the Homely integration, click the three dots in the upper-right corner, and select **Enable debug logging**. You can also add this to your `configuration.yaml`:
 ```yaml
 logger:
   default: info
   logs:
     custom_components.homely: debug
+    homely: debug
 ```
 
-Then check the logs under **Settings** → **System** → **Logs**.
+You can also select **Enable debug logging** from the integration menu. Download diagnostics from the affected Homely config entry when reporting missing devices or entities. Review diagnostic files before sharing them.
 
----
+Use the matching issue form:
 
-## Supported Devices
+- [Setup or login problem](https://github.com/ludvikroed/homely-integration/issues/new?template=setup_or_login_problem.yml)
+- [Missing device or sensor](https://github.com/ludvikroed/homely-integration/issues/new?template=missing_sensors_devices.yml)
+- [Bug report](https://github.com/ludvikroed/homely-integration/issues/new?template=bug_report.yml)
+- [Feature request](https://github.com/ludvikroed/homely-integration/issues/new?template=feature_request.yml)
 
-The integration aims to support all devices and sensors exposed by the Homely API. In practice, Frient devices should generally be well supported, and Yale Doorman and similar locks should also work when their states are available through the API.
+## Device support
 
-Not every device shown in the Homely app is necessarily exposed through the API. If Homely does not expose a device or a sensor, the integration cannot add it in Home Assistant. Some vendor-specific devices, such as the Namron Smart Plug 16A, are known examples.
+Entities are created from the features present in the Homely API payload. Common Frient sensors, HAN meters, Yale Doorman, and similar locks are supported when Homely exposes the required data.
 
-The Homely API is currently read-only, so this integration focuses on monitoring and status in Home Assistant rather than direct device control.
-
-- Alarm status is supported
-- Frient devices should generally be supported
-- Yale Doorman and similar locks should generally work when exposed through the API
-- Direct device control is not available because the Homely API is read-only
-
-For a support matrix and more detail about device coverage, API limitations, and known gaps, see [documentation.md](documentation.md).
-
-If a device is missing, or a device is present but missing sensors, please use the [Missing device or sensor issue form](https://github.com/ludvikroed/homely-integration/issues/new?template=missing_sensors_devices.yml).
-
----
+A device visible in the Homely app may still be absent or incomplete in the API. The integration cannot add data that Homely does not expose. See the [detailed device and entity coverage](documentation.md#devices-and-entities) before reporting a missing device.
 
 ## Contributing
 
-Contributions are welcome. You can [report bugs or suggest features](https://github.com/ludvikroed/homely-integration/issues), or submit a pull request.
-
-Before opening a PR, run:
+Contributions are welcome. Before opening a pull request, run:
 
 - `python -m ruff check custom_components tests`
 - `pytest`
@@ -106,8 +94,8 @@ Before opening a PR, run:
 
 ## About
 
-**Created by**: [Ludvik](https://github.com/ludvikroed) | Inspired by [Homely MQTT Add-on](https://github.com/haugeSander/Homely-HA-Addon)
+- **Created by:** [Ludvik](https://github.com/ludvikroed)
+- **Inspired by:** [Homely MQTT Add-on](https://github.com/haugeSander/Homely-HA-Addon)
+- **License:** [MIT](LICENSE)
 
-**Disclaimer**: Unofficial project, not affiliated with Homely. Relies on Homely's cloud API which may change.
-
-**License**: MIT License - see [LICENSE](LICENSE)
+This project is not affiliated with Homely. It relies on Homely cloud services and APIs, which may change.
