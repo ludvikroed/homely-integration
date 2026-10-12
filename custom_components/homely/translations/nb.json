@@ -94,6 +94,12 @@
       "temperature": {
         "name": "Temperatur"
       },
+      "thermostat_temperature": {
+        "name": "Temperatur"
+      },
+      "heating_setpoint": {
+        "name": "Settpunkt varme"
+      },
       "motion_sensitivity": {
         "name": "Bevegelsesfølsomhet"
       },

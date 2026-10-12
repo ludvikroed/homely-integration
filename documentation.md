@@ -28,6 +28,7 @@ Typical coverage includes:
 | Smoke detector | Fire, Tamper, Temperature, Battery low |
 | Flood alarm | Flood, Temperature, Battery low |
 | HAN meter | Consumption, Production, Demand, Metering check |
+| Thermostat (e.g. ELKO Super TR) | Temperature, Heating setpoint (read-only) |
 | Compatible lock | Lock state, Door, Low battery, Jammed, Error code, Language, Sound volume |
 
 An **Online** diagnostic binary sensor is also created for each API device. Other diagnostic entities can include battery voltage, link quality, network address, battery defect, and metering check.

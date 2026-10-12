@@ -151,6 +151,58 @@ def test_discover_device_sensors_supports_alternate_report_paths(location_data):
     assert jammed_sensor["value"] is False
 
 
+def test_discover_device_sensors_supports_elko_thermostat():
+    """Thermostat temperatures are reported in 1/100 °C and must be scaled."""
+    thermostat = {
+        "id": "93fc76e9-1a1f-4e63-8cf4-963f2e834eaf",
+        "name": "ELKO Super TR",
+        "modelName": "ELKO Super TR",
+        "online": True,
+        "features": {
+            "thermostat": {
+                "states": {
+                    "LocalTemperature": {"value": 2380},
+                    "OccupiedHeatingSetpoint": {"value": 2800},
+                    "AbsMinHeatSetpointLimit": {"value": 5},
+                }
+            }
+        },
+    }
+
+    by_suffix = {
+        sensor["device_suffix"]: sensor
+        for sensor in discover_device_sensors(thermostat)
+    }
+
+    assert set(by_suffix) == {
+        "thermostat_local_temperature",
+        "thermostat_heating_setpoint",
+    }
+    assert by_suffix["thermostat_local_temperature"]["value"] == 23.8
+    assert by_suffix["thermostat_heating_setpoint"]["value"] == 28.0
+
+    applied = apply_device_state_changes(
+        {"devices": [thermostat]},
+        {
+            "deviceId": thermostat["id"],
+            "changes": [
+                {
+                    "feature": "thermostat",
+                    "stateName": "LocalTemperature",
+                    "value": 2370,
+                }
+            ],
+        },
+    )
+    assert applied
+    local = next(
+        sensor
+        for sensor in discover_device_sensors(thermostat)
+        if sensor["device_suffix"] == "thermostat_local_temperature"
+    )
+    assert local["value"] == 23.7
+
+
 def test_apply_websocket_event_updates_alarm_state(location_data):
     """Alarm websocket events should update both top-level and nested alarm state."""
     result = apply_websocket_event_to_data(

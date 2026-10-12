@@ -31,6 +31,14 @@ def _wh_to_kwh(value: Any) -> float | Any:
     return round(numeric / 1000, 3)
 
 
+def _centi_celsius_to_celsius(value: Any) -> float | Any:
+    """Convert thermostat temperatures reported in 1/100 °C to °C."""
+    numeric = _as_float(value)
+    if numeric is None:
+        return value
+    return round(numeric / 100, 2)
+
+
 def _lock_sound_volume_label(value: Any) -> str | Any:
     """Map known Yale sound volume values to stable enum states."""
     labels = {
@@ -200,6 +208,31 @@ SENSORS: list[dict[str, Any]] = [
         "unit": "°C",
         "device_suffix": "temperature",
         "state_class": SensorStateClass.MEASUREMENT,
+    },
+    # Thermostat sensors (e.g. ELKO Super TR); values are in 1/100 °C.
+    {
+        "path": "features.thermostat.states.LocalTemperature.value",
+        "format": "number",
+        "type": "sensor",
+        "name": "thermostat_temperature",
+        "translation_key": "thermostat_temperature",
+        "device_class": SensorDeviceClass.TEMPERATURE,
+        "unit": "°C",
+        "device_suffix": "thermostat_local_temperature",
+        "state_class": SensorStateClass.MEASUREMENT,
+        "transform_value": _centi_celsius_to_celsius,
+    },
+    {
+        "path": "features.thermostat.states.OccupiedHeatingSetpoint.value",
+        "format": "number",
+        "type": "sensor",
+        "name": "heating_setpoint",
+        "translation_key": "heating_setpoint",
+        "device_class": SensorDeviceClass.TEMPERATURE,
+        "unit": "°C",
+        "device_suffix": "thermostat_heating_setpoint",
+        "transform_value": _centi_celsius_to_celsius,
+        "icon": "mdi:thermostat",
     },
     # Lock info sensors
     {
