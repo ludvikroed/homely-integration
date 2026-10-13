@@ -39,6 +39,10 @@ WEBSOCKET_WATCHDOG_RECONNECT_DEBOUNCE_SECONDS = 90
 WEBSOCKET_WATCHDOG_WARNING_THRESHOLD = 3
 WEBSOCKET_WATCHDOG_WARNING_DEBOUNCE_SECONDS = 10 * 60
 WEBSOCKET_API_FALLBACK_DELAY_SECONDS = 30
+WEBSOCKET_UNKNOWN_DEVICE_REFRESH_DEBOUNCE_SECONDS = 10 * 60
+# A websocket that never reaches Connected still needs occasional REST
+# snapshots. Reuse the documented API recovery cadence and cap it at six hours.
+WEBSOCKET_OUTAGE_POLL_BACKOFF_SECONDS = (180, 600, 1800, 3600, 7200, 21600)
 
 
 class ContextBuilder(Protocol):
@@ -63,31 +67,38 @@ async def _delayed_api_refresh_if_websocket_still_down(
     location_id: str | int,
     ctx: ContextBuilder,
     reason: str,
+    clear_outage_poll_pending: bool = False,
 ) -> None:
     """Request an API refresh only if websocket recovery did not happen first."""
-    await asyncio.sleep(delay_seconds)
-
-    runtime_data = runtime_data_getter()
-    if runtime_data is not expected_runtime:
-        return
-    if websocket_is_connected(runtime_data):
-        logger.debug(
-            "Skipping API fallback because websocket reconnected %s reason=%s",
-            ctx(entry_id, location_id),
-            reason,
-        )
-        return
-
-    runtime_data.force_api_refresh_once = True
     try:
-        await coordinator.async_request_refresh()
-    except Exception as err:
-        logger.debug(
-            "Delayed API fallback refresh failed %s reason=%s: %s",
-            ctx(entry_id, location_id),
-            reason,
-            err,
-        )
+        await asyncio.sleep(delay_seconds)
+
+        runtime_data = runtime_data_getter()
+        if runtime_data is not expected_runtime:
+            return
+        if websocket_is_connected(runtime_data):
+            logger.debug(
+                "Skipping API fallback because websocket reconnected %s reason=%s",
+                ctx(entry_id, location_id),
+                reason,
+            )
+            return
+
+        runtime_data.force_api_refresh_once = True
+        try:
+            await coordinator.async_request_refresh()
+        except Exception as err:
+            logger.debug(
+                "Delayed API fallback refresh failed %s reason=%s: %s",
+                ctx(entry_id, location_id),
+                reason,
+                err,
+            )
+    finally:
+        if clear_outage_poll_pending:
+            current_runtime = runtime_data_getter()
+            if current_runtime is expected_runtime:
+                current_runtime.ws_outage_poll_pending = False
 
 
 def build_device_topology_change_handler(
@@ -226,6 +237,16 @@ def build_websocket_data_handler(
                 return True
         return False
 
+    def _is_unknown_device(runtime_data: HomelyRuntimeData, device_id: Any) -> bool:
+        """Return True when the cached snapshot has a device list without this id."""
+        devices = runtime_data.last_data.get("devices")
+        if not isinstance(devices, list):
+            return False
+        return all(
+            not isinstance(item, dict) or str(item.get("id")) != str(device_id)
+            for item in devices
+        )
+
     def on_websocket_data(event_data: dict[str, Any]) -> None:
         """Handle websocket data updates and update local cache directly."""
         try:
@@ -252,15 +273,18 @@ def build_websocket_data_handler(
                 )
             if isinstance(payload, dict):
                 ws_device_id = payload.get("deviceId")
-            logger.debug(
-                "WebSocket event payload %s payload=%s",
-                ctx(
-                    entry.entry_id,
-                    location_id,
-                    str(ws_device_id) if ws_device_id is not None else None,
-                ),
-                json_debug(redact_for_debug_logging(event_data)),
-            )
+            if logger.isEnabledFor(logging.DEBUG):
+                # Redaction deep-copies and serializes the payload; only pay
+                # for it when the message is going to be emitted.
+                logger.debug(
+                    "WebSocket event payload %s payload=%s",
+                    ctx(
+                        entry.entry_id,
+                        location_id,
+                        str(ws_device_id) if ws_device_id is not None else None,
+                    ),
+                    json_debug(redact_for_debug_logging(event_data)),
+                )
             result = apply_websocket_event(runtime_data.last_data, event_data)
             event_type = result.get("event_type")
             device_id = result.get("device_id")
@@ -364,6 +388,24 @@ def build_websocket_data_handler(
                             "Requested immediate API refresh to build initial state %s",
                             ctx(entry.entry_id, location_id),
                         )
+                    elif (
+                        device_id is not None
+                        and not runtime_data.force_api_refresh_once
+                        and _is_unknown_device(runtime_data, device_id)
+                        and time.monotonic() - runtime_data.ws_unknown_device_refresh_monotonic
+                        >= WEBSOCKET_UNKNOWN_DEVICE_REFRESH_DEBOUNCE_SECONDS
+                    ):
+                        # Homely is streaming events for a device the cached
+                        # snapshot does not know about (added in the Homely app).
+                        # Pull a fresh snapshot now so its entities are created
+                        # instead of waiting for the daily poll.
+                        runtime_data.ws_unknown_device_refresh_monotonic = time.monotonic()
+                        runtime_data.force_api_refresh_once = True
+                        hass.async_create_task(coordinator.async_request_refresh())
+                        logger.debug(
+                            "Requested API refresh for websocket event from unknown device %s",
+                            ctx(entry.entry_id, location_id, str(device_id)),
+                        )
                     coordinator.async_update_listeners()
                 return
 
@@ -376,11 +418,10 @@ def build_websocket_data_handler(
                 coordinator.async_update_listeners()
 
         except Exception as err:
-            logger.error(
+            logger.exception(
                 "Unhandled exception in websocket callback %s: %s. Please open a GitHub issue if this keeps happening.",
                 ctx(entry.entry_id, location_id),
                 err,
-                exc_info=True,
             )
 
     return on_websocket_data
@@ -444,6 +485,8 @@ async def async_init_websocket(
                 previous_status = runtime.ws_status
                 runtime.ws_status = status
                 runtime.ws_status_reason = reason
+                if status == "Connected":
+                    runtime.ws_outage_poll_backoff_level = 0
                 if (
                     status == "Disconnected"
                     and reason
@@ -485,9 +528,67 @@ async def async_init_websocket(
                             err,
                         )
 
+                # A socket that never reached Connected cannot provide live
+                # state. Schedule one bounded REST snapshot per reconnect
+                # cycle, with increasing delays, rather than polling after
+                # every failed attempt or waiting for the daily coordinator
+                # refresh. API failures have their own retry task and take
+                # precedence to avoid duplicate requests.
                 if (
                     status == "Disconnected"
-                    and previous_status != "Disconnected"
+                    and previous_status not in {"Connected", "Disconnected"}
+                    and enable_websocket
+                    and reason != "manual disconnect"
+                    and not runtime.ws_outage_poll_pending
+                    and runtime.api_retry_unsub is None
+                ):
+                    try:
+                        backoff_level = runtime.ws_outage_poll_backoff_level
+                        fallback_delay = WEBSOCKET_OUTAGE_POLL_BACKOFF_SECONDS[
+                            min(
+                                backoff_level,
+                                len(WEBSOCKET_OUTAGE_POLL_BACKOFF_SECONDS) - 1,
+                            )
+                        ]
+                        runtime.ws_outage_poll_backoff_level = backoff_level + 1
+                        runtime.ws_outage_poll_pending = True
+                        entry.async_create_background_task(
+                            hass,
+                            _delayed_api_refresh_if_websocket_still_down(
+                                delay_seconds=fallback_delay,
+                                expected_runtime=runtime,
+                                runtime_data_getter=runtime_data_getter,
+                                coordinator=coordinator,
+                                logger=logger,
+                                entry_id=entry.entry_id,
+                                location_id=location_id,
+                                ctx=ctx,
+                                reason="websocket connection attempt failed",
+                                clear_outage_poll_pending=True,
+                            ),
+                            "homely websocket outage API fallback",
+                        )
+                        logger.debug(
+                            "Scheduled bounded polling fallback while websocket remains unavailable %s delay_s=%s",
+                            ctx(entry.entry_id, location_id),
+                            fallback_delay,
+                        )
+                    except Exception as err:
+                        runtime.ws_outage_poll_pending = False
+                        logger.debug(
+                            "Failed to schedule polling fallback for unavailable websocket %s: %s",
+                            ctx(entry.entry_id, location_id),
+                            err,
+                        )
+
+                # Only a lost live session can have missed events. The SDK's
+                # reconnect loop reports Connecting -> Disconnected on every
+                # failed attempt; treating each of those as a new outage would
+                # force a /home poll every few minutes for as long as the
+                # websocket service is down, bypassing the API backoff.
+                if (
+                    status == "Disconnected"
+                    and previous_status == "Connected"
                     and enable_websocket
                     and reason != "manual disconnect"
                 ):
@@ -501,10 +602,18 @@ async def async_init_websocket(
                             )
                             return
                         runtime.ws_disconnect_refresh_monotonic = now_monotonic
+                        # A reconnect cannot succeed with an expired access
+                        # token, so skip the grace delay and refresh now; the
+                        # poll refreshes the token and syncs it to the socket.
+                        fallback_delay = (
+                            0
+                            if time.time() >= runtime.expires_at
+                            else WEBSOCKET_API_FALLBACK_DELAY_SECONDS
+                        )
                         entry.async_create_background_task(
                             hass,
                             _delayed_api_refresh_if_websocket_still_down(
-                                delay_seconds=WEBSOCKET_API_FALLBACK_DELAY_SECONDS,
+                                delay_seconds=fallback_delay,
                                 expected_runtime=runtime,
                                 runtime_data_getter=runtime_data_getter,
                                 coordinator=coordinator,
@@ -519,7 +628,7 @@ async def async_init_websocket(
                         logger.debug(
                             "Scheduled delayed polling refresh after websocket disconnect %s delay_s=%s",
                             ctx(entry.entry_id, location_id),
-                            WEBSOCKET_API_FALLBACK_DELAY_SECONDS,
+                            fallback_delay,
                         )
                     except Exception as err:
                         logger.debug(

@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.util import slugify
+
+from .const import DOMAIN
 
 
 def _clean_text(value: Any) -> str | None:
@@ -86,3 +90,19 @@ def build_suggested_object_id(
     if not tokens:
         return None
     return "_".join(tokens)
+
+
+def build_device_info(device: Mapping[str, Any]) -> DeviceInfo:
+    """Build the device registry entry for a physical Homely device."""
+    info = DeviceInfo(
+        identifiers={(DOMAIN, str(device.get("id")))},
+        name=get_device_display_name(device),
+        manufacturer="Homely",
+        model=device.get("modelName"),
+        serial_number=device.get("serialNumber"),
+        suggested_area=get_device_area(device),
+    )
+    model_id = device.get("modelId")
+    if model_id:
+        info["model_id"] = str(model_id)
+    return info

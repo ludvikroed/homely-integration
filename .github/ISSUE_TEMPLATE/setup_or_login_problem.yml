@@ -66,7 +66,7 @@ body:
     attributes:
       label: Versions
       placeholder: |
-        Homely integration version: 1.4.2-beta
-        Home Assistant version: 2026.3.4
+        Homely integration version: 1.5.1
+        Home Assistant version: 2026.6.4
     validations:
       required: false

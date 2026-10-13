@@ -6,7 +6,6 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-
 from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.homely.lock import (
@@ -15,7 +14,7 @@ from custom_components.homely.lock import (
     _is_lock_device,
     async_setup_entry,
 )
-from tests.common import build_config_entry
+from tests.common import LOCATION_ID, build_config_entry
 
 
 def test_lock_bool_coercion_and_detection(location_data):
@@ -33,7 +32,9 @@ async def test_lock_setup_entry_handles_sparse_device_payloads(hass, location_da
     """Lock setup should ignore invalid device collections and payloads."""
     entry = build_config_entry()
     coordinator = SimpleNamespace(data={"devices": "not-a-list"})
-    entry.runtime_data = SimpleNamespace(coordinator=coordinator, last_data={})
+    entry.runtime_data = SimpleNamespace(
+        coordinator=coordinator, last_data={}, location_id=LOCATION_ID
+    )
     added_entities: list[HomelyLock] = []
 
     await async_setup_entry(hass, entry, added_entities.extend)

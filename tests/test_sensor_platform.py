@@ -18,7 +18,7 @@ from custom_components.homely.sensor import (
 from custom_components.homely.sensors.discover import discover_device_sensors
 from tests.common import LOCATION_ID, build_config_entry
 
-DIAGNOSTIC_ENTITY_CATEGORY = getattr(entity_helper, "EntityCategory").DIAGNOSTIC
+DIAGNOSTIC_ENTITY_CATEGORY = entity_helper.EntityCategory.DIAGNOSTIC
 
 
 def test_sensor_platform_declares_parallel_updates():

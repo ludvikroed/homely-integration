@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 
 import aiohttp
-
 from homely import (
     HomelyAuthError,
     HomelyClient,
@@ -19,6 +17,7 @@ from homely import (
     __version__,
     auth_header_value,
 )
+
 from custom_components.homely.websocket import HomelyWebSocket as CompatibilityWebSocket
 
 
@@ -118,7 +117,7 @@ async def test_homely_client_get_home_data_with_status_handles_network_error():
 
 async def test_homely_client_fetch_refresh_token_handles_timeout():
     """Refresh requests should return None on timeout in the reusable client."""
-    client = HomelyClient(_FakeSession(post_exc=asyncio.TimeoutError()))
+    client = HomelyClient(_FakeSession(post_exc=TimeoutError()))
 
     assert await client.fetch_refresh_token("refresh-token") is None
 

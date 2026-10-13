@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
 import logging
 import time
+from collections.abc import Callable
 from contextlib import ExitStack
 from copy import deepcopy
 from datetime import timedelta
@@ -19,15 +19,15 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
-from custom_components.homely import api
 from custom_components.homely import (
     _device_id_snapshot,
     _log_startup_device_payloads,
     _pending_import_locations,
     _redact_for_debug_logging,
     _schedule_pending_location_imports,
-    async_reload_entry,
+    api,
     async_migrate_entry,
+    async_reload_entry,
     async_remove_config_entry_device,
     async_setup_entry,
     async_unload_entry,
@@ -51,7 +51,7 @@ from tests.common import LOCATION_ID, SECOND_LOCATION_ID, build_config_entry
 class _FakeHomelyWebSocket:
     """Minimal websocket stub for integration setup tests."""
 
-    instances: list["_FakeHomelyWebSocket"] = []
+    instances: list[_FakeHomelyWebSocket] = []
     connect_result = True
     connect_error: Exception | None = None
     initial_status = "Not initialized"
@@ -1977,13 +1977,12 @@ async def test_coordinator_update_method_reload_on_new_device_topology(
         hass.config_entries,
         "async_reload",
         AsyncMock(return_value=True),
-    ) as async_reload:
-        with patch(
-            "custom_components.homely.get_data_with_status",
-            AsyncMock(return_value=(changed_data, 200)),
-        ):
-            result = await runtime_data.coordinator.update_method()
-            await hass.async_block_till_done()
+    ) as async_reload, patch(
+        "custom_components.homely.get_data_with_status",
+        AsyncMock(return_value=(changed_data, 200)),
+    ):
+        result = await runtime_data.coordinator.update_method()
+        await hass.async_block_till_done()
 
     assert result["devices"][-1]["id"] == "new-device-id"
     assert "new-device-id" in runtime_data.tracked_device_ids
@@ -2028,13 +2027,12 @@ async def test_coordinator_update_method_does_not_double_schedule_topology_reloa
         hass.config_entries,
         "async_reload",
         AsyncMock(return_value=True),
-    ) as async_reload:
-        with patch(
-            "custom_components.homely.get_data_with_status",
-            AsyncMock(return_value=(changed_data, 200)),
-        ):
-            await runtime_data.coordinator.update_method()
-            await hass.async_block_till_done()
+    ) as async_reload, patch(
+        "custom_components.homely.get_data_with_status",
+        AsyncMock(return_value=(changed_data, 200)),
+    ):
+        await runtime_data.coordinator.update_method()
+        await hass.async_block_till_done()
 
     assert "new-device-id" in runtime_data.tracked_device_ids
     async_reload.assert_not_awaited()
@@ -2326,18 +2324,17 @@ async def test_coordinator_update_method_refresh_fallback_non_auth_failure_uses_
     )
     runtime_data.last_data_activity_monotonic = time.monotonic() - 7200
 
-    with caplog.at_level(logging.DEBUG):
-        with (
-            patch(
-                "custom_components.homely.fetch_refresh_token",
-                AsyncMock(return_value=None),
-            ),
-            patch(
-                "custom_components.homely.fetch_token_with_reason",
-                AsyncMock(return_value=(None, "cannot_connect")),
-            ),
-        ):
-            result = await runtime_data.coordinator.update_method()
+    with (
+        caplog.at_level(logging.DEBUG), patch(
+            "custom_components.homely.fetch_refresh_token",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "custom_components.homely.fetch_token_with_reason",
+            AsyncMock(return_value=(None, "cannot_connect")),
+        ),
+    ):
+        result = await runtime_data.coordinator.update_method()
 
     assert result == runtime_data.last_data
     assert runtime_data.api_available is False
@@ -2371,12 +2368,11 @@ async def test_coordinator_update_method_refresh_exception_uses_cache(
     runtime_data = config_entry.runtime_data
     runtime_data.expires_at = 0
 
-    with caplog.at_level(logging.DEBUG):
-        with patch(
-            "custom_components.homely.fetch_refresh_token",
-            AsyncMock(side_effect=RuntimeError("network down")),
-        ):
-            result = await runtime_data.coordinator.update_method()
+    with caplog.at_level(logging.DEBUG), patch(
+        "custom_components.homely.fetch_refresh_token",
+        AsyncMock(side_effect=RuntimeError("network down")),
+    ):
+        result = await runtime_data.coordinator.update_method()
 
     assert result == runtime_data.last_data
     assert runtime_data.api_available is False
@@ -2578,24 +2574,23 @@ async def test_coordinator_update_method_refresh_response_invalid_expires_uses_c
         update_token=MagicMock(),
     )
 
-    with caplog.at_level(logging.WARNING):
-        with (
-            patch(
-                "custom_components.homely.fetch_refresh_token",
-                AsyncMock(
-                    return_value={
-                        "access_token": "new-access-token",
-                        "refresh_token": "new-refresh-token",
-                        "expires_in": "bad",
-                    }
-                ),
+    with (
+        caplog.at_level(logging.WARNING), patch(
+            "custom_components.homely.fetch_refresh_token",
+            AsyncMock(
+                return_value={
+                    "access_token": "new-access-token",
+                    "refresh_token": "new-refresh-token",
+                    "expires_in": "bad",
+                }
             ),
-            patch(
-                "custom_components.homely.fetch_token_with_reason",
-                AsyncMock(return_value=(None, "cannot_connect")),
-            ),
-        ):
-            result = await runtime_data.coordinator.update_method()
+        ),
+        patch(
+            "custom_components.homely.fetch_token_with_reason",
+            AsyncMock(return_value=(None, "cannot_connect")),
+        ),
+    ):
+        result = await runtime_data.coordinator.update_method()
 
     assert result == runtime_data.last_data
     assert runtime_data.api_available is False
@@ -2641,22 +2636,21 @@ async def test_coordinator_update_method_logs_refresh_failure_detail_and_body_pr
         body_preview="{'access_token': 'token'}",
     )
 
-    with caplog.at_level(logging.WARNING):
-        with (
-            patch(
-                "custom_components.homely.fetch_refresh_token",
-                AsyncMock(return_value=None),
-            ),
-            patch(
-                "custom_components.homely.get_last_refresh_token_result",
-                return_value=refresh_snapshot,
-            ),
-            patch(
-                "custom_components.homely.fetch_token_with_reason",
-                AsyncMock(return_value=(None, "cannot_connect")),
-            ),
-        ):
-            result = await runtime_data.coordinator.update_method()
+    with (
+        caplog.at_level(logging.WARNING), patch(
+            "custom_components.homely.fetch_refresh_token",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "custom_components.homely.get_last_refresh_token_result",
+            return_value=refresh_snapshot,
+        ),
+        patch(
+            "custom_components.homely.fetch_token_with_reason",
+            AsyncMock(return_value=(None, "cannot_connect")),
+        ),
+    ):
+        result = await runtime_data.coordinator.update_method()
 
     assert result == runtime_data.last_data
     joined = "\n".join(record.getMessage() for record in caplog.records)
@@ -3325,6 +3319,17 @@ async def test_async_setup_entry_websocket_callbacks_update_runtime_and_listener
             AsyncMock(return_value=None),
         ),
     ):
+        # A failed initial connection gets one bounded fallback poll so entity
+        # state cannot remain stale until the daily refresh.
+        ws.status_update_callback("Connecting", None)
+        ws.status_update_callback("Disconnected", "connect timeout")
+        await hass.async_block_till_done()
+        runtime_data.coordinator.async_request_refresh.assert_awaited_once()
+        assert runtime_data.ws_outage_poll_pending is False
+        runtime_data.coordinator.async_request_refresh.reset_mock()
+
+        ws.status_update_callback("Connected", "event received")
+        listener.reset_mock()
         ws.status_update_callback("Disconnected", "network error: boom")
         await hass.async_block_till_done()
     await hass.async_block_till_done()
@@ -3446,6 +3451,120 @@ async def test_async_setup_entry_websocket_handles_connect_failure_and_internet_
     await hass.async_block_till_done()
 
     assert ws.request_reconnect_calls == ["internet_available event"]
+
+
+async def test_websocket_never_connected_schedules_bounded_api_fallback(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """A websocket that never connects must not leave data stale for a day."""
+    _FakeHomelyWebSocket.reset()
+    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: True})
+
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+        extra_patches=(
+            patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),
+        ),
+    )
+
+    runtime_data = config_entry.runtime_data
+    ws = _FakeHomelyWebSocket.instances[0]
+    scheduled_delays: list[int] = []
+
+    async def _record_fallback(**kwargs) -> None:
+        scheduled_delays.append(kwargs["delay_seconds"])
+        kwargs["expected_runtime"].ws_outage_poll_pending = False
+
+    with (
+        patch.object(hass.loop, "call_soon_threadsafe", side_effect=lambda cb: cb()),
+        patch(
+            "custom_components.homely.websocket_runtime._delayed_api_refresh_if_websocket_still_down",
+            side_effect=_record_fallback,
+        ),
+    ):
+        for _ in range(7):
+            ws.status_update_callback("Connecting", None)
+            ws.status_update_callback("Disconnected", "connect timeout")
+            await hass.async_block_till_done()
+
+        ws.status_update_callback("Connected", "event received")
+        ws.status_update_callback("Connecting", None)
+        ws.status_update_callback("Disconnected", "connect timeout")
+        await hass.async_block_till_done()
+
+        runtime_data.api_retry_unsub = MagicMock()
+        ws.status_update_callback("Connecting", None)
+        ws.status_update_callback("Disconnected", "connect timeout")
+        await hass.async_block_till_done()
+
+    assert scheduled_delays == [180, 600, 1800, 3600, 7200, 21600, 21600, 180]
+    assert runtime_data.ws_status == "Disconnected"
+    runtime_data.api_retry_unsub = None
+
+
+async def test_websocket_outage_schedules_only_one_pending_api_fallback(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Reconnect churn must not create overlapping REST fallback tasks."""
+    _FakeHomelyWebSocket.reset()
+    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: True})
+
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+        extra_patches=(
+            patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),
+        ),
+    )
+
+    runtime_data = config_entry.runtime_data
+    ws = _FakeHomelyWebSocket.instances[0]
+    fallback_started = asyncio.Event()
+    release_fallback = asyncio.Event()
+    fallback_calls = 0
+
+    async def _hold_fallback(**_kwargs) -> None:
+        nonlocal fallback_calls
+        fallback_calls += 1
+        fallback_started.set()
+        await release_fallback.wait()
+
+    with (
+        patch.object(hass.loop, "call_soon_threadsafe", side_effect=lambda cb: cb()),
+        patch(
+            "custom_components.homely.websocket_runtime._delayed_api_refresh_if_websocket_still_down",
+            side_effect=_hold_fallback,
+        ),
+    ):
+        ws.status_update_callback("Connecting", None)
+        ws.status_update_callback("Disconnected", "connect timeout")
+        await fallback_started.wait()
+
+        ws.status_update_callback("Connecting", None)
+        ws.status_update_callback("Disconnected", "connect timeout")
+        await hass.async_block_till_done()
+
+        assert fallback_calls == 1
+        assert runtime_data.ws_outage_poll_pending is True
+        release_fallback.set()
+        await hass.async_block_till_done()
 
 
 async def test_async_setup_entry_websocket_status_callback_tolerates_listener_failures(
@@ -3612,6 +3731,7 @@ async def test_async_setup_entry_websocket_callback_handles_no_direct_device_cha
 
     runtime_data = config_entry.runtime_data
     runtime_data.coordinator.async_update_listeners = MagicMock()
+    runtime_data.coordinator.async_request_refresh = AsyncMock(return_value=None)
     ws = _FakeHomelyWebSocket.instances[0]
     with patch(
         "custom_components.homely.apply_websocket_event_to_data",
@@ -3622,10 +3742,30 @@ async def test_async_setup_entry_websocket_callback_handles_no_direct_device_cha
         },
     ):
         ws.on_data_update({"type": "device-state-changed"})
+        await hass.async_block_till_done()
 
     runtime_data.coordinator.async_update_listeners.assert_called_once()
     assert runtime_data.last_websocket_event_type == "device-state-changed"
     assert runtime_data.last_websocket_event_at is not None
+    # Homely streams events for devices added in the app before the daily poll
+    # would discover them: pull a fresh snapshot right away, but only once per
+    # debounce window.
+    assert runtime_data.force_api_refresh_once is True
+    runtime_data.coordinator.async_request_refresh.assert_awaited_once()
+
+    runtime_data.force_api_refresh_once = False
+    with patch(
+        "custom_components.homely.apply_websocket_event_to_data",
+        return_value={
+            "event_type": "device-state-changed",
+            "changes": [],
+            "device_id": "missing-device",
+        },
+    ):
+        ws.on_data_update({"type": "device-state-changed"})
+        await hass.async_block_till_done()
+    runtime_data.coordinator.async_request_refresh.assert_awaited_once()
+    assert runtime_data.force_api_refresh_once is False
 
 
 async def test_async_setup_entry_ignores_stale_websocket_callbacks_after_runtime_replacement(
@@ -3857,13 +3997,12 @@ async def test_coordinator_update_method_reloads_when_devices_appear_after_empty
         hass.config_entries,
         "async_reload",
         AsyncMock(return_value=True),
-    ) as async_reload:
-        with patch(
-            "custom_components.homely.get_data_with_status",
-            AsyncMock(return_value=(updated_location_data, 200)),
-        ):
-            await runtime_data.coordinator.update_method()
-            await hass.async_block_till_done()
+    ) as async_reload, patch(
+        "custom_components.homely.get_data_with_status",
+        AsyncMock(return_value=(updated_location_data, 200)),
+    ):
+        await runtime_data.coordinator.update_method()
+        await hass.async_block_till_done()
 
     async_reload.assert_awaited_once_with(config_entry.entry_id)
     assert runtime_data.tracked_device_ids
@@ -3978,3 +4117,219 @@ async def test_coordinator_listener_uses_delayed_store_save(
     # The delayed-save callback must return the freshest runtime data.
     data_func = delay_save.call_args.args[0]
     assert data_func() is runtime_data.last_data
+
+
+async def test_coordinator_listener_coalesces_delayed_saves(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """A burst of websocket events schedules one store write, not one per event."""
+    from homeassistant.helpers.storage import Store
+
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+
+    with patch.object(Store, "async_delay_save") as delay_save:
+        for _ in range(5):
+            runtime_data.coordinator.async_update_listeners()
+        await hass.async_block_till_done()
+
+    # Store.async_delay_save pushes its write forward on every call, so calling
+    # it per event would postpone the write for as long as events keep coming.
+    assert delay_save.call_count == 1
+
+
+async def test_coordinator_update_method_uses_cache_on_unlisted_server_error(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Any 5xx response keeps the cached snapshot instead of failing the update."""
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+
+    with patch(
+        "custom_components.homely.get_data_with_status",
+        AsyncMock(return_value=(None, 520)),
+    ):
+        result = await runtime_data.coordinator.update_method()
+
+    assert result == runtime_data.last_data
+    assert runtime_data.last_api_poll_status == "failed"
+    assert runtime_data.last_api_poll_status_code == 520
+    assert runtime_data.api_available is False
+
+
+async def test_coordinator_update_method_records_failure_without_cache(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """A failed poll with no cache still records the failure and schedules a retry."""
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+    runtime_data.last_data = {}
+    # No websocket to fall back on either.
+    runtime_data.websocket = None
+
+    retry_delays: list[float] = []
+
+    def _capture_retry_delay(_hass, delay, _action):
+        retry_delays.append(delay)
+        return lambda: None
+
+    with (
+        patch(
+            "custom_components.homely.get_data_with_status",
+            AsyncMock(return_value=(None, 503)),
+        ),
+        patch(
+            "custom_components.homely.coordinator_runtime.async_call_later",
+            side_effect=_capture_retry_delay,
+        ),
+    ):
+        try:
+            await runtime_data.coordinator.update_method()
+        except UpdateFailed:
+            pass
+        else:
+            raise AssertionError("Expected UpdateFailed")
+
+    assert runtime_data.last_api_poll_status == "failed"
+    assert runtime_data.last_api_poll_status_code == 503
+    assert runtime_data.api_available is False
+    assert retry_delays == [180]
+    assert runtime_data.next_api_retry_at is not None
+
+
+async def test_coordinator_update_method_validates_payload_after_credential_retry(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """A payload fetched after re-authenticating is validated like any other."""
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+    cached = deepcopy(runtime_data.last_data)
+    wrong_location = deepcopy(updated_location_data)
+    wrong_location["locationId"] = SECOND_LOCATION_ID
+
+    with (
+        patch(
+            "custom_components.homely.get_data_with_status",
+            AsyncMock(side_effect=[(None, 401), (wrong_location, 200)]),
+        ),
+        patch(
+            "custom_components.homely.fetch_token_with_reason",
+            AsyncMock(return_value=(token_response, None)),
+        ),
+    ):
+        result = await runtime_data.coordinator.update_method()
+
+    assert result == cached
+    assert runtime_data.last_data == cached
+    assert runtime_data.last_api_poll_status == "failed"
+    assert "invalid location payload" in str(runtime_data.last_api_poll_detail)
+
+
+async def test_async_remove_entry_removes_cached_snapshot(hass):
+    """Removing the config entry also removes its cached location snapshot."""
+    from homeassistant.helpers.storage import Store
+
+    from custom_components.homely import async_remove_entry
+
+    config_entry = build_config_entry()
+    config_entry.add_to_hass(hass)
+
+    with patch.object(Store, "async_remove", AsyncMock()) as remove:
+        await async_remove_entry(hass, config_entry)
+
+    remove.assert_awaited_once()
+
+
+async def test_websocket_disconnect_with_expired_token_refreshes_immediately(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """A reconnect cannot succeed with a stale token, so the fallback poll runs at once."""
+    _FakeHomelyWebSocket.reset()
+    config_entry = build_config_entry()
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+    )
+    runtime_data = config_entry.runtime_data
+    ws = _FakeHomelyWebSocket.instances[0]
+    ws.connected = False
+    fallback_delays: list[int] = []
+
+    async def _record_fallback(**kwargs) -> None:
+        fallback_delays.append(kwargs["delay_seconds"])
+
+    with (
+        patch.object(hass.loop, "call_soon_threadsafe", side_effect=lambda cb: cb()),
+        patch(
+            "custom_components.homely.websocket_runtime._delayed_api_refresh_if_websocket_still_down",
+            side_effect=_record_fallback,
+        ),
+    ):
+        runtime_data.expires_at = time.time() + 3600
+        ws.status_update_callback("Connected", "event received")
+        ws.status_update_callback("Disconnected", "network error: boom")
+        await hass.async_block_till_done()
+        assert fallback_delays == [30]
+
+        runtime_data.ws_disconnect_refresh_monotonic = float("-inf")
+        runtime_data.expires_at = time.time() - 1
+        ws.status_update_callback("Connected", "event received")
+        ws.status_update_callback("Disconnected", "network error: boom")
+        await hass.async_block_till_done()
+        assert fallback_delays == [30, 0]

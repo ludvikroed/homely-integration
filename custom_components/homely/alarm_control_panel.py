@@ -11,6 +11,7 @@ from homeassistant.components.alarm_control_panel.const import (
     AlarmControlPanelState,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import (
@@ -32,14 +33,16 @@ STATE_MAP: dict[str, AlarmControlPanelState] = {
     "ARMED_NIGHT": AlarmControlPanelState.ARMED_NIGHT,
     "ARMED_STAY": AlarmControlPanelState.ARMED_HOME,
     "ARMED_PARTLY": AlarmControlPanelState.ARMED_HOME,
-    # Pending/transitional states
+    # Exit delay: the system is in the process of arming.
     "ARM_PENDING": AlarmControlPanelState.ARMING,
     "ARM_STAY_PENDING": AlarmControlPanelState.ARMING,
     "ARM_NIGHT_PENDING": AlarmControlPanelState.ARMING,
-    "ALARM_PENDING": AlarmControlPanelState.ARMING,
-    "ALARM_STAY_PENDING": AlarmControlPanelState.ARMING,
     "ARMED_NIGHT_PENDING": AlarmControlPanelState.ARMING,
     "ARMED_AWAY_PENDING": AlarmControlPanelState.ARMING,
+    # Entry delay: a sensor tripped while armed and the alarm is about to
+    # trigger unless the system is disarmed. This is HA's "pending" state.
+    "ALARM_PENDING": AlarmControlPanelState.PENDING,
+    "ALARM_STAY_PENDING": AlarmControlPanelState.PENDING,
     "TRIGGERED": AlarmControlPanelState.TRIGGERED,
     "BREACHED": AlarmControlPanelState.TRIGGERED,
 }
@@ -137,6 +140,22 @@ class HomelyAlarmPanel(CoordinatorEntity, AlarmControlPanelEntity):
                     api_state_str,
                 )
         return None
+
+    async def async_alarm_disarm(self, code: str | None = None) -> None:
+        """Disarm is not supported by the Homely API."""
+        raise HomeAssistantError("Alarm control is not supported by the Homely API")
+
+    async def async_alarm_arm_home(self, code: str | None = None) -> None:
+        """Arm home is not supported by the Homely API."""
+        raise HomeAssistantError("Alarm control is not supported by the Homely API")
+
+    async def async_alarm_arm_away(self, code: str | None = None) -> None:
+        """Arm away is not supported by the Homely API."""
+        raise HomeAssistantError("Alarm control is not supported by the Homely API")
+
+    async def async_alarm_arm_night(self, code: str | None = None) -> None:
+        """Arm night is not supported by the Homely API."""
+        raise HomeAssistantError("Alarm control is not supported by the Homely API")
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:

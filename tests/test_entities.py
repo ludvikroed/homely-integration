@@ -14,7 +14,11 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.homely.alarm_control_panel import (
     PARALLEL_UPDATES as ALARM_PARALLEL_UPDATES,
+)
+from custom_components.homely.alarm_control_panel import (
     HomelyAlarmPanel,
+)
+from custom_components.homely.alarm_control_panel import (
     async_setup_entry as alarm_async_setup_entry,
 )
 from custom_components.homely.all_batteries_healthy import (
@@ -23,10 +27,14 @@ from custom_components.homely.all_batteries_healthy import (
 )
 from custom_components.homely.lock import (
     PARALLEL_UPDATES as LOCK_PARALLEL_UPDATES,
+)
+from custom_components.homely.lock import (
     HomelyLock,
-    async_setup_entry as lock_async_setup_entry,
     _coerce_bool,
     _is_lock_device,
+)
+from custom_components.homely.lock import (
+    async_setup_entry as lock_async_setup_entry,
 )
 from custom_components.homely.models import HomelyRuntimeData
 from custom_components.homely.sensor import (
@@ -480,3 +488,57 @@ def test_han_sensor_scales_totals_and_exposes_power(location_data):
 
     assert consumption_entity.native_value == 769.67
     assert demand_entity.native_value == 105
+
+
+def test_alarm_panel_maps_entry_delay_states_to_pending(location_data):
+    """Entry-delay states (sensor tripped while armed) map to HA's pending state."""
+    coordinator = MagicMock()
+    coordinator.data = location_data
+    entity = HomelyAlarmPanel(coordinator, LOCATION_ID)
+
+    coordinator.data["alarmState"] = "ALARM_PENDING"
+    assert entity.alarm_state is AlarmControlPanelState.PENDING
+
+    coordinator.data["alarmState"] = "ALARM_STAY_PENDING"
+    assert entity.alarm_state is AlarmControlPanelState.PENDING
+
+    # Exit delay (system arming) stays "arming".
+    coordinator.data["alarmState"] = "ARMED_NIGHT_PENDING"
+    assert entity.alarm_state is AlarmControlPanelState.ARMING
+
+
+async def test_alarm_panel_commands_raise_homeassistant_error(location_data):
+    """Arm/disarm are unsupported and must fail with a user-facing error."""
+    coordinator = MagicMock()
+    coordinator.data = location_data
+    entity = HomelyAlarmPanel(coordinator, LOCATION_ID)
+
+    for command in (
+        entity.async_alarm_disarm,
+        entity.async_alarm_arm_home,
+        entity.async_alarm_arm_away,
+        entity.async_alarm_arm_night,
+    ):
+        try:
+            await command()
+        except HomeAssistantError:
+            continue
+        raise AssertionError(f"{command.__name__} did not raise HomeAssistantError")
+
+
+def test_device_info_exposes_model_id(location_data):
+    """Physical devices expose the Homely modelId as model_id."""
+    coordinator = MagicMock()
+    coordinator.data = location_data
+    device = deepcopy(location_data["devices"][0])
+    device["modelId"] = "model-123"
+    sensor_config = next(
+        config
+        for config in discover_device_sensors(device)
+        if config["type"] == "sensor" and config["device_suffix"] == "temperature"
+    )
+
+    entity = HomelySensor(coordinator, device, sensor_config, location_id=LOCATION_ID)
+    assert entity.device_info is not None
+    assert entity.device_info["model_id"] == "model-123"
+    assert "via_device" not in entity.device_info

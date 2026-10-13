@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -161,7 +160,7 @@ async def test_fetch_refresh_token_and_locations(hass):
 async def test_fetch_refresh_token_handles_failure_status_and_network_error(hass):
     """Refresh helper should return None on HTTP and network failures."""
     status_session = _FakeSession(post_response=_FakeResponse(status=500))
-    network_session = _FakeSession(post_exc=asyncio.TimeoutError())
+    network_session = _FakeSession(post_exc=TimeoutError())
 
     with patch(
         "custom_components.homely.api.async_get_clientsession",
@@ -359,7 +358,7 @@ async def test_get_data_with_status_handles_http_error_and_network_error(hass):
     error_session = _FakeSession(
         get_response=_FakeResponse(status=500, text_data="server error")
     )
-    timeout_session = _FakeSession(get_exc=asyncio.TimeoutError())
+    timeout_session = _FakeSession(get_exc=TimeoutError())
 
     with patch(
         "custom_components.homely.api.async_get_clientsession",

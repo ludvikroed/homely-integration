@@ -39,3 +39,29 @@ def test_missing_device_issue_clears_when_device_returns(hass):
         {"devices": [{"id": device_id}]},
     )
     assert issue_registry.async_get_issue(DOMAIN, issue_id) is None
+
+
+def test_missing_device_issue_ignores_payloads_without_a_device_list(hass):
+    """Websocket-only payloads carry no device list and must not flag devices."""
+    entry = build_config_entry()
+    entry.add_to_hass(hass)
+    device_id = "known-device-id"
+    dr.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, device_id)},
+        name="Motion sensor",
+    )
+    issue_registry = ir.async_get(hass)
+    issue_id = missing_devices_issue_id(entry.entry_id)
+
+    async_sync_missing_devices_issue(hass, entry, {})
+    assert issue_registry.async_get_issue(DOMAIN, issue_id) is None
+
+    async_sync_missing_devices_issue(hass, entry, {"alarmState": "DISARMED"})
+    assert issue_registry.async_get_issue(DOMAIN, issue_id) is None
+
+    # An existing issue is left alone as well until a real snapshot arrives.
+    async_sync_missing_devices_issue(hass, entry, {"devices": []})
+    assert issue_registry.async_get_issue(DOMAIN, issue_id) is not None
+    async_sync_missing_devices_issue(hass, entry, {})
+    assert issue_registry.async_get_issue(DOMAIN, issue_id) is not None

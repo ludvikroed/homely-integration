@@ -27,6 +27,10 @@ _API_DUMP_REDACT_KEYS = {
     "serialNumber",
     "locationId",
     "location_id",
+    # Person who last armed/disarmed (cached from websocket alarm events).
+    "user_name",
+    "userName",
+    "user_id",
 }
 
 

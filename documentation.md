@@ -50,7 +50,8 @@ The alarm control panel maps Homely states to these Home Assistant states:
 - `armed_home`
 - `armed_away`
 - `armed_night`
-- `arming`
+- `arming` (exit delay while the system is arming)
+- `pending` (entry delay after a sensor tripped while armed)
 - `triggered`
 
 When Homely includes user information in completed arm or disarm events, the alarm entity may expose:
@@ -80,7 +81,7 @@ An existing installation with a valid cached snapshot loads entities from cache 
 
 On first setup without cache, the integration waits for the initial `/home` request to finish. If the request fails, the integration can still load location-level alarm and diagnostic entities in WebSocket-only mode. Device entities are added after a later successful full snapshot.
 
-When the WebSocket disconnects, the integration requests a reconnect first. An API fallback is delayed briefly so short disconnects do not cause unnecessary `/home` requests.
+When an established WebSocket disconnects, the integration requests a reconnect first. An API fallback is delayed briefly so short disconnects do not cause unnecessary `/home` requests. If the WebSocket never connects, full snapshots use a bounded fallback schedule of 3 minutes, 10 minutes, 30 minutes, 1 hour, 2 hours, and then every 6 hours. The schedule resets as soon as the WebSocket connects, and an existing API-error retry takes precedence so duplicate requests are not created.
 
 ### API failures and retry schedule
 

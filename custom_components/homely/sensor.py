@@ -20,16 +20,16 @@ from .const import DOMAIN
 from .device_state import get_current_device, is_device_available
 from .models import HomelyConfigEntry, get_entry_runtime_data
 from .naming import (
+    build_device_info,
     build_suggested_object_id,
-    get_device_area,
     get_device_display_name,
     humanize_label,
 )
 from .runtime_state import (
     websocket_connection_state,
 )
+from .sensors.discover import _get_value_by_path, discover_device_sensors
 from .websocket import WEBSOCKET_STATUS_OPTIONS as SDK_WEBSOCKET_STATUS_OPTIONS
-from .sensors.discover import discover_device_sensors, _get_value_by_path
 
 PARALLEL_UPDATES = 0
 SensorConfig = dict[str, Any]
@@ -91,6 +91,7 @@ async def async_setup_entry(
                         device,
                         sensor_config,
                         fallback_data_getter=_fallback_data_getter,
+                        location_id=location_id,
                     )
                 )
 
@@ -106,6 +107,7 @@ class HomelySensor(CoordinatorEntity, SensorEntity):
         device: dict[str, Any],
         sensor_config: SensorConfig,
         fallback_data_getter: FallbackDataGetter | None = None,
+        location_id: str | None = None,
     ) -> None:
         super().__init__(coordinator)
         self._attr_has_entity_name = True
@@ -161,14 +163,7 @@ class HomelySensor(CoordinatorEntity, SensorEntity):
             if category == "diagnostic":
                 self._attr_entity_category = DIAGNOSTIC_ENTITY_CATEGORY
 
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, self._device_id)},
-            name=self._device_name,
-            manufacturer="Homely",
-            model=device.get("modelName"),
-            serial_number=device.get("serialNumber"),
-            suggested_area=get_device_area(device),
-        )
+        self._attr_device_info = build_device_info(device)
 
     def _get_current_device(self) -> dict[str, Any] | None:
         """Return latest device payload from coordinator cache."""
