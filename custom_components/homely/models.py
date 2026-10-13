@@ -35,6 +35,10 @@ class HomelyRuntimeData:
     # threshold (e.g. a fresh CI runner or an appliance starting HA right after
     # boot), wrongly suppressing the first reconnect/refresh/warning.
     ws_disconnect_refresh_monotonic: float = float("-inf")
+    # Failed initial/reconnect attempts schedule bounded REST snapshots so a
+    # websocket outage cannot leave entity state stale until the daily poll.
+    ws_outage_poll_backoff_level: int = 0
+    ws_outage_poll_pending: bool = False
     ws_watchdog_reconnect_monotonic: float = float("-inf")
     ws_watchdog_last_warning_monotonic: float = float("-inf")
     ws_watchdog_last_reason: str | None = None

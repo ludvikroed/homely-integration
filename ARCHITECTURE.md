@@ -204,10 +204,11 @@ flowchart TD
         INET[ws.request_reconnect\nreason=internet_available]
     end
 
-    subgraph FALLBACK["API-fallback ved tapt WS-sesjon"]
-        FBC{"Connected → Disconnected?\n(ikke hvert mislykkede\nreconnect-forsøk)"}
+    subgraph FALLBACK["Begrenset API-fallback når WS er nede"]
+        FBC{"Connected → Disconnected?"}
         FBC -->|Ja| FBF["Vent 30s (0s hvis token utløpt)\nforce_api_refresh_once = True\ncoordinator.async_request_refresh()"]
-        FBC -->|Nei| FBSKIP[hopp over]
+        FBC -->|Nei, kobling feiler| FBB["Én ventende poll om gangen\n3m → 10m → 30m → 1t → 2t → 6t"]
+        FBB --> FBR["Nullstill planen når WS kobles til\nAPI-feilretry har prioritet"]
     end
 ```
 
@@ -328,7 +329,7 @@ flowchart TD
     TR1 -->|Nei| FAIL1
 
     TYPE -->|WS kobling brutt| WF1[request_reconnect\nSDK-loop prøver på nytt]
-    WF1 --> WF2[Umiddelbar poll\nfor fersk data]
+    WF1 --> WF2[30s poll ved tapt sesjon\neller begrenset backoff hvis WS aldri kobler til]
     WF2 --> WF3{Polling OK?}
     WF3 -->|Ja| CONTINUE
     WF3 -->|Nei| WF4[Watchdog tar over\nhvert 1. min]

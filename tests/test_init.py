@@ -3319,13 +3319,14 @@ async def test_async_setup_entry_websocket_callbacks_update_runtime_and_listener
             AsyncMock(return_value=None),
         ),
     ):
-        # The SDK reports Connecting -> Disconnected for every failed attempt
-        # of its reconnect loop; that is not a lost session and must not force
-        # an API poll.
+        # A failed initial connection gets one bounded fallback poll so entity
+        # state cannot remain stale until the daily refresh.
         ws.status_update_callback("Connecting", None)
         ws.status_update_callback("Disconnected", "connect timeout")
         await hass.async_block_till_done()
-        runtime_data.coordinator.async_request_refresh.assert_not_awaited()
+        runtime_data.coordinator.async_request_refresh.assert_awaited_once()
+        assert runtime_data.ws_outage_poll_pending is False
+        runtime_data.coordinator.async_request_refresh.reset_mock()
 
         ws.status_update_callback("Connected", "event received")
         listener.reset_mock()
@@ -3450,6 +3451,120 @@ async def test_async_setup_entry_websocket_handles_connect_failure_and_internet_
     await hass.async_block_till_done()
 
     assert ws.request_reconnect_calls == ["internet_available event"]
+
+
+async def test_websocket_never_connected_schedules_bounded_api_fallback(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """A websocket that never connects must not leave data stale for a day."""
+    _FakeHomelyWebSocket.reset()
+    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: True})
+
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+        extra_patches=(
+            patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),
+        ),
+    )
+
+    runtime_data = config_entry.runtime_data
+    ws = _FakeHomelyWebSocket.instances[0]
+    scheduled_delays: list[int] = []
+
+    async def _record_fallback(**kwargs) -> None:
+        scheduled_delays.append(kwargs["delay_seconds"])
+        kwargs["expected_runtime"].ws_outage_poll_pending = False
+
+    with (
+        patch.object(hass.loop, "call_soon_threadsafe", side_effect=lambda cb: cb()),
+        patch(
+            "custom_components.homely.websocket_runtime._delayed_api_refresh_if_websocket_still_down",
+            side_effect=_record_fallback,
+        ),
+    ):
+        for _ in range(7):
+            ws.status_update_callback("Connecting", None)
+            ws.status_update_callback("Disconnected", "connect timeout")
+            await hass.async_block_till_done()
+
+        ws.status_update_callback("Connected", "event received")
+        ws.status_update_callback("Connecting", None)
+        ws.status_update_callback("Disconnected", "connect timeout")
+        await hass.async_block_till_done()
+
+        runtime_data.api_retry_unsub = MagicMock()
+        ws.status_update_callback("Connecting", None)
+        ws.status_update_callback("Disconnected", "connect timeout")
+        await hass.async_block_till_done()
+
+    assert scheduled_delays == [180, 600, 1800, 3600, 7200, 21600, 21600, 180]
+    assert runtime_data.ws_status == "Disconnected"
+    runtime_data.api_retry_unsub = None
+
+
+async def test_websocket_outage_schedules_only_one_pending_api_fallback(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Reconnect churn must not create overlapping REST fallback tasks."""
+    _FakeHomelyWebSocket.reset()
+    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: True})
+
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+        extra_patches=(
+            patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),
+        ),
+    )
+
+    runtime_data = config_entry.runtime_data
+    ws = _FakeHomelyWebSocket.instances[0]
+    fallback_started = asyncio.Event()
+    release_fallback = asyncio.Event()
+    fallback_calls = 0
+
+    async def _hold_fallback(**_kwargs) -> None:
+        nonlocal fallback_calls
+        fallback_calls += 1
+        fallback_started.set()
+        await release_fallback.wait()
+
+    with (
+        patch.object(hass.loop, "call_soon_threadsafe", side_effect=lambda cb: cb()),
+        patch(
+            "custom_components.homely.websocket_runtime._delayed_api_refresh_if_websocket_still_down",
+            side_effect=_hold_fallback,
+        ),
+    ):
+        ws.status_update_callback("Connecting", None)
+        ws.status_update_callback("Disconnected", "connect timeout")
+        await fallback_started.wait()
+
+        ws.status_update_callback("Connecting", None)
+        ws.status_update_callback("Disconnected", "connect timeout")
+        await hass.async_block_till_done()
+
+        assert fallback_calls == 1
+        assert runtime_data.ws_outage_poll_pending is True
+        release_fallback.set()
+        await hass.async_block_till_done()
 
 
 async def test_async_setup_entry_websocket_status_callback_tolerates_listener_failures(

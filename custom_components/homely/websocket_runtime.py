@@ -40,6 +40,9 @@ WEBSOCKET_WATCHDOG_WARNING_THRESHOLD = 3
 WEBSOCKET_WATCHDOG_WARNING_DEBOUNCE_SECONDS = 10 * 60
 WEBSOCKET_API_FALLBACK_DELAY_SECONDS = 30
 WEBSOCKET_UNKNOWN_DEVICE_REFRESH_DEBOUNCE_SECONDS = 10 * 60
+# A websocket that never reaches Connected still needs occasional REST
+# snapshots. Reuse the documented API recovery cadence and cap it at six hours.
+WEBSOCKET_OUTAGE_POLL_BACKOFF_SECONDS = (180, 600, 1800, 3600, 7200, 21600)
 
 
 class ContextBuilder(Protocol):
@@ -64,31 +67,38 @@ async def _delayed_api_refresh_if_websocket_still_down(
     location_id: str | int,
     ctx: ContextBuilder,
     reason: str,
+    clear_outage_poll_pending: bool = False,
 ) -> None:
     """Request an API refresh only if websocket recovery did not happen first."""
-    await asyncio.sleep(delay_seconds)
-
-    runtime_data = runtime_data_getter()
-    if runtime_data is not expected_runtime:
-        return
-    if websocket_is_connected(runtime_data):
-        logger.debug(
-            "Skipping API fallback because websocket reconnected %s reason=%s",
-            ctx(entry_id, location_id),
-            reason,
-        )
-        return
-
-    runtime_data.force_api_refresh_once = True
     try:
-        await coordinator.async_request_refresh()
-    except Exception as err:
-        logger.debug(
-            "Delayed API fallback refresh failed %s reason=%s: %s",
-            ctx(entry_id, location_id),
-            reason,
-            err,
-        )
+        await asyncio.sleep(delay_seconds)
+
+        runtime_data = runtime_data_getter()
+        if runtime_data is not expected_runtime:
+            return
+        if websocket_is_connected(runtime_data):
+            logger.debug(
+                "Skipping API fallback because websocket reconnected %s reason=%s",
+                ctx(entry_id, location_id),
+                reason,
+            )
+            return
+
+        runtime_data.force_api_refresh_once = True
+        try:
+            await coordinator.async_request_refresh()
+        except Exception as err:
+            logger.debug(
+                "Delayed API fallback refresh failed %s reason=%s: %s",
+                ctx(entry_id, location_id),
+                reason,
+                err,
+            )
+    finally:
+        if clear_outage_poll_pending:
+            current_runtime = runtime_data_getter()
+            if current_runtime is expected_runtime:
+                current_runtime.ws_outage_poll_pending = False
 
 
 def build_device_topology_change_handler(
@@ -475,6 +485,8 @@ async def async_init_websocket(
                 previous_status = runtime.ws_status
                 runtime.ws_status = status
                 runtime.ws_status_reason = reason
+                if status == "Connected":
+                    runtime.ws_outage_poll_backoff_level = 0
                 if (
                     status == "Disconnected"
                     and reason
@@ -512,6 +524,59 @@ async def async_init_websocket(
                     except Exception as err:
                         logger.debug(
                             "Failed to request websocket reconnect after disconnect status %s: %s",
+                            ctx(entry.entry_id, location_id),
+                            err,
+                        )
+
+                # A socket that never reached Connected cannot provide live
+                # state. Schedule one bounded REST snapshot per reconnect
+                # cycle, with increasing delays, rather than polling after
+                # every failed attempt or waiting for the daily coordinator
+                # refresh. API failures have their own retry task and take
+                # precedence to avoid duplicate requests.
+                if (
+                    status == "Disconnected"
+                    and previous_status not in {"Connected", "Disconnected"}
+                    and enable_websocket
+                    and reason != "manual disconnect"
+                    and not runtime.ws_outage_poll_pending
+                    and runtime.api_retry_unsub is None
+                ):
+                    try:
+                        backoff_level = runtime.ws_outage_poll_backoff_level
+                        fallback_delay = WEBSOCKET_OUTAGE_POLL_BACKOFF_SECONDS[
+                            min(
+                                backoff_level,
+                                len(WEBSOCKET_OUTAGE_POLL_BACKOFF_SECONDS) - 1,
+                            )
+                        ]
+                        runtime.ws_outage_poll_backoff_level = backoff_level + 1
+                        runtime.ws_outage_poll_pending = True
+                        entry.async_create_background_task(
+                            hass,
+                            _delayed_api_refresh_if_websocket_still_down(
+                                delay_seconds=fallback_delay,
+                                expected_runtime=runtime,
+                                runtime_data_getter=runtime_data_getter,
+                                coordinator=coordinator,
+                                logger=logger,
+                                entry_id=entry.entry_id,
+                                location_id=location_id,
+                                ctx=ctx,
+                                reason="websocket connection attempt failed",
+                                clear_outage_poll_pending=True,
+                            ),
+                            "homely websocket outage API fallback",
+                        )
+                        logger.debug(
+                            "Scheduled bounded polling fallback while websocket remains unavailable %s delay_s=%s",
+                            ctx(entry.entry_id, location_id),
+                            fallback_delay,
+                        )
+                    except Exception as err:
+                        runtime.ws_outage_poll_pending = False
+                        logger.debug(
+                            "Failed to schedule polling fallback for unavailable websocket %s: %s",
                             ctx(entry.entry_id, location_id),
                             err,
                         )
