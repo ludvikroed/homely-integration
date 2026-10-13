@@ -177,7 +177,6 @@ SENSORS: list[dict[str, Any]] = [
         "translation_key": "jammed",
         "device_class": BinarySensorDeviceClass.PROBLEM,
         "device_suffix": "jammed",
-        "icon": "mdi:lock-alert",
     },
     {
         "path": "features.metering.states.check.value",
@@ -236,6 +235,7 @@ SENSORS: list[dict[str, Any]] = [
         "device_class": SensorDeviceClass.VOLTAGE,
         "unit": "V",
         "device_suffix": "battery_voltage",
+        "state_class": SensorStateClass.MEASUREMENT,
         "entity_category": "diagnostic",
     },
     # Diagnostic sensors
@@ -248,6 +248,7 @@ SENSORS: list[dict[str, Any]] = [
         "device_class": None,
         "unit": "%",
         "device_suffix": "networklinkstrength",
+        "state_class": SensorStateClass.MEASUREMENT,
         "entity_category": "diagnostic",
         "icon": "mdi:wifi",
     },

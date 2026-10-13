@@ -18,21 +18,21 @@ flowchart TD
     PLAT["Plattformer\nsensor · binary_sensor\nalarm_control_panel · lock"]
     WD["WS Watchdog\nhvert 1 min"]
     NET["internet_available event"]
-    FB["6t fallback-poll\n(hvis poll_when_ws=False)"]
+    RETRY["Retry-plan etter API-feil\n3m → 10m → 30m → 1t → 2t → 6t"]
 
     HA --> CFG
     CFG --> COORD
     CFG --> WS
-    COORD -->|"hvert scan_interval (std 180s)"| API
+    COORD -->|"hvert 24. time\n(+ tvungen poll ved feil/WS-brudd)"| API
     API -->|"full payload"| CACHE
     WS -->|"sanntidshendelser"| CACHE
     CACHE --> PLAT
     COORD -->|"async_update_listeners()"| PLAT
     STORE -.->|"last på oppstart / rate-limit fallback"| CACHE
-    CACHE -.->|"lagres etter vellykket poll"| STORE
+    CACHE -.->|"lagres forsinket (60s)\netter poll/WS-hendelse"| STORE
     WD --> WS
     NET --> WS
-    FB --> COORD
+    RETRY --> COORD
 ```
 
 ---
@@ -60,23 +60,21 @@ flowchart TD
     LOADSTORE --> FETCHDATA[GET /location/id\nInitiell datafetch]
     FETCHDATA --> DATASTATUS{HTTP status}
     DATASTATUS -->|200| SAVESTORE[Lagre til HA Storage]
-    DATASTATUS -->|429 + stored data| USESTORED[Bruk lagret data\nsom startverdi]
-    DATASTATUS -->|429 uten stored| EMPTYDATA[data = tom dict\nentiteter utilgjengelig]
-    DATASTATUS -->|annen feil| NOTREADY
+    DATASTATUS -->|feil, uten cache| EMPTYDATA[data = tom dict\nWS-only, enhetsentiteter\nventer på gyldig snapshot]
     SAVESTORE --> BUILDRUNTIME
     USESTORED --> BUILDRUNTIME
     EMPTYDATA --> BUILDRUNTIME
 
     BUILDRUNTIME["Bygg HomelyRuntimeData\n· coordinator\n· access_token, refresh_token, expires_at\n· location_id, partner_code\n· last_data\n· tracked_device_ids"]
 
-    BUILDRUNTIME --> BUILDCOORD["DataUpdateCoordinator\nupdate_method = async_update_data\nupdate_interval = scan_interval"]
+    BUILDRUNTIME --> BUILDCOORD["DataUpdateCoordinator\nupdate_method = async_update_data\nupdate_interval = 24t"]
     BUILDCOORD --> WSENABLED{WebSocket\naktivert?}
     WSENABLED -->|Ja| WSINIT["async_init_websocket()\n(schedules as task)"]
-    WSINIT --> REGLISTENERS["Registrer lyttere:\n· internet_available → reconnect\n· watchdog hvert 1 min\n· 6t fallback poll"]
+    WSINIT --> REGLISTENERS["Registrer lyttere:\n· internet_available → reconnect\n· watchdog hvert 1 min"]
     REGLISTENERS --> FIRSTREFRESH
     WSENABLED -->|Nei| FIRSTREFRESH
 
-    FIRSTREFRESH[async_config_entry_first_refresh] --> PLATFORMS
+    FIRSTREFRESH["coordinator.async_set_updated_data(data)\n(ingen ekstra /home-kall)"] --> PLATFORMS
     PLATFORMS["async_forward_entry_setups\nsensor · binary_sensor · alarm_control_panel · lock"]
     PLATFORMS --> PENDING{Ventende\nlokasjonsimporter?}
     PENDING -->|Ja| SCHEDIMPORT[Schedule config flow\nfor hver ny lokasjon]
@@ -105,11 +103,11 @@ flowchart TD
     REFOK -->|Nei| FULLLOGIN1[Full innlogging\nPOST /oauth/token]
     FULLLOGIN1 --> LOGINOK1{Success?}
     LOGINOK1 -->|Ja| UPDTOKEN
-    LOGINOK1 -->|invalid_auth| USECACHE1[_use_cached_data]
-    LOGINOK1 -->|nettverksfeil| USECACHE1
-    USECACHE1 --> FRESH1{Cache\nfrisk nok?}
+    LOGINOK1 -->|invalid_auth| REAUTH([ConfigEntryAuthFailed\n→ reauth-flyt])
+    LOGINOK1 -->|nettverksfeil| USECACHE1[_use_cached_data\nregistrer feil + planlegg retry]
+    USECACHE1 --> FRESH1{Cache\ntilgjengelig?}
     FRESH1 -->|Ja| RETCACHE([return last_data])
-    FRESH1 -->|Nei - for gammel| FAIL
+    FRESH1 -->|Nei| FAIL
 
     TOKENEXP -->|Nei| WSCHECK{WS koblet\n+ poll_when_ws=False\n+ force_refresh=False?}
     WSCHECK -->|Ja - hopp over REST| RETLASTDATA([return last_data])
@@ -151,11 +149,11 @@ flowchart TD
     R1 -->|invalid_refresh_token| TRY2
     TRY2[POST /oauth/token\nmed brukernavn+passord] --> R2{Svar}
     R2 -->|200 + valid| UPDATE2[Oppdater tokens\nSynk til WS]
-    R2 -->|invalid_auth| CACHE2[Bruk cached data\nprøv igjen neste poll]
-    R2 -->|Nettverksfeil| CACHE2
-    CACHE2 --> STALE{For gammel\ncache?}
-    STALE -->|Nei| RETCACHE([return last_data])
-    STALE -->|Ja| FAIL([UpdateFailed])
+    R2 -->|invalid_auth| REAUTH([ConfigEntryAuthFailed\n→ reauth-flyt])
+    R2 -->|Nettverksfeil| CACHE2[Bruk cached data\nplanlegg retry]
+    CACHE2 --> STALE{Cache\ntilgjengelig?}
+    STALE -->|Ja| RETCACHE([return last_data])
+    STALE -->|Nei| FAIL([UpdateFailed])
 ```
 
 ---
@@ -206,9 +204,9 @@ flowchart TD
         INET[ws.request_reconnect\nreason=internet_available]
     end
 
-    subgraph FALLBACK["6t fallback poll (poll_when_ws=False)"]
-        FBC{WS koblet?}
-        FBC -->|Ja| FBF["force_api_refresh_once = True\ncoordinator.async_request_refresh()"]
+    subgraph FALLBACK["API-fallback ved tapt WS-sesjon"]
+        FBC{"Connected → Disconnected?\n(ikke hvert mislykkede\nreconnect-forsøk)"}
+        FBC -->|Ja| FBF["Vent 30s (0s hvis token utløpt)\nforce_api_refresh_once = True\ncoordinator.async_request_refresh()"]
         FBC -->|Nei| FBSKIP[hopp over]
     end
 ```
@@ -325,7 +323,7 @@ flowchart TD
     RF2 -->|Nei| RF3[Cached data]
     RF3 --> FAIL1
 
-    TYPE -->|HTTP 429/5xx| TR1{last_data\ntilgjengelig?}
+    TYPE -->|HTTP 408/425/429/439\neller 5xx| TR1{last_data\ntilgjengelig?}
     TR1 -->|Ja| RETCACHE
     TR1 -->|Nei| FAIL1
 
@@ -335,8 +333,8 @@ flowchart TD
     WF3 -->|Ja| CONTINUE
     WF3 -->|Nei| WF4[Watchdog tar over\nhvert 1. min]
 
-    TYPE -->|Nettverksfeil| NF1[Bruk last_data\nhvis innenfor grace-period]
-    NF1 --> NF2{"Cache-alder\n< grace_seconds\n(max(60, min(scan_interval, 300)))"}
+    TYPE -->|Nettverksfeil| NF1[Bruk last_data\nuten aldersgrense]
+    NF1 --> NF2{last_data\ntilgjengelig?}
     NF2 -->|Ja| RETCACHE
     NF2 -->|Nei| FAIL1
 ```

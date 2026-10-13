@@ -7,7 +7,6 @@ from typing import Any
 
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass, BinarySensorEntity
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import (
@@ -15,17 +14,16 @@ from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
 )
 
-from .const import DOMAIN
+from .all_batteries_healthy import HomelyAllBatteriesHealthySensor
+from .device_state import get_current_device, is_device_available
 from .models import HomelyConfigEntry, get_entry_runtime_data
 from .naming import (
+    build_device_info,
     build_suggested_object_id,
-    get_device_area,
     get_device_display_name,
     humanize_label,
 )
-from .all_batteries_healthy import HomelyAllBatteriesHealthySensor
-from .device_state import get_current_device, is_device_available
-from .sensors.discover import discover_device_sensors, _get_value_by_path
+from .sensors.discover import _get_value_by_path, discover_device_sensors
 
 PARALLEL_UPDATES = 0
 SensorConfig = dict[str, Any]
@@ -60,6 +58,7 @@ async def async_setup_entry(
     """Set up binary sensor entities for Homely devices."""
     runtime_data = get_entry_runtime_data(entry)
     coordinator = runtime_data.coordinator
+    location_id = runtime_data.location_id
     data = coordinator.data or runtime_data.last_data or {}
 
     def _last_data() -> dict[str, Any] | None:
@@ -77,9 +76,20 @@ async def async_setup_entry(
         discovered = discover_device_sensors(device)
         for sensor_config in discovered:
             if sensor_config["type"] == "binary_sensor":
-                entities.append(HomelyBinarySensor(coordinator, device, sensor_config, _last_data))
-        entities.append(HomelyDeviceOnlineSensor(coordinator, device, _last_data))
-    location_id = runtime_data.location_id
+                entities.append(
+                    HomelyBinarySensor(
+                        coordinator,
+                        device,
+                        sensor_config,
+                        _last_data,
+                        location_id=location_id,
+                    )
+                )
+        entities.append(
+            HomelyDeviceOnlineSensor(
+                coordinator, device, _last_data, location_id=location_id
+            )
+        )
     location_name = (data or {}).get("name", "Location")
     entities.append(
         HomelyAllBatteriesHealthySensor(
@@ -101,6 +111,7 @@ class HomelyDeviceOnlineSensor(CoordinatorEntity, BinarySensorEntity):
         coordinator: DataUpdateCoordinator[dict[str, Any]],
         device: dict[str, Any],
         fallback_data_getter: Callable[[], dict[str, Any] | None] | None = None,
+        location_id: str | None = None,
     ) -> None:
         super().__init__(coordinator)
         self._fallback_data_getter = fallback_data_getter
@@ -112,18 +123,10 @@ class HomelyDeviceOnlineSensor(CoordinatorEntity, BinarySensorEntity):
         suggested_object_id = build_suggested_object_id(device, "online")
         if suggested_object_id:
             self._attr_suggested_object_id = suggested_object_id
-        self._attr_icon = "mdi:lan-connect"
         self._attr_entity_category = DIAGNOSTIC_ENTITY_CATEGORY
         self._attr_entity_registry_enabled_default = True
         self._attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, self._device_id)},
-            name=self._device_name,
-            manufacturer="Homely",
-            model=device.get("modelName"),
-            serial_number=device.get("serialNumber"),
-            suggested_area=get_device_area(device),
-        )
+        self._attr_device_info = build_device_info(device)
 
     def _get_current_device(self) -> dict[str, Any] | None:
         """Return latest device payload from coordinator or last-known cache."""
@@ -156,6 +159,7 @@ class HomelyBinarySensor(CoordinatorEntity, BinarySensorEntity):
         device: dict[str, Any],
         sensor_config: SensorConfig,
         fallback_data_getter: Callable[[], dict[str, Any] | None] | None = None,
+        location_id: str | None = None,
     ) -> None:
         super().__init__(coordinator)
         self._fallback_data_getter = fallback_data_getter
@@ -201,14 +205,7 @@ class HomelyBinarySensor(CoordinatorEntity, BinarySensorEntity):
             elif category == "config":
                 self._attr_entity_category = CONFIG_ENTITY_CATEGORY
 
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, self._device_id)},
-            name=self._device_name,
-            manufacturer="Homely",
-            model=device.get("modelName"),
-            serial_number=device.get("serialNumber"),
-            suggested_area=get_device_area(device),
-        )
+        self._attr_device_info = build_device_info(device)
 
     def _get_current_device(self) -> dict[str, Any] | None:
         """Return latest device payload from coordinator or last-known cache."""

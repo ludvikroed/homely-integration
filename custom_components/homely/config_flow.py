@@ -6,7 +6,6 @@ import logging
 from typing import Any
 
 import voluptuous as vol
-
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.core import HomeAssistant
@@ -15,15 +14,16 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homely.client import HomelyClient
 
 from .const import (
-    CONF_PENDING_IMPORT_LOCATIONS,
     CONF_HOME_ID,
     CONF_LOCATION_ID,
     CONF_PASSWORD,
+    CONF_PENDING_IMPORT_LOCATIONS,
     CONF_USERNAME,
     DEFAULT_HOME_ID,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
 )
+
 _LOGGER = logging.getLogger(__name__)
 LOCATION_SELECTION_ALL = "__all_locations__"
 
@@ -54,6 +54,17 @@ def _entry_home_id(entry: config_entries.ConfigEntry) -> int:
         )
     except (TypeError, ValueError):
         return DEFAULT_HOME_ID
+
+
+def _location_by_home_id(
+    locations: list[dict[str, Any]], home_id: int
+) -> dict[str, Any] | None:
+    """Return the location a legacy home_id index points at, if any."""
+    if 0 <= home_id < len(locations):
+        location = locations[home_id]
+        if isinstance(location, dict):
+            return location
+    return None
 
 
 def _location_name(location: dict[str, Any]) -> str:
@@ -383,6 +394,8 @@ class HomelyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
             if reason or not locations:
                 errors["base"] = reason or "cannot_connect"
+                # Never send the submitted password back as a form default.
+                input_values.pop(CONF_PASSWORD, None)
                 return self.async_show_form(
                     step_id="user",
                     data_schema=self._build_user_schema(input_values),
@@ -510,17 +523,35 @@ class HomelyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
             if reason or not locations:
                 errors["base"] = reason or "cannot_connect"
-            elif _find_location_by_id(locations, current_location_id) is None:
-                errors["base"] = "invalid_location"
             else:
-                updated_data = dict(reauth_entry.data)
-                updated_data[CONF_USERNAME] = user_input[CONF_USERNAME]
-                updated_data[CONF_PASSWORD] = user_input[CONF_PASSWORD]
-                return self.async_update_reload_and_abort(
-                    reauth_entry,
-                    data_updates=updated_data,
-                )
+                if current_location_id is None:
+                    # Legacy entries only carry a home_id index. Resolve it the
+                    # same way setup does so reauth is not a dead end for them.
+                    legacy_location = _location_by_home_id(
+                        locations, _entry_home_id(reauth_entry)
+                    )
+                    current_location_id = (
+                        _normalize_location_id(legacy_location.get("locationId"))
+                        if legacy_location is not None
+                        else None
+                    )
+                if (
+                    current_location_id is None
+                    or _find_location_by_id(locations, current_location_id) is None
+                ):
+                    errors["base"] = "invalid_location"
+                else:
+                    updated_data = dict(reauth_entry.data)
+                    updated_data[CONF_USERNAME] = user_input[CONF_USERNAME]
+                    updated_data[CONF_PASSWORD] = user_input[CONF_PASSWORD]
+                    updated_data[CONF_LOCATION_ID] = current_location_id
+                    return self.async_update_reload_and_abort(
+                        reauth_entry,
+                        data_updates=updated_data,
+                    )
 
+            # Never send the submitted password back as a form default.
+            input_values.pop(CONF_PASSWORD, None)
             defaults.update(input_values)
 
         from homeassistant.helpers import selector

@@ -30,7 +30,19 @@ from .runtime_state import (
     websocket_state_context,
 )
 
-_TRANSIENT_HTTP_STATUS = {408, 425, 429, 439, 500, 502, 503, 504}
+_TRANSIENT_HTTP_STATUS = {408, 425, 429, 439}
+
+
+def _is_transient_status(status_code: int | None) -> bool:
+    """Return True when a failed poll should fall back to cached data.
+
+    Network errors (no status), rate limiting and every 5xx response are
+    transient from the integration's point of view: the last valid snapshot
+    stays correct and must not make entities unavailable.
+    """
+    if status_code is None:
+        return True
+    return status_code in _TRANSIENT_HTTP_STATUS or status_code >= 500
 
 # Exponential backoff for REST polling while the websocket is healthy and
 # carries live data. Start fairly soon after a failed API call, then back off
@@ -389,6 +401,10 @@ def build_async_update_data(
             *,
             status_code: int | None = None,
         ) -> dict[str, Any] | None:
+            # Record the failure and schedule the retry even when no cache is
+            # available, so a failing poll never silently waits for the next
+            # scheduled poll and the poll-status sensor reflects the error.
+            _mark_api_unavailable(message, status_code=status_code)
             cached_data = cached_location_data(runtime_data)
             if cached_data is None:
                 return None
@@ -397,7 +413,6 @@ def build_async_update_data(
                 0.0,
                 time.monotonic() - runtime_data.last_data_activity_monotonic,
             )
-            _mark_api_unavailable(message, status_code=status_code)
             update_runtime_websocket_state(runtime_data)
             logger.debug(
                 "Using cached Homely data without age expiry %s age_s=%s %s",
@@ -472,8 +487,8 @@ def build_async_update_data(
                 raise UpdateFailed("Full login response missing required fields")
             try:
                 new_expires_in_seconds = int(new_expires_in)
-            except (TypeError, ValueError):
-                raise UpdateFailed("Full login response has invalid expires_in")
+            except (TypeError, ValueError) as err:
+                raise UpdateFailed("Full login response has invalid expires_in") from err
 
             runtime_data.access_token = new_access_token
             runtime_data.refresh_token = new_refresh_token
@@ -644,7 +659,7 @@ def build_async_update_data(
                         if recovered_token is None:
                             raise UpdateFailed(
                                 "Fallback full login returned no usable token"
-                            )
+                            ) from None
                         access_token = recovered_token
                     else:
                         runtime_data.access_token = new_access_token
@@ -735,7 +750,16 @@ def build_async_update_data(
                 access_token,
                 runtime_data.location_id,
             )
+            if not updated and status_code in (401, 403):
+                updated, status_code, cached_data = await _retry_poll_with_stored_credentials(
+                    status_code
+                )
+                if cached_data is not None:
+                    return cached_data
             if updated:
+                # Validate every accepted payload, including the one fetched
+                # after re-authenticating; a malformed snapshot must never
+                # replace the cache or drive device topology changes.
                 payload_error = location_payload_error(
                     updated,
                     runtime_data.location_id,
@@ -750,12 +774,6 @@ def build_async_update_data(
                     raise UpdateFailed(
                         f"Homely API returned an invalid location payload: {payload_error}"
                     )
-            if not updated and status_code in (401, 403):
-                updated, status_code, cached_data = await _retry_poll_with_stored_credentials(
-                    status_code
-                )
-                if cached_data is not None:
-                    return cached_data
 
             if not updated:
                 if enable_websocket and websocket_is_connected(runtime_data):
@@ -784,7 +802,7 @@ def build_async_update_data(
                         if isinstance(runtime_data.last_data, dict)
                         else {}
                     )
-                if status_code is None or status_code in _TRANSIENT_HTTP_STATUS:
+                if _is_transient_status(status_code):
                     cached_data = _use_cached_data(
                         "Polling API request failed with transient status="
                         f"{status_code}; continuing with cached data",
@@ -807,10 +825,6 @@ def build_async_update_data(
                     )
                     if cached_data is not None:
                         return cached_data
-                    _mark_api_unavailable(
-                        "Homely API still rejected credentials after retrying stored credentials",
-                        status_code=status_code,
-                    )
                     raise UpdateFailed(
                         "Failed to fetch data from API after retrying stored credentials"
                     )
@@ -843,7 +857,6 @@ def build_async_update_data(
             )
             if cached_data is not None:
                 return cached_data
-            _mark_api_unavailable(f"Polling exception: {err}")
             raise UpdateFailed(f"Exception while fetching data from API: {err}") from err
 
         old_alarm = get_alarm_state(runtime_data.last_data)

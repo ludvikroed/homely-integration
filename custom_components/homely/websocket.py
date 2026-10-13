@@ -8,8 +8,8 @@ from homely.websocket import (
 )
 
 __all__ = [
+    "WEBSOCKET_STATUS_OPTIONS",
     "HomelyWebSocket",
     "WebSocketConnectionState",
-    "WEBSOCKET_STATUS_OPTIONS",
     "normalize_websocket_status",
 ]

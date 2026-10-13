@@ -1,0 +1,24 @@
+# Pin the rule set so lint results do not change when a new ruff release
+# alters its defaults (ruff 0.17 widened the default selection and broke CI).
+target-version = "py314"
+line-length = 120
+
+[lint]
+select = [
+    "E4", "E7", "E9", # pycodestyle errors
+    "F",              # pyflakes
+    "I",              # isort
+    "UP",             # pyupgrade
+    "B",              # flake8-bugbear
+    "SIM",            # flake8-simplify
+    "G",              # flake8-logging-format
+    "RUF022",         # sorted __all__
+]
+ignore = [
+    "B008",   # function calls in argument defaults (voluptuous schemas)
+    "SIM105", # explicit try/except/pass reads clearer than contextlib.suppress here
+    "SIM108", # explicit if/else blocks are preferred over long ternaries
+]
+
+[lint.isort]
+known-first-party = ["custom_components", "tests"]

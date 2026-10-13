@@ -36,6 +36,13 @@ def async_sync_missing_devices_issue(
     location_data: dict[str, Any],
 ) -> None:
     """Create or clear the repair issue for confirmed missing devices."""
+    if not isinstance(location_data, dict) or not isinstance(
+        location_data.get("devices"), list
+    ):
+        # Websocket-only payloads (initial /home poll failed, no cache) carry no
+        # device list. That is not evidence that devices disappeared, so leave
+        # the issue state untouched until a real snapshot arrives.
+        return
     active_ids = device_id_snapshot(location_data)
     registry = dr.async_get(hass)
     missing_names: list[str] = []

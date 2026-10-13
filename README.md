@@ -86,7 +86,14 @@ A device visible in the Homely app may still be absent or incomplete in the API.
 
 ## Contributing
 
-Contributions are welcome. Before opening a pull request, run:
+Contributions are welcome. The test dependencies pull in Home Assistant and require Python 3.14 (the version CI uses):
+
+```bash
+python3.14 -m venv .venv && source .venv/bin/activate
+pip install -r requirements_test.txt
+```
+
+Before opening a pull request, run:
 
 - `python -m ruff check custom_components tests`
 - `pytest`

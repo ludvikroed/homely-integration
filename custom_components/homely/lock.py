@@ -8,19 +8,17 @@ from typing import Any
 from homeassistant.components.lock import LockEntity
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
     DataUpdateCoordinator,
 )
 
-from .const import DOMAIN
 from .device_state import get_current_device, is_device_available
 from .models import HomelyConfigEntry, get_entry_runtime_data
 from .naming import (
+    build_device_info,
     build_suggested_object_id,
-    get_device_area,
     get_device_display_name,
 )
 from .sensors.discover import _get_value_by_path
@@ -90,7 +88,12 @@ async def async_setup_entry(
             continue
         if _is_lock_device(device):
             entities.append(
-                HomelyLock(coordinator, device, fallback_data_getter=_fallback_data_getter)
+                HomelyLock(
+                    coordinator,
+                    device,
+                    fallback_data_getter=_fallback_data_getter,
+                    location_id=runtime_data.location_id,
+                )
             )
 
     async_add_entities(entities)
@@ -104,6 +107,7 @@ class HomelyLock(CoordinatorEntity, LockEntity):
         coordinator: DataUpdateCoordinator[dict[str, Any]],
         device: dict[str, Any],
         fallback_data_getter: Callable[[], dict[str, Any] | None] | None = None,
+        location_id: str | None = None,
     ) -> None:
         super().__init__(coordinator)
         self._fallback_data_getter = fallback_data_getter
@@ -116,15 +120,7 @@ class HomelyLock(CoordinatorEntity, LockEntity):
         suggested_object_id = build_suggested_object_id(device, "lock")
         if suggested_object_id:
             self._attr_suggested_object_id = suggested_object_id
-        self._attr_icon = "mdi:lock"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, self._device_id)},
-            name=self._device_name,
-            manufacturer="Homely",
-            model=device.get("modelName"),
-            serial_number=device.get("serialNumber"),
-            suggested_area=get_device_area(device),
-        )
+        self._attr_device_info = build_device_info(device)
 
     def _get_current_device(self) -> dict[str, Any] | None:
         """Return latest device payload from coordinator or last-known cache."""

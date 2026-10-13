@@ -11,7 +11,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from homely.client import HomelyClient
 
-_LAST_REFRESH_TOKEN_RESULT: ContextVar["RefreshTokenResult | None"] = ContextVar(
+_LAST_REFRESH_TOKEN_RESULT: ContextVar[RefreshTokenResult | None] = ContextVar(
     "homely_last_refresh_token_result",
     default=None,
 )

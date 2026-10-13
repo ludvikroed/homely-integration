@@ -50,7 +50,8 @@ The alarm control panel maps Homely states to these Home Assistant states:
 - `armed_home`
 - `armed_away`
 - `armed_night`
-- `arming`
+- `arming` (exit delay while the system is arming)
+- `pending` (entry delay after a sensor tripped while armed)
 - `triggered`
 
 When Homely includes user information in completed arm or disarm events, the alarm entity may expose:

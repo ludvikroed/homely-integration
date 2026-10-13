@@ -40,6 +40,9 @@ class HomelyRuntimeData:
     ws_watchdog_last_reason: str | None = None
     ws_watchdog_last_action_at: datetime | None = None
     ws_watchdog_recovery_history_monotonic: list[float] = field(default_factory=list)
+    # Last time a websocket event for a device missing from the cached snapshot
+    # forced an early /home poll (new devices should not wait for the daily poll).
+    ws_unknown_device_refresh_monotonic: float = float("-inf")
     # None until a poll actually succeeds; seeded setups must not fake one.
     last_successful_poll_monotonic: float | None = None
     last_data_activity_monotonic: float = field(default_factory=monotonic)

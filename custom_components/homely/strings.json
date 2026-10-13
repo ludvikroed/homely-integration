@@ -151,8 +151,15 @@
           "not_run": "Not run",
           "success": "Success",
           "failed": "Failed",
+          "failed_401": "Failed (401)",
+          "failed_403": "Failed (403)",
+          "failed_408": "Failed (408)",
           "failed_429": "Failed (429)",
+          "failed_439": "Failed (439)",
+          "failed_500": "Failed (500)",
+          "failed_502": "Failed (502)",
           "failed_503": "Failed (503)",
+          "failed_504": "Failed (504)",
           "unknown": "Unknown"
         }
       }

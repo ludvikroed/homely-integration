@@ -69,7 +69,7 @@ def websocket_object_is_connected(websocket: Any | None) -> bool:
     socket = getattr(websocket, "socket", None)
     if socket is not None:
         try:
-            if bool(getattr(socket, "connected")):
+            if bool(socket.connected):
                 return True
         except Exception:
             pass

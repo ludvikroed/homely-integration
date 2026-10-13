@@ -151,8 +151,15 @@
           "not_run": "Ikke kjørt",
           "success": "Vellykket",
           "failed": "Feilet",
+          "failed_401": "Feilet (401)",
+          "failed_403": "Feilet (403)",
+          "failed_408": "Feilet (408)",
           "failed_429": "Feilet (429)",
+          "failed_439": "Feilet (439)",
+          "failed_500": "Feilet (500)",
+          "failed_502": "Feilet (502)",
           "failed_503": "Feilet (503)",
+          "failed_504": "Feilet (504)",
           "unknown": "Ukjent"
         }
       }

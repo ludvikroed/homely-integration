@@ -87,3 +87,32 @@ async def test_diagnostics_falls_back_to_last_successful_api_dump(hass, location
 
     assert diagnostics["runtime"]["api_dump"]["name"] == "JF23"
     assert diagnostics["runtime"]["api_dump"]["devices"][0]["name"] == "Bevegelse stue"
+
+
+async def test_diagnostics_redact_alarm_event_user_metadata(hass, location_data):
+    """The person who armed or disarmed must not appear in diagnostics."""
+    location_data["lastArmedBy"] = {
+        "user_name": "Ola Nordmann",
+        "user_id": "user-armed-1",
+        "timestamp": "2026-01-01T10:00:00Z",
+    }
+    location_data["lastDisarmedBy"] = {"userName": "Kari Nordmann", "user_id": "u2"}
+    config_entry = build_config_entry()
+    config_entry.runtime_data = HomelyRuntimeData(
+        coordinator=SimpleNamespace(data=location_data, last_update_success=True),
+        access_token="access-token",
+        refresh_token="refresh-token",
+        expires_at=0,
+        location_id=LOCATION_ID,
+        last_data=location_data,
+    )
+
+    diagnostics = await async_get_config_entry_diagnostics(hass, config_entry)
+
+    armed = diagnostics["runtime"]["api_dump"]["lastArmedBy"]
+    disarmed = diagnostics["runtime"]["api_dump"]["lastDisarmedBy"]
+    assert armed["user_name"] == "**REDACTED**"
+    assert armed["user_id"] == "**REDACTED**"
+    assert armed["timestamp"] == "2026-01-01T10:00:00Z"
+    assert disarmed["userName"] == "**REDACTED**"
+    assert disarmed["user_id"] == "**REDACTED**"
