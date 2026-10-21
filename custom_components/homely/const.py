@@ -13,6 +13,9 @@ CONF_PENDING_IMPORT_LOCATIONS = "pending_import_locations"
 CONF_SCAN_INTERVAL = "scan_interval"
 CONF_ENABLE_WEBSOCKET = "enable_websocket"
 CONF_POLL_WHEN_WEBSOCKET = "poll_when_websocket"
+# Per-device HAN meter multiplier, {device_id: factor}. Set from the device's
+# number entity, not from an options flow.
+CONF_METER_MULTIPLIERS = "meter_multipliers"
 
 # Defaults
 DEFAULT_HOME_ID = 0

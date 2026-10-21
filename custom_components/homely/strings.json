@@ -90,6 +90,11 @@
         "name": "Online"
       }
     },
+    "number": {
+      "meter_multiplier": {
+        "name": "Meter multiplier (CT ratio)"
+      }
+    },
     "sensor": {
       "temperature": {
         "name": "Temperature"

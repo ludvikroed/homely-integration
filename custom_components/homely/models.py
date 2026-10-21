@@ -83,6 +83,9 @@ class HomelyRuntimeData:
     topology_reload_pending: bool = False
     force_api_refresh_once: bool = False
     partner_code: int | str | None = None
+    # Options the entry was loaded with, minus meter multipliers. A change that
+    # only touches multipliers is applied live and must not trigger a reload.
+    reload_options: dict[str, Any] = field(default_factory=dict)
 
 
 type HomelyConfigEntry = ConfigEntry[HomelyRuntimeData]

@@ -285,6 +285,7 @@ SENSORS: list[dict[str, Any]] = [
         "device_suffix": "consumption",
         "state_class": SensorStateClass.TOTAL_INCREASING,
         "transform_value": _wh_to_kwh,
+        "meter_scaled": True,
     },
     {
         "path": "features.metering.states.summationreceived.value",
@@ -297,6 +298,7 @@ SENSORS: list[dict[str, Any]] = [
         "device_suffix": "production",
         "state_class": SensorStateClass.TOTAL_INCREASING,
         "transform_value": _wh_to_kwh,
+        "meter_scaled": True,
     },
     {
         "path": "features.metering.states.demand.value",
@@ -308,5 +310,6 @@ SENSORS: list[dict[str, Any]] = [
         "unit": "W",
         "device_suffix": "demand",
         "state_class": SensorStateClass.MEASUREMENT,
+        "meter_scaled": True,
     },
 ]

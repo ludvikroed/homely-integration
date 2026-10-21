@@ -90,6 +90,11 @@
         "name": "Tilkoblet"
       }
     },
+    "number": {
+      "meter_multiplier": {
+        "name": "Målerfaktor (strømtrafo)"
+      }
+    },
     "sensor": {
       "temperature": {
         "name": "Temperatur"
