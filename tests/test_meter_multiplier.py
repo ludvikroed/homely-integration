@@ -6,12 +6,15 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import homeassistant.helpers.entity as entity_helper
+import pytest
 from homeassistant.components.number import NumberMode
+from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.homely import async_reload_entry
 from custom_components.homely.const import CONF_METER_MULTIPLIERS
 from custom_components.homely.meter_multiplier import (
     get_meter_multiplier,
+    options_with_meter_multiplier,
     options_without_meter_multipliers,
 )
 from custom_components.homely.number import (
@@ -69,6 +72,41 @@ def test_get_meter_multiplier_ignores_invalid_values():
     assert get_meter_multiplier({CONF_METER_MULTIPLIERS: {"d": "x"}}, "d") == 1.0
     assert get_meter_multiplier({CONF_METER_MULTIPLIERS: {"d": 0}}, "d") == 1.0
     assert get_meter_multiplier({CONF_METER_MULTIPLIERS: {"d": -5}}, "d") == 1.0
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+        0.0001,
+        100001,
+        pytest.param(10**1000, id="huge-int"),
+    ],
+)
+def test_get_meter_multiplier_rejects_nonfinite_and_out_of_range_values(value):
+    """Corrupt options must never produce invalid meter readings."""
+    assert get_meter_multiplier({CONF_METER_MULTIPLIERS: {"d": value}}, "d") == 1.0
+
+
+def test_setting_multiplier_recovers_from_corrupt_stored_map():
+    """A broken stored map must not prevent saving a valid multiplier."""
+    options = {"scan_interval": 60, CONF_METER_MULTIPLIERS: "broken"}
+
+    assert options_with_meter_multiplier(options, "d", 100) == {
+        "scan_interval": 60,
+        CONF_METER_MULTIPLIERS: {"d": 100.0},
+    }
+
+
+@pytest.mark.parametrize(
+    "value", [float("nan"), float("inf"), float("-inf"), 0, 0.0001, 100001]
+)
+def test_setting_multiplier_rejects_invalid_value(value):
+    """Only finite multipliers within the entity's advertised range persist."""
+    with pytest.raises(ValueError):
+        options_with_meter_multiplier({}, "d", value)
 
 
 def test_options_without_meter_multipliers_strips_only_that_key():
@@ -193,6 +231,24 @@ async def test_setting_multiplier_back_to_one_removes_stored_value(
     await entity.async_set_native_value(1.0)
 
     assert CONF_METER_MULTIPLIERS not in entry.options
+
+
+async def test_number_entity_rejects_invalid_multiplier_without_changing_options(
+    hass, location_data
+):
+    """An invalid service value must not be stored or refresh the sensors."""
+    entry = build_config_entry(options={"scan_interval": 60})
+    entry.add_to_hass(hass)
+    coordinator = _coordinator(location_data)
+    device = location_data["devices"][HAN_DEVICE_INDEX]
+    entity = HomelyMeterMultiplierNumber(coordinator, entry, device)
+    entity.hass = hass
+
+    with pytest.raises(HomeAssistantError):
+        await entity.async_set_native_value(float("nan"))
+
+    assert entry.options == {"scan_interval": 60}
+    coordinator.async_update_listeners.assert_not_called()
 
 
 async def test_reload_skipped_when_only_meter_multipliers_change(hass):

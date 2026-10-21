@@ -6,6 +6,7 @@ from typing import Any
 
 from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import (
@@ -94,10 +95,14 @@ class HomelyMeterMultiplierNumber(CoordinatorEntity, NumberEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         """Store the new multiplier and re-render the meter sensors."""
+        try:
+            options = options_with_meter_multiplier(
+                self._entry.options, self._device_id, value
+            )
+        except ValueError as exc:
+            raise HomeAssistantError(str(exc)) from exc
         self.hass.config_entries.async_update_entry(
             self._entry,
-            options=options_with_meter_multiplier(
-                self._entry.options, self._device_id, value
-            ),
+            options=options,
         )
         self.coordinator.async_update_listeners()
