@@ -27,7 +27,7 @@ Typical coverage includes:
 | Door/window sensor | Contact, Temperature, Battery low |
 | Smoke detector | Fire, Tamper, Temperature, Battery low |
 | Flood alarm | Flood, Temperature, Battery low |
-| HAN meter | Consumption, Production, Demand, Metering check |
+| HAN meter | Consumption, Production, Demand, Metering check, Meter multiplier (CT ratio) |
 | Compatible lock | Lock state, Door, Low battery, Jammed, Error code, Language, Sound volume |
 
 An **Online** diagnostic binary sensor is also created for each API device. Other diagnostic entities can include battery voltage, link quality, network address, battery defect, and metering check.
@@ -37,6 +37,14 @@ The table lists common examples, not a fixed compatibility guarantee. A device s
 ### Read-only behavior
 
 The available Homely API is read-only. Alarm and lock entities report state, but commands to arm, disarm, lock, or unlock are not supported. Automations can use the reported states as triggers and conditions.
+
+### HAN meter multiplier
+
+Homes with a large main fuse often have the electricity meter connected through current transformers. When the grid company does not set the transformer ratio on the meter, the meter and its HAN port report values divided by that ratio, for example 1/100 of the real consumption.
+
+Each HAN meter has a **Meter multiplier (CT ratio)** configuration entity on its device page. **Consumption**, **Production** and **Demand** are multiplied by this value before Home Assistant sees them. The default of `1` leaves values unchanged. Set it to the transformer ratio your meter is missing, for example `100`. The change applies immediately, without reloading the integration.
+
+Changing the multiplier makes Consumption and Production jump to the new scale. Home Assistant's long-term statistics record that jump as energy used, so the Energy dashboard shows one large spike for the hour the change was made. Correct it under **Developer tools → Statistics** by adjusting the sum for that hour on the affected sensors.
 
 ### Battery problem
 

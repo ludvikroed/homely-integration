@@ -47,6 +47,7 @@ from .logging_helpers import (
 from .logging_helpers import (
     _log_startup_device_payloads as _log_startup_device_payloads_impl,
 )
+from .meter_multiplier import options_without_meter_multipliers
 from .models import HomelyConfigEntry, HomelyRuntimeData
 from .repairs import (
     async_delete_missing_devices_issue,
@@ -78,6 +79,7 @@ PLATFORMS = [
     Platform.BINARY_SENSOR,
     Platform.ALARM_CONTROL_PANEL,
     Platform.LOCK,
+    Platform.NUMBER,
 ]
 # Websocket events are coalesced into one cache write per window so a chatty
 # device (HAN meter) cannot postpone the write forever or wear out flash.
@@ -546,6 +548,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> bo
         tracked_device_ids=_device_id_snapshot(data),
         partner_code=partner_code,
         api_available=initial_api_available,
+        reload_options=options_without_meter_multipliers(entry.options),
     )
     record_last_armed(runtime_data, data.get(LAST_ARMED_CACHE_KEY))
     record_last_disarmed(runtime_data, data.get(LAST_DISARMED_CACHE_KEY))
@@ -799,6 +802,17 @@ async def async_remove_config_entry_device(
 
 async def async_reload_entry(hass: HomeAssistant, entry: HomelyConfigEntry) -> None:
     """Reload config entry when options change."""
+    runtime_data = current_runtime_data(entry)
+    if runtime_data is not None and options_without_meter_multipliers(
+        entry.options
+    ) == getattr(runtime_data, "reload_options", None):
+        # Meter multipliers are applied live by the number entity; a reload
+        # would only reconnect the websocket and re-poll the API.
+        _LOGGER.debug(
+            "Only meter multipliers changed; skipping reload entry_id=%s",
+            entry.entry_id,
+        )
+        return
     _LOGGER.debug("Options changed; reloading entry_id=%s", entry.entry_id)
     await hass.config_entries.async_reload(entry.entry_id)
 
