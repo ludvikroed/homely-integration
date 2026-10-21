@@ -7,4 +7,4 @@ pytest-cov
 pytest-homeassistant-custom-component==0.13.340
 mypy
 ruff
-python-homely==0.1.9
+python-homely==0.1.10
