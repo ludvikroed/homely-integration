@@ -63,6 +63,8 @@ class HomelyRuntimeData:
     last_websocket_event_at: datetime | None = None
     last_websocket_event_type: str | None = None
     last_ws_event_details: dict[str, Any] | None = None
+    han_demand_last_event_monotonic: dict[str, float] = field(default_factory=dict)
+    han_refresh_last_attempt_monotonic: float = float("-inf")
     last_armed_by: str | None = None
     last_armed_user_id: str | None = None
     last_armed_at: str | None = None

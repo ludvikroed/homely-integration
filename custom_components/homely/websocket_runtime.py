@@ -40,6 +40,8 @@ WEBSOCKET_WATCHDOG_WARNING_THRESHOLD = 3
 WEBSOCKET_WATCHDOG_WARNING_DEBOUNCE_SECONDS = 10 * 60
 WEBSOCKET_API_FALLBACK_DELAY_SECONDS = 30
 WEBSOCKET_UNKNOWN_DEVICE_REFRESH_DEBOUNCE_SECONDS = 10 * 60
+HAN_DEMAND_SILENCE_SECONDS = 60 * 60
+HAN_REFRESH_COOLDOWN_SECONDS = 6 * 60 * 60
 # A websocket that never reaches Connected still needs occasional REST
 # snapshots. Reuse the documented API recovery cadence and cap it at six hours.
 WEBSOCKET_OUTAGE_POLL_BACKOFF_SECONDS = (180, 600, 1800, 3600, 7200, 21600)
@@ -333,6 +335,16 @@ def build_websocket_data_handler(
             if event_type == "device-state-changed":
                 applied_changes = result.get("changes", [])
                 if applied_changes:
+                    for change in applied_changes:
+                        if (
+                            change.get("feature") == "metering"
+                            and change.get("state_name") == "demand"
+                        ):
+                            device_id = change.get("device_id")
+                            if device_id is not None:
+                                runtime_data.han_demand_last_event_monotonic[
+                                    str(device_id)
+                                ] = time.monotonic()
                     first = applied_changes[0]
                     details: dict[str, Any] = {
                         "device_id": first.get("device_id"),
@@ -759,6 +771,74 @@ def register_websocket_health_watchdog(
 ) -> Any | None:
     """Recover websocket sessions that die without a proper disconnect callback."""
 
+    async def _refresh_silent_han(expected_runtime: HomelyRuntimeData) -> None:
+        if (
+            runtime_data_getter() is not expected_runtime
+            or not websocket_is_connected(expected_runtime)
+            or expected_runtime.api_retry_unsub is not None
+            or time.monotonic() < expected_runtime.poll_backoff_until_monotonic
+        ):
+            return
+        expected_runtime.force_api_refresh_once = True
+        try:
+            await coordinator.async_request_refresh()
+        except Exception as err:
+            logger.debug(
+                "HAN silence API refresh failed %s: %s",
+                ctx(entry.entry_id, location_id),
+                err,
+            )
+
+    def _check_silent_han(runtime_data: HomelyRuntimeData) -> None:
+        if runtime_data.force_api_refresh_once:
+            return
+        now = time.monotonic()
+        if (
+            runtime_data.api_retry_unsub is not None
+            or now < runtime_data.poll_backoff_until_monotonic
+            or now - runtime_data.han_refresh_last_attempt_monotonic
+            < HAN_REFRESH_COOLDOWN_SECONDS
+        ):
+            return
+
+        last_poll = runtime_data.last_successful_poll_monotonic
+        if last_poll is None:
+            last_poll = runtime_data.last_data_activity_monotonic
+        devices = runtime_data.last_data.get("devices")
+        if not isinstance(devices, list):
+            return
+        for device in devices:
+            if not isinstance(device, dict) or device.get("online") is not True:
+                continue
+            if "han" not in str(device.get("modelName", "")).lower():
+                continue
+            features = device.get("features")
+            metering = features.get("metering") if isinstance(features, dict) else None
+            states = metering.get("states") if isinstance(metering, dict) else None
+            if not isinstance(states, dict) or "demand" not in states:
+                continue
+            last_event = runtime_data.han_demand_last_event_monotonic.get(
+                str(device.get("id"))
+            )
+            last_seen = (
+                max(last_poll, last_event) if last_event is not None else last_poll
+            )
+            if now - last_seen < HAN_DEMAND_SILENCE_SECONDS:
+                continue
+
+            runtime_data.han_refresh_last_attempt_monotonic = now
+            entry.async_create_background_task(
+                hass,
+                _refresh_silent_han(runtime_data),
+                "homely silent HAN API refresh",
+            )
+            logger.info(
+                "Requesting /home refresh after HAN demand updates stopped %s silence_s=%s",
+                ctx(entry.entry_id, location_id, str(device.get("id"))),
+                int(now - last_seen),
+            )
+            return
+
     def _notify_runtime_watchers(runtime_data: HomelyRuntimeData) -> None:
         """Push immediate state updates to websocket listeners and coordinator entities."""
         for listener in list(runtime_data.ws_status_listeners):
@@ -788,7 +868,10 @@ def register_websocket_health_watchdog(
             return
 
         websocket = runtime_data.websocket
-        if websocket is None or websocket_is_connected(runtime_data):
+        if websocket is None:
+            return
+        if websocket_is_connected(runtime_data):
+            _check_silent_han(runtime_data)
             return
 
         websocket_state = websocket_connection_state(runtime_data)

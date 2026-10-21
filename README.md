@@ -84,6 +84,8 @@ Entities are created from the features present in the Homely API payload. Common
 
 A device visible in the Homely app may still be absent or incomplete in the API. The integration cannot add data that Homely does not expose. See the [detailed device and entity coverage](documentation.md#devices-and-entities) before reporting a missing device.
 
+If an online HAN meter with a demand reading stops sending WebSocket updates, the integration requests a fresh `/home` snapshot after one hour of silence. It makes at most one such extra request every six hours and defers to any pending API retry or rate-limit backoff. This uses Homely's reported `online` value; silence alone does not mark a device offline. Homes without a HAN meter do not trigger these extra requests.
+
 ## Contributing
 
 Contributions are welcome. The test dependencies pull in Home Assistant and require Python 3.14 (the version CI uses):

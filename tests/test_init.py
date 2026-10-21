@@ -1597,6 +1597,149 @@ async def test_async_setup_entry_websocket_watchdog_forces_api_poll(
     assert runtime_data.force_api_refresh_once is False
 
 
+async def test_han_watchdog_refreshes_silent_meter_but_not_alarm_only(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """Only a stale online HAN demand sensor should prompt an early /home poll."""
+    callbacks = []
+
+    def capture_interval(_hass, action, _interval):
+        callbacks.append(action)
+        return lambda: None
+
+    _FakeHomelyWebSocket.reset()
+    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: True})
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+        extra_patches=(
+            patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),
+            patch(
+                "custom_components.homely.websocket_runtime.async_track_time_interval",
+                side_effect=capture_interval,
+            ),
+        ),
+    )
+    runtime_data = config_entry.runtime_data
+    runtime_data.websocket.connected = True
+    runtime_data.last_successful_poll_monotonic = time.monotonic() - 7200
+    watchdog = callbacks[0]
+    han_id = location_data["devices"][4]["id"]
+    offline_snapshot = deepcopy(updated_location_data)
+    offline_snapshot["devices"][4]["online"] = False
+
+    with patch(
+        "custom_components.homely.get_data_with_status",
+        AsyncMock(return_value=(offline_snapshot, 200)),
+    ) as get_data:
+        runtime_data.last_data["devices"] = runtime_data.last_data["devices"][:4]
+        watchdog(None)
+        await hass.async_block_till_done()
+        get_data.assert_not_awaited()
+
+        runtime_data.last_data["devices"] = deepcopy(location_data["devices"])
+        runtime_data.websocket.on_data_update(
+            {
+                "type": "device-state-changed",
+                "data": {
+                    "deviceId": han_id,
+                    "change": {
+                        "feature": "metering",
+                        "stateName": "demand",
+                        "value": 105,
+                    },
+                },
+            }
+        )
+        assert han_id in runtime_data.han_demand_last_event_monotonic
+        watchdog(None)
+        await hass.async_block_till_done()
+        get_data.assert_not_awaited()
+
+        runtime_data.han_demand_last_event_monotonic[han_id] = time.monotonic() - 7200
+        watchdog(None)
+        await hass.async_block_till_done()
+        get_data.assert_awaited_once()
+        assert runtime_data.last_data["devices"][4]["online"] is False
+
+        runtime_data.last_data["devices"][4]["online"] = True
+        watchdog(None)
+        await hass.async_block_till_done()
+        get_data.assert_awaited_once()
+
+
+async def test_han_watchdog_respects_offline_and_api_retry(
+    hass,
+    token_response,
+    location_response,
+    location_data,
+    updated_location_data,
+):
+    """A known offline HAN or pending API retry must not add more API traffic."""
+    callbacks = []
+
+    def capture_interval(_hass, action, _interval):
+        callbacks.append(action)
+        return lambda: None
+
+    _FakeHomelyWebSocket.reset()
+    config_entry = build_config_entry(options={CONF_ENABLE_WEBSOCKET: True})
+    await _setup_loaded_entry(
+        hass,
+        config_entry,
+        token_response,
+        location_response,
+        location_data,
+        updated_location_data,
+        extra_patches=(
+            patch("custom_components.homely.HomelyWebSocket", _FakeHomelyWebSocket),
+            patch(
+                "custom_components.homely.websocket_runtime.async_track_time_interval",
+                side_effect=capture_interval,
+            ),
+        ),
+    )
+    runtime_data = config_entry.runtime_data
+    runtime_data.websocket.connected = True
+    runtime_data.last_successful_poll_monotonic = time.monotonic() - 7200
+    watchdog = callbacks[0]
+    han = runtime_data.last_data["devices"][4]
+
+    with patch(
+        "custom_components.homely.get_data_with_status",
+        AsyncMock(return_value=(updated_location_data, 200)),
+    ) as get_data:
+        han["online"] = False
+        watchdog(None)
+        await hass.async_block_till_done()
+        get_data.assert_not_awaited()
+
+        han["online"] = True
+        runtime_data.api_retry_unsub = lambda: None
+        watchdog(None)
+        await hass.async_block_till_done()
+        get_data.assert_not_awaited()
+
+        runtime_data.api_retry_unsub = None
+        runtime_data.poll_backoff_until_monotonic = time.monotonic() + 300
+        watchdog(None)
+        await hass.async_block_till_done()
+        get_data.assert_not_awaited()
+
+        runtime_data.poll_backoff_until_monotonic = float("-inf")
+        watchdog(None)
+        await hass.async_block_till_done()
+        get_data.assert_awaited_once()
+
+
 async def test_async_setup_entry_websocket_watchdog_requests_fast_reconnect(
     hass,
     token_response,
