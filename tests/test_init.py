@@ -1675,6 +1675,43 @@ async def test_han_watchdog_refreshes_silent_meter_but_not_alarm_only(
         await hass.async_block_till_done()
         get_data.assert_awaited_once()
 
+        # Other device traffic must not make the silent meter look fresh.
+        runtime_data.websocket.on_data_update(
+            {
+                "type": "device-state-changed",
+                "data": {
+                    "deviceId": location_data["devices"][0]["id"],
+                    "change": {
+                        "feature": "diagnostic",
+                        "stateName": "networklinkstrength",
+                        "value": 75,
+                    },
+                },
+            }
+        )
+        runtime_data.han_refresh_last_attempt_monotonic -= 6 * 60 * 60 + 1
+        runtime_data.last_successful_poll_monotonic -= 6 * 60 * 60 + 1
+        watchdog(None)
+        await hass.async_block_till_done()
+        assert get_data.await_count == 2
+
+        # If a queued task never starts (for example during unload), it must
+        # not consume the cooldown or block the next eligible check.
+        runtime_data.force_api_refresh_once = False
+        runtime_data.han_refresh_last_attempt_monotonic = float("-inf")
+        runtime_data.last_successful_poll_monotonic -= 6 * 60 * 60 + 1
+        runtime_data.last_data["devices"][4]["online"] = True
+
+        def drop_task(_hass, coroutine, _name):
+            coroutine.close()
+
+        with patch.object(
+            config_entry, "async_create_background_task", side_effect=drop_task
+        ) as create_task:
+            watchdog(None)
+            create_task.assert_called_once()
+        assert runtime_data.han_refresh_last_attempt_monotonic == float("-inf")
+
 
 async def test_han_watchdog_respects_offline_and_api_retry(
     hass,

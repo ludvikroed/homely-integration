@@ -779,9 +779,12 @@ def register_websocket_health_watchdog(
             or time.monotonic() < expected_runtime.poll_backoff_until_monotonic
         ):
             return
+        expected_runtime.han_refresh_last_attempt_monotonic = time.monotonic()
         expected_runtime.force_api_refresh_once = True
         try:
-            await coordinator.async_request_refresh()
+            # This is a deliberate recovery fetch, not a user refresh to
+            # debounce. Wait for any in-flight coordinator update, then fetch.
+            await coordinator.async_refresh()
         except Exception as err:
             logger.debug(
                 "HAN silence API refresh failed %s: %s",
@@ -826,7 +829,6 @@ def register_websocket_health_watchdog(
             if now - last_seen < HAN_DEMAND_SILENCE_SECONDS:
                 continue
 
-            runtime_data.han_refresh_last_attempt_monotonic = now
             entry.async_create_background_task(
                 hass,
                 _refresh_silent_han(runtime_data),
