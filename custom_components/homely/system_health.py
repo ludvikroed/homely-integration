@@ -110,7 +110,7 @@ async def system_health_info(hass: HomeAssistant) -> dict[str, Any]:
 
     return {
         "integration_version": integration.version,
-        "sdk_version": _safe_sdk_version(),
+        "sdk_version": await hass.async_add_executor_job(_safe_sdk_version),
         "api_endpoint_reachable": system_health.async_check_can_reach_url(
             hass,
             BASE_URL,

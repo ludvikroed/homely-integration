@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import time
+from importlib.metadata import PackageNotFoundError
+from threading import get_ident
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from custom_components.homely.const import CONF_LOCATION_ID
 from custom_components.homely.models import HomelyRuntimeData
@@ -136,3 +140,36 @@ async def test_system_health_registers_manage_url(hass):
         register.async_register_info.call_args.kwargs["manage_url"]
         == "https://github.com/ludvikroed/homely-integration/blob/main/documentation.md"
     )
+
+
+@pytest.mark.parametrize("installed_version", ["0.1.10", None])
+async def test_sdk_version_lookup_runs_outside_event_loop(hass, installed_version):
+    """Reading package metadata must not block Home Assistant's event loop."""
+    loop_thread = get_ident()
+
+    def read_version(package):
+        assert get_ident() != loop_thread
+        assert package == "python-homely"
+        if installed_version is None:
+            raise PackageNotFoundError(package)
+        return installed_version
+
+    with (
+        patch(
+            "custom_components.homely.system_health.async_get_loaded_integration",
+            return_value=SimpleNamespace(version="1.4.6-beta"),
+        ),
+        patch(
+            "custom_components.homely.system_health.package_version",
+            side_effect=read_version,
+        ) as version_lookup,
+        patch(
+            "custom_components.homely.system_health.system_health.async_check_can_reach_url",
+            return_value="ok",
+        ),
+    ):
+        info = await system_health_info(hass)
+
+    assert await info["api_endpoint_reachable"] == "ok"
+    assert info["sdk_version"] == (installed_version or "unknown")
+    version_lookup.assert_called_once_with("python-homely")
